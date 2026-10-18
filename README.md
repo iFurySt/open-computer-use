@@ -190,6 +190,10 @@ the current Node executable instead of looking up another `node` on PATH.
 
 `ocu doctor --json` (macOS only) returns `platform`, `accessibilityTrusted`, `screenCaptureGranted`, `allGranted`, and `missingPermissions`. Missing permissions still exit with code 0; hosts should check `allGranted` and query again after authorization. The snapshot uses existing system API/TCC diagnostics and does not prove an operation succeeded; some permission changes may still require a process restart.
 
+## Global Configuration
+
+`ocu` supports global configuration starting with version 1.0.0 to accommodate different workflows and use cases. The default configuration file is `~/.config/ocu/config.json`. You can edit the file directly or use the `ocu config` subcommands. See the [configuration guide](docs/configuration.md) for details.
+
 ## Cursor Motion
 
 Cursor Motion is an open-source cursor motion system for macOS, based on public information shared by members of the Software.Inc team. You can download the app from the [Releases page](https://github.com/iFurySt/open-codex-computer-use/releases).
@@ -208,8 +212,4 @@ Cursor Motion is an open-source cursor motion system for macOS, based on public 
 
 ## License
 
-[MIT](./LICENSE).
-
-### Persistent configuration
-
-Use `ocu config` to inspect settings and `ocu config set image.format jpg` to persist a macOS screenshot preference. Environment overrides remain supported. See [configuration](docs/configuration.md) ([简体中文](docs/configuration.zh-CN.md)) for settings and CLI commands.
+[MIT](./LICENSE)

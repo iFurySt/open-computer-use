@@ -145,6 +145,9 @@ ocu -h
 
 `ocu doctor --json`（仅 macOS）返回 `platform`、`accessibilityTrusted`、`screenCaptureGranted`、`allGranted` 和 `missingPermissions`。缺权限仍返回退出码 0；宿主应检查 `allGranted`，并在用户授权后再次查询。状态复用现有系统 API/TCC 检测，不代表实际操作已经成功；某些权限变更仍可能需要重启进程。
 
+## 全局配置
+ocu 1.0.0后支持全局配置，以适应不同的使用方式和业务场景，默认配置存在 `~/.config/ocu/config.json`，期间可以直接到文件里编辑配置，也可以通过`ocu config`子命令去配置，更具体的可以看： [配置说明](docs/configuration.zh-CN.md)
+
 ## Cursor Motion
 
 Cursor Motion 是一个面向 macOS 的开源光标运动系统，基于 Software.Inc 几位大佬的公开信息实现的开源版本，也可以到 [Releases 页面](https://github.com/iFurySt/open-codex-computer-use/releases) 下载 app 运行。
@@ -163,8 +166,4 @@ Cursor Motion 是一个面向 macOS 的开源光标运动系统，基于 Softwar
 
 ## License
 
-[MIT](./LICENSE)。
-
-### 持久化配置
-
-使用 `ocu config` 查看生效配置，用 `ocu config set image.format jpg` 保存 macOS 截图偏好。默认文件是 `~/.config/ocu/config.json`，ENV 优先于文件。详见[中文配置说明](docs/configuration.zh-CN.md)（[English](docs/configuration.md)）。
+[MIT](./LICENSE)
