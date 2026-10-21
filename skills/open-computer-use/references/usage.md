@@ -121,6 +121,14 @@ open-computer-use call get_app_state --args '{"app":"TextEdit"}'
 open-computer-use call set_value --args '{"app":"TextEdit","element_index":"1","value":"Draft"}'
 ```
 
+`set_value` reads the element back after the AX write and compares the result
+with the requested value (trimmed string, numeric, or boolean). If the control
+still reports its previous value, or normalizes it to something else, the call
+returns an explicit error naming the element and the actual value instead of
+reporting a silent success. Requesting the value the element already reports is
+a no-op success.
+```
+
 Use `--calls` for short action sequences that need to reuse the same process state:
 
 ```sh
