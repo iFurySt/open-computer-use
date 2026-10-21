@@ -1146,7 +1146,11 @@ public final class ComputerUseService {
             focusedElement: context.focusedElement,
             selectedText: nil,
             windowElement: context.windowElement,
-            elements: elements
+            elements: elements,
+            displayNote: windowDisplayNote(
+                windowBounds: context.windowBounds,
+                activeDisplayBounds: displayNoteAllowedDisplayBounds()
+            )
         )
     }
 
