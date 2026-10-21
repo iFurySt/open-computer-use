@@ -38,3 +38,16 @@ func activeDisplayBounds() -> [CGRect] {
 
     return displayIDs.prefix(Int(actualCount)).map { CGDisplayBounds($0) }
 }
+
+/// Display bounds that count as "on screen" for the display note: every active
+/// display plus the agent's virtual display, when one currently exists. A
+/// window parked on the agent display is genuinely on screen for WindowServer
+/// even though the user cannot see that display, so it must not be reported as
+/// off-display.
+func displayNoteAllowedDisplayBounds() -> [CGRect] {
+    var bounds = activeDisplayBounds()
+    if let agentDisplayBounds = AgentDisplay.shared.displayBounds {
+        bounds.append(agentDisplayBounds)
+    }
+    return bounds
+}

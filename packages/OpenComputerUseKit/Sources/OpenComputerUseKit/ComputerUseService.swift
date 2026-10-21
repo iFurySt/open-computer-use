@@ -1149,7 +1149,7 @@ public final class ComputerUseService {
             elements: elements,
             displayNote: windowDisplayNote(
                 windowBounds: context.windowBounds,
-                activeDisplayBounds: activeDisplayBounds()
+                activeDisplayBounds: displayNoteAllowedDisplayBounds()
             )
         )
     }

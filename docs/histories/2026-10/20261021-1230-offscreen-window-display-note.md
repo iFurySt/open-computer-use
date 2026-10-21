@@ -26,6 +26,7 @@
 - 新增 `WindowDisplayNote.swift`：`windowDisplayNote(windowBounds:activeDisplayBounds:)` 纯函数与 `activeDisplayBounds()`（`CGGetActiveDisplayList` + `CGDisplayBounds`，与 `CGWindowList` 同为 Quartz 全局坐标）。
 - `AppSnapshot` 新增 `displayNote` 字段，`renderedText` 在 `Window:` 行之后输出该 note；`SnapshotBuilder.build` 计算一次并传入两条快照构造路径（含 `include_ax=false`），query 索引动作的 lite snapshot 也带上。
 - note 内容为 `--- display note ---` 加窗口 frame 与处理建议；窗口与任一活动屏幕相交、bounds 为空或活动屏幕列表不可用时返回 nil，既有快照文本不变。
+- 允许集合通过 `displayNoteAllowedDisplayBounds()` 构造：活动屏幕 + `AgentDisplay.shared.displayBounds`（存在时）。窗口停放在 agent 虚拟屏上不会被误报为离屏，纯函数 `windowDisplayNote` 签名不变。
 - `skills/open-computer-use/references/usage.md` 补充说明。
 
 ### Design Intent
@@ -43,6 +44,6 @@
 ### Validation
 
 - `swift build` 成功。
-- `swift test`：388 个测试，7 个跳过，0 失败；新增 `WindowDisplayNoteTests` 6 个用例覆盖窗口在屏内/跨屏/完全离屏/缺 bounds/空屏幕列表/渲染插入顺序。
+- `swift test`：389 个测试，7 个跳过，0 失败；`WindowDisplayNoteTests` 7 个用例覆盖窗口在屏内/跨屏/完全离屏/缺 bounds/空屏幕列表/渲染插入顺序/agent 虚拟屏停放。
 - `make check-docs` 通过。
 - 变更只在本地分支 `fix/offscreen-window-display-note`，未 push、未开 PR。

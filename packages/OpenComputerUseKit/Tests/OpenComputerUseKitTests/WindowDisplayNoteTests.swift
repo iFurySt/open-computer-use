@@ -88,4 +88,22 @@ final class WindowDisplayNoteTests: XCTestCase {
         XCTAssertFalse(rendered.contains("--- display note ---"))
         XCTAssertEqual(rendered.components(separatedBy: "\n").count, 3)
     }
+
+    /// The agent display is a virtual display the user cannot see; a parked
+    /// window is still on screen for WindowServer, so it must not be reported as
+    /// off-display once the allowed set includes the agent display bounds.
+    func testWindowParkedOnAgentDisplayHasNoNote() {
+        let agentDisplay = CGRect(x: -1920, y: -1080, width: 1920, height: 1080)
+        let parkedWindow = CGRect(x: -1880, y: -1040, width: 900, height: 700)
+
+        XCTAssertNotNil(windowDisplayNote(
+            windowBounds: parkedWindow,
+            activeDisplayBounds: [mainDisplay]
+        ))
+
+        XCTAssertNil(windowDisplayNote(
+            windowBounds: parkedWindow,
+            activeDisplayBounds: [mainDisplay, agentDisplay]
+        ))
+    }
 }

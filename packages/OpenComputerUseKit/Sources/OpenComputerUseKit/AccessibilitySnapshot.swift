@@ -259,7 +259,7 @@ enum SnapshotBuilder {
         // the sparse tree for the app's real content.
         let displayNote = windowDisplayNote(
             windowBounds: windowCapture.bounds,
-            activeDisplayBounds: activeDisplayBounds()
+            activeDisplayBounds: displayNoteAllowedDisplayBounds()
         )
 
         return buildAccessibilitySnapshot(
