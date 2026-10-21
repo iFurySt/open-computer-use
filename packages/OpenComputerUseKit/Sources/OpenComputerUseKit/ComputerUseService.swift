@@ -1005,6 +1005,7 @@ public final class ComputerUseService {
 
         let cursorTarget = visualCursorTarget(for: record, snapshot: snapshot)
         moveVisualCursor(to: cursorTarget)
+        let valueBeforeWrite = setValueReadBackValue(of: element)
 
         do {
             try requireUsableComputerUseSession()
@@ -1014,6 +1015,12 @@ public final class ComputerUseService {
             }
 
             pauseBeforeReadBack(0.1)
+            try verifySetValueReadBack(
+                of: element,
+                elementIndex: elementIndex,
+                requested: value,
+                before: valueBeforeWrite
+            )
         } catch {
             settleVisualCursor(at: cursorTarget)
             throw error
@@ -1021,6 +1028,52 @@ public final class ComputerUseService {
 
         settleVisualCursor(at: cursorTarget)
         return try actionResult(for: query)
+    }
+
+    /// AX reports success for writes that a control silently ignores, so
+    /// `set_value` reads the attribute back and compares it with the request.
+    private var setValueReadBackTimeout: TimeInterval { 0.6 }
+
+    private func setValueReadBackValue(of element: AXUIElement) -> String? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &value) == .success,
+              let value else {
+            return nil
+        }
+
+        return setValueReadBackString(from: value)
+    }
+
+    private func verifySetValueReadBack(
+        of element: AXUIElement,
+        elementIndex: String,
+        requested: String,
+        before: String?
+    ) throws {
+        let deadline = Date().addingTimeInterval(setValueReadBackTimeout)
+        var result = setValueReadBackResult(
+            requested: requested,
+            before: before,
+            after: setValueReadBackValue(of: element)
+        )
+
+        while Date() < deadline {
+            if case .verified = result {
+                return
+            }
+
+            Thread.sleep(forTimeInterval: 0.05)
+            try requireUsableComputerUseSession()
+            result = setValueReadBackResult(
+                requested: requested,
+                before: before,
+                after: setValueReadBackValue(of: element)
+            )
+        }
+
+        if let message = setValueReadBackErrorMessage(elementIndex: elementIndex, requested: requested, result: result) {
+            throw ComputerUseError.message(message)
+        }
     }
 
     public func selectText(
