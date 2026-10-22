@@ -403,6 +403,28 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testProxiedCallFilePathsResolveAgainstCallerDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try #"[{"tool":"list_apps"}]"#.write(to: directory.appendingPathComponent("calls.json"), atomically: true, encoding: .utf8)
+
+        let arguments = resolvingOpenComputerUseCallFilePaths(
+            ["call", "--calls-file", "calls.json", "--sleep", "0"],
+            currentDirectory: directory.path
+        )
+        XCTAssertEqual(arguments, ["call", "--calls-file", directory.appendingPathComponent("calls.json").path, "--sleep", "0"])
+        guard case let .call(.sequence(_, callsFile, _)) = try parseOpenComputerUseCLI(arguments: arguments) else {
+            return XCTFail("expected a call sequence")
+        }
+        XCTAssertEqual(try readOpenComputerUseCallSequence(json: nil, file: callsFile).map(\.tool), ["list_apps"])
+
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "/tmp/args.json"], currentDirectory: directory.path),
+            ["call", "list_apps", "--args-file", "/tmp/args.json"]
+        )
+    }
+
     func testAppNameResolutionPrefersRegularAppsAndDisplayNames() {
         let ranked = [
             AppDiscovery.ResolutionCandidate(name: "Safari", executableName: nil, isRegularApp: true),

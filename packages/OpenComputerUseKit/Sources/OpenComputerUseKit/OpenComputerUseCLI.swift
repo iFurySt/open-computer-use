@@ -41,6 +41,23 @@ public func shouldUseMacOSAppAgentProxy(
     }
 }
 
+/// The app agent is launched through LaunchServices and does not share the
+/// caller's working directory, so relative `--args-file` / `--calls-file`
+/// paths are resolved here before the arguments are proxied.
+public func resolvingOpenComputerUseCallFilePaths(
+    _ arguments: [String],
+    currentDirectory: String = FileManager.default.currentDirectoryPath
+) -> [String] {
+    var resolved = arguments
+    for index in resolved.indices.dropLast() where resolved[index] == "--args-file" || resolved[index] == "--calls-file" {
+        resolved[index + 1] = URL(
+            fileURLWithPath: resolved[index + 1],
+            relativeTo: URL(fileURLWithPath: currentDirectory, isDirectory: true)
+        ).path
+    }
+    return resolved
+}
+
 public struct OpenComputerUseCLIError: LocalizedError, Equatable {
     public let message: String
     public let helpCommand: String?

@@ -140,7 +140,7 @@ enum MacOSAppAgentProxy {
     private static func sendCLIRequest(arguments: [String], client: AppAgentSocketClient) throws -> CLIProxyResponse {
         let response = try client.request([
             "kind": "cli",
-            "arguments": arguments,
+            "arguments": resolvingOpenComputerUseCallFilePaths(arguments),
             "environment": proxiedEnvironment(),
         ])
 
