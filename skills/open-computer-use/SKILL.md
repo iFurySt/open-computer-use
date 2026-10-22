@@ -23,6 +23,9 @@ first match. JavaScript exposes `app.selectText(elementIndex, text, options?)`. 
 
 macOS additionally exposes `query`: a targeted accessibility lookup that finds
 controls by text and/or role without rendering a tree or taking a screenshot.
+On macOS, `get_app_state` also takes `marks: true`, which labels each actionable element on the
+screenshot with its `element_index`, and `zoom: {x, y, width, height}` (fractions of the window),
+which returns only that part of the window; coordinate clicks then refer to the zoomed image.
 
 ## Core Workflow
 
