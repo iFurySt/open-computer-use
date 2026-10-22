@@ -52,6 +52,28 @@ func skyMenuItemMatches(cmdChar: String?, cmdModifiers: Int?, enabled: Bool?, eq
     return cmdChar.uppercased() == equivalent.character && (cmdModifiers ?? 0) == equivalent.modifiers
 }
 
+/// `press_menu`'s path, "Format > Font > Show Fonts": a menu bar title, then each item down to
+/// the command. A title that itself contains ">" cannot be named.
+func menuPathTitles(_ path: String) throws -> [String] {
+    let titles = path.split(separator: ">", omittingEmptySubsequences: false)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
+    guard titles.count >= 2, !titles.contains(where: \.isEmpty) else {
+        throw ComputerUseError.invalidArguments("path must name a menu and an item, such as File > Save As…")
+    }
+    return titles
+}
+
+/// Case-insensitive, ignoring surrounding spaces, with "..." standing for "…".
+func menuTitleMatches(_ requested: String, _ title: String?) -> Bool {
+    guard let title else {
+        return false
+    }
+    func normalized(_ value: String) -> String {
+        value.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "...", with: "…").lowercased()
+    }
+    return normalized(requested) == normalized(title)
+}
+
 /// Owner check for keyboard targets. Unlike `sky_click`, the window does not
 /// need to be on-screen: keyboard delivery is process-addressed, so a window on
 /// another Space or hidden app is a valid target as long as it still exists
@@ -226,32 +248,97 @@ enum SkyKeyboardDispatcher {
         guard let menuBar = copyValue(application, kAXMenuBarAttribute) else {
             return nil
         }
-        return firstMenuItem(in: menuBar as! AXUIElement, matching: equivalent, depth: 0)
+        return firstMenuItem(in: menuBar as! AXUIElement, levels: 6) { child in
+            copyValue(child, kAXRoleAttribute) as? String == kAXMenuItemRole as String
+                && skyMenuItemMatches(
+                    cmdChar: copyValue(child, "AXMenuItemCmdChar") as? String,
+                    cmdModifiers: (copyValue(child, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue,
+                    enabled: (copyValue(child, kAXEnabledAttribute) as? NSNumber)?.boolValue,
+                    equivalent: equivalent
+                )
+        }
     }
 
-    private static func firstMenuItem(in element: AXUIElement, matching equivalent: SkyMenuKeyEquivalent, depth: Int) -> AXUIElement? {
-        guard depth < 6 else {
+    /// Depth-first, at most `levels` below `element`. A menu bar title's or a submenu's
+    /// items sit two levels down, inside its AXMenu.
+    private static func firstMenuItem(in element: AXUIElement, levels: Int, where matches: (AXUIElement) -> Bool) -> AXUIElement? {
+        guard levels > 0 else {
             return nil
         }
 
         for child in copyValue(element, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
-            let role = copyValue(child, kAXRoleAttribute) as? String
-            if role == kAXMenuItemRole as String,
-               skyMenuItemMatches(
-                   cmdChar: copyValue(child, "AXMenuItemCmdChar") as? String,
-                   cmdModifiers: (copyValue(child, "AXMenuItemCmdModifiers") as? NSNumber)?.intValue,
-                   enabled: (copyValue(child, kAXEnabledAttribute) as? NSNumber)?.boolValue,
-                   equivalent: equivalent
-               ) {
+            if matches(child) {
                 return child
             }
 
-            if let nested = firstMenuItem(in: child, matching: equivalent, depth: depth + 1) {
+            if let nested = firstMenuItem(in: child, levels: levels - 1, where: matches) {
                 return nested
             }
         }
 
         return nil
+    }
+
+    // MARK: - Menu paths
+
+    /// `press_menu`: press the item at `path` (["Format", "Font", "Show Fonts"]) through
+    /// AXPress, with no key or pointer event, so the app can stay in the background. Each
+    /// title is looked up among the items of the menu named before it; a miss lists them.
+    static func pressMenuItem(path: [String], pid: pid_t) throws {
+        let application = AXUIElementCreateApplication(pid)
+        guard let menuBar = copyValue(application, kAXMenuBarAttribute) else {
+            throw ComputerUseError.stateUnavailable("The app has no menu bar.")
+        }
+        var item = menuBar as! AXUIElement
+        for (depth, title) in path.enumerated() {
+            let menu = item
+            guard let next = firstMenuItem(in: menu, levels: 2, where: {
+                isMenuItem($0) && menuTitleMatches(title, copyValue($0, kAXTitleAttribute) as? String)
+            }) else {
+                let place = depth == 0 ? "the menu bar" : path[..<depth].joined(separator: " > ")
+                throw ComputerUseError.message(
+                    "No menu item '\(title)' in \(place). Items: \(menuItemTitles(in: menu).joined(separator: ", "))"
+                )
+            }
+            item = next
+        }
+
+        let joined = path.joined(separator: " > ")
+        // Pressing a menu title or a submenu would open it on screen instead of running a command.
+        if firstMenuItem(in: item, levels: 2, where: isMenuItem) != nil {
+            throw ComputerUseError.message(
+                "\(joined) opens a menu. Add one of its items: \(menuItemTitles(in: item).joined(separator: ", "))"
+            )
+        }
+
+        // AppKit accepts AXPress on a disabled item and does nothing, so the press would report
+        // success. Like the key-equivalent lookup above, trust the item's enabled state.
+        if (copyValue(item, kAXEnabledAttribute) as? NSNumber)?.boolValue == false {
+            throw ComputerUseError.message("\(joined) is disabled, so it was not pressed.")
+        }
+
+        try requireUsableComputerUseSession()
+        let result = AXUIElementPerformAction(item, kAXPressAction as CFString)
+        guard result == .success else {
+            throw ComputerUseError.message("Could not press \(joined) (AXError \(result.rawValue)).")
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    }
+
+    private static func isMenuItem(_ element: AXUIElement) -> Bool {
+        let role = copyValue(element, kAXRoleAttribute) as? String
+        return role == kAXMenuItemRole as String || role == kAXMenuBarItemRole as String
+    }
+
+    private static func menuItemTitles(in menu: AXUIElement) -> [String] {
+        var titles: [String] = []
+        _ = firstMenuItem(in: menu, levels: 2) { element in
+            if isMenuItem(element), let title = copyValue(element, kAXTitleAttribute) as? String, !title.isEmpty {
+                titles.append(title)
+            }
+            return false
+        }
+        return titles
     }
 
     private static func copyValue(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {

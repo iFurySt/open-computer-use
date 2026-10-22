@@ -288,7 +288,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testToolDefinitionCount() {
-        XCTAssertEqual(ToolDefinitions.all.count, 11)
+        XCTAssertEqual(ToolDefinitions.all.count, 12)
         XCTAssertEqual(
             ToolDefinitions.all.map(\.name).sorted(),
             [
@@ -298,6 +298,7 @@ final class OpenComputerUseKitTests: XCTestCase {
                 "list_apps",
                 "perform_secondary_action",
                 "press_key",
+                "press_menu",
                 "query",
                 "scroll",
                 "select_text",
@@ -818,6 +819,9 @@ final class OpenComputerUseKitTests: XCTestCase {
             selectTextProperties?["text"]?["description"] as? String,
             "Target text as shown in the accessibility tree"
         )
+        XCTAssertEqual(tools["press_menu"]?.inputSchema["required"] as? [String], ["app", "path"])
+        XCTAssertEqual(tools["press_menu"]?.inputSchema["additionalProperties"] as? Bool, false)
+        XCTAssertTrue(tools["press_menu"]?.description.contains("without activating the app") == true)
     }
 
     func testSelectTextRejectsInvalidSelectionMode() {
@@ -1997,6 +2001,29 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertFalse(skyMenuItemMatches(cmdChar: "A", cmdModifiers: 1, enabled: true, equivalent: selectAll))
         XCTAssertFalse(skyMenuItemMatches(cmdChar: "A", cmdModifiers: 0, enabled: false, equivalent: selectAll))
         XCTAssertFalse(skyMenuItemMatches(cmdChar: nil, cmdModifiers: 0, enabled: true, equivalent: selectAll))
+    }
+
+    func testMenuPathSplitsTitlesAndRejectsIncompletePaths() throws {
+        XCTAssertEqual(try menuPathTitles("Format > Font > Show Fonts"), ["Format", "Font", "Show Fonts"])
+        XCTAssertEqual(try menuPathTitles("File>Save As…"), ["File", "Save As…"])
+        for path in ["", "File", "File >", "> Save", "File >> Save", "File >  > Save"] {
+            XCTAssertThrowsError(try menuPathTitles(path), path) { error in
+                XCTAssertEqual(
+                    error.localizedDescription,
+                    #"invalidArguments("path must name a menu and an item, such as File > Save As…")"#
+                )
+            }
+        }
+        let result = ComputerUseToolDispatcher().callToolAsResult(name: "press_menu", arguments: ["app": "TextEdit", "path": "File"])
+        XCTAssertTrue(result.isError)
+    }
+
+    func testMenuTitleMatchingIgnoresCaseSpacesAndEllipsisSpelling() {
+        XCTAssertTrue(menuTitleMatches("save as...", "Save As…"))
+        XCTAssertTrue(menuTitleMatches("Save As…", "Save As… "))
+        XCTAssertTrue(menuTitleMatches("show fonts", "Show Fonts"))
+        XCTAssertFalse(menuTitleMatches("Save", "Save As…"))
+        XCTAssertFalse(menuTitleMatches("Save", nil))
     }
 
     func testSkyKeyWindowValidationAllowsOffScreenWindowsOfTheSameOwner() {
