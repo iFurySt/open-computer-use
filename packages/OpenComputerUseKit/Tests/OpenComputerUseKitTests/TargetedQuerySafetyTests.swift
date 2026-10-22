@@ -16,6 +16,23 @@ final class TargetedQuerySafetyTests: XCTestCase {
         XCTAssertTrue(result.primaryText?.contains("window_id") == true)
     }
 
+    func testListWindowsAndWindowBindingRejectBadInputsWithoutLaunching() throws {
+        let dispatcher = ComputerUseToolDispatcher()
+        XCTAssertEqual(dispatcher.callToolAsResult(name: "list_windows", arguments: [:]).primaryText, "Missing required argument: app")
+        for value: Any in [0, -1, 1.5, true, "7"] {
+            let result = dispatcher.callToolAsResult(name: "get_app_state", arguments: ["app": "NoSuchReviewApp", "window_id": value])
+            XCTAssertTrue(result.isError)
+            XCTAssertTrue(result.primaryText?.contains("window_id") == true, "\(value)")
+        }
+        guard LockedUseSession.current().state == .unlocked else {
+            throw XCTSkip("Requires a completed unlocked console session")
+        }
+        // list_windows resolves running apps only: an absent app is reported, never launched.
+        let absent = dispatcher.callToolAsResult(name: "list_windows", arguments: ["app": "NoSuchReviewApp"])
+        XCTAssertTrue(absent.isError)
+        XCTAssertEqual(absent.primaryText, "appNotFound(\"NoSuchReviewApp\")")
+    }
+
     func testQueryStringsAndExactRejectSilentCoercion() throws {
         XCTAssertEqual(try validatedQueryString("Send", key: "text"), "Send")
         XCTAssertThrowsError(try validatedQueryString(3, key: "text"))
