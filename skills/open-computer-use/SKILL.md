@@ -24,6 +24,10 @@ first match. JavaScript exposes `app.selectText(elementIndex, text, options?)`. 
 macOS additionally exposes `query`: a targeted accessibility lookup that finds
 controls by text and/or role without rendering a tree or taking a screenshot.
 
+macOS also exposes `read_clipboard` and `write_clipboard` (JavaScript `cua.readClipboard()` /
+`cua.writeClipboard(text)`) for plain text. Items that password managers mark concealed,
+transient or auto-generated are never returned. Windows and Linux runtimes do not implement them.
+
 ## Core Workflow
 
 1. On macOS, run `sw_vers -productVersion` before invoking the CLI and require macOS 14.0 or later. On older versions, explain that the runtime cannot launch; do not recommend `doctor` or permission changes as a fix for binary incompatibility.
@@ -43,6 +47,7 @@ controls by text and/or role without rendering a tree or taking a screenshot.
 
 - Treat the target desktop as the user's real session. Do not inspect password managers, unrelated private content, or sensitive apps unless the user explicitly asked for that task.
 - Ask before sending, deleting, purchasing, approving, uploading, or making other externally visible changes.
+- Read the clipboard only when the task needs it, and write it only when the user asked; a write replaces what they copied.
 - Do not assume Codex.app plugin helpers are available. Use the installed `open-computer-use` / `ocu` CLI or an explicit MCP config.
 - Use indexes returned by `get_app_state` or macOS `query` in the same native session; do not guess indexes across sessions or after large UI changes.
 - Prefer semantic actions and `set_value` for editable controls. Use coordinate `click`, `scroll`, and `drag` only when the element tree does not expose a safer target.

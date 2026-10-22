@@ -5,7 +5,7 @@
 - 对 MCP host 暴露的接口仍是本地 `stdio`；macOS CLI 与 `.app` app agent 之间会使用用户临时目录下的 Unix domain socket，socket 创建后会收紧为当前用户读写，且不对外监听 TCP/HTTP 端口。未设置 `OPEN_COMPUTER_USE_AGENT_SOCKET_NAMESPACE` 时继续使用历史 Socket；设置后仅以 namespace 摘要派生私有文件名，不把宿主目录或原始 namespace 写入 Socket 路径。
 - Codex plugin 默认把一个本地 Node.js REPL 放在 native MCP 前面，npm CLI 的 `ocu js` / `ocu repl` 也直接使用同一 runtime。`js` 是任意本地 JavaScript 执行能力，不是受限表达式语言：代码可按启动进程权限读取文件、环境、模块和网络。只应在 host 已经具备并允许 model-code execution 的信任边界内启用；不接受这条边界的 host 应继续直连 `open-computer-use mcp` 的离散 native tools。
 - REPL 里的 Computer Use 调用仍经过 native MCP，因此密码管理器 denylist、`OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS` 等 native safety gate 不会被 JavaScript adapter 绕过。JS kernel 在 Worker 中运行，超时会终止整个 Worker 并清空 bindings。
-- 所有动作都必须显式带 `app` 参数；当前不会在后台自动扫描并控制任意 app。
+- 所有动作都必须显式带 `app` 参数；当前不会在后台自动扫描并控制任意 app。macOS 剪贴板工具 `read_clipboard` / `write_clipboard` 不针对 app，是唯一的例外。
 - macOS 真实 app 路径依赖 `Open Computer Use.app` 已获得 `Accessibility` 与 `Screen Recording` 权限；终端里的 CLI / Node launcher 会把 `mcp`、`doctor`、`call`、`snapshot` 和 `list-apps` 转发给由 LaunchServices 启动的本地 app agent，避免把权限要求落到 iTerm / Terminal 身上。
 - 实验性 Linux runtime 依赖已登录桌面用户的 AT-SPI2 / D-Bus session；coordinate mouse、drag、keyboard synthesis 只是 best-effort fallback，不应被视为跨 Wayland compositor 的通用后台输入授权。
 
@@ -15,6 +15,7 @@
 - Windows runtime 对隐藏、最小化、DWM cloaked、离屏或退化小窗口 fail closed：保留可读的 UI Automation tree，但不返回 image block，也不允许在缺少有效截图时执行 coordinate click / drag；不会用放大、补边或占位图伪造可用截图。
 - Linux runtime 的 screenshot 是 best-effort；如果 GNOME Wayland 返回黑图，bridge 会省略 image block，避免把无效截图误当成真实画面。
 - fixture app 的合成状态只写到本地临时 JSON 文件，目的是支撑 deterministic smoke test；当前写入走原子替换，减少测试期间的读写竞争。
+- macOS `read_clipboard` 只在显式调用时返回剪贴板纯文本，不缓存、不持久化。带 nspasteboard.org concealed / transient / auto-generated 标记的条目（密码管理器复制的密码、一次性验证码等）直接拒绝，且不读取其内容；单次最多返回 100000 UTF-16 code units。系统对通用剪贴板的程序化读取可能先询问用户，用户在系统设置中拒绝时如实报错。`write_clipboard` 会覆盖用户已复制的内容，工具说明要求仅在用户要求时使用。两者与其他 GUI 动作一样受会话与 Locked Use 租约检查约束，锁屏且无租约时拒绝。
 - 当前仓库不引入第三方服务，也不上传截图、AX tree 或输入内容。
 
 ## 授权与最小权限

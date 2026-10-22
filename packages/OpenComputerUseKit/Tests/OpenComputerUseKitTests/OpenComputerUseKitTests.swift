@@ -288,7 +288,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testToolDefinitionCount() {
-        XCTAssertEqual(ToolDefinitions.all.count, 11)
+        XCTAssertEqual(ToolDefinitions.all.count, 13)
         XCTAssertEqual(
             ToolDefinitions.all.map(\.name).sorted(),
             [
@@ -299,10 +299,12 @@ final class OpenComputerUseKitTests: XCTestCase {
                 "perform_secondary_action",
                 "press_key",
                 "query",
+                "read_clipboard",
                 "scroll",
                 "select_text",
                 "set_value",
                 "type_text",
+                "write_clipboard",
             ]
         )
     }
@@ -818,6 +820,12 @@ final class OpenComputerUseKitTests: XCTestCase {
             selectTextProperties?["text"]?["description"] as? String,
             "Target text as shown in the accessibility tree"
         )
+        XCTAssertEqual(tools["read_clipboard"]?.annotations["readOnlyHint"] as? Bool, true)
+        XCTAssertNil(tools["read_clipboard"]?.inputSchema["required"])
+        XCTAssertTrue(tools["read_clipboard"]?.description.contains("concealed, transient or auto-generated") == true)
+        XCTAssertNil(tools["write_clipboard"]?.annotations["readOnlyHint"])
+        XCTAssertEqual(tools["write_clipboard"]?.inputSchema["required"] as? [String], ["text"])
+        XCTAssertTrue(tools["write_clipboard"]?.description.contains("only use it when the user asked for it") == true)
     }
 
     func testSelectTextRejectsInvalidSelectionMode() {
