@@ -542,6 +542,9 @@ func shouldPreferContainingWebRowAXClickCandidate(
 public final class ComputerUseService {
     private var snapshotsByApp: [String: AppSnapshot] = [:]
     private var invalidatedSnapshotAliases: Set<String> = []
+    // The window get_app_state was given as window_id, per app process. Follow-up reads (an
+    // action's read-back) stay on it until get_app_state is called without one or it closes.
+    private var boundWindows: [pid_t: CGWindowID] = [:]
     // Read per call: the app agent applies the caller's OPEN_COMPUTER_USE_* variables
     // for the duration of each request.
     private var actionReadBack: Bool { actionReadBackEnabled(environment: ProcessInfo.processInfo.environment) }
@@ -579,7 +582,7 @@ public final class ComputerUseService {
             return .text("ok")
         }
 
-        return snapshotResult(for: try refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy), style: .actionResult)
+        return snapshotResult(for: try refreshBoundSnapshot(for: query, recoveryPolicy: recoveryPolicy), style: .actionResult)
     }
 
     public func listApps() -> ToolCallResult {
@@ -590,20 +593,27 @@ public final class ComputerUseService {
         )
     }
 
+    /// The windows of an already-running app, without launching, activating or raising it.
+    public func listWindows(app query: String) throws -> [[String: Any]] {
+        try requireUsableComputerUseSession()
+        return try SnapshotBuilder.listWindows(for: AppDiscovery.resolveRunning(query))
+    }
+
     public func getAppState(
         app query: String,
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
         windowPlacement: WindowPlacement = .keep,
-        observation: SnapshotObservationOptions = .defaults
+        observation: SnapshotObservationOptions = .defaults,
+        windowID: CGWindowID? = nil
     ) throws -> ToolCallResult {
         try observation.validate()
         guard windowPlacement != .keep else {
-            return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, observation: observation), style: .fullState)
+            return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, observation: observation, windowID: windowID), style: .fullState)
         }
 
         // Explicit placements never activate or raise; they only move the frame.
-        let snapshot = try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation)
+        let snapshot = try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation, windowID: windowID)
         guard snapshot.mode != .fixture else {
             throw ComputerUseError.message("window_placement '\(windowPlacement.rawValue)' is not supported for fixture apps")
         }
@@ -619,7 +629,7 @@ public final class ComputerUseService {
             break
         }
 
-        return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation), style: .fullState)
+        return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation, windowID: windowID), style: .fullState)
     }
 
     public func click(
@@ -920,7 +930,7 @@ public final class ComputerUseService {
             let target = try skyKeyTarget(for: snapshot)
             try InputSimulation.typeTextWithSkyLight(text, windowID: target.windowID, pid: target.pid)
             return snapshotResult(
-                for: try refreshSnapshot(for: query, recoveryPolicy: keyActionSnapshotRecoveryPolicy(for: keyMethod)),
+                for: try refreshBoundSnapshot(for: query, recoveryPolicy: keyActionSnapshotRecoveryPolicy(for: keyMethod)),
                 style: .actionResult
             )
         }
@@ -951,7 +961,7 @@ public final class ComputerUseService {
             let target = try skyKeyTarget(for: snapshot)
             try InputSimulation.pressKeyWithSkyLight(key, windowID: target.windowID, pid: target.pid)
             return snapshotResult(
-                for: try refreshSnapshot(for: query, recoveryPolicy: keyActionSnapshotRecoveryPolicy(for: keyMethod)),
+                for: try refreshBoundSnapshot(for: query, recoveryPolicy: keyActionSnapshotRecoveryPolicy(for: keyMethod)),
                 style: .actionResult
             )
         }
@@ -1219,7 +1229,8 @@ public final class ComputerUseService {
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
         recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation,
-        observation: SnapshotObservationOptions = .defaults
+        observation: SnapshotObservationOptions = .defaults,
+        windowID: CGWindowID? = nil
     ) throws -> AppSnapshot {
         let app = try AppDiscovery.resolve(query)
         let snapshot = try SnapshotBuilder.build(
@@ -1227,11 +1238,23 @@ public final class ComputerUseService {
             textLimit: textLimit,
             treeLimits: treeLimits,
             recoveryPolicy: recoveryPolicy,
-            observation: observation
+            observation: observation,
+            windowID: windowID
         )
 
+        boundWindows[app.pid] = windowID
         rememberSnapshot(snapshot, for: query)
         return snapshot
+    }
+
+    /// A follow-up read: the window get_app_state bound with window_id, or the app's key window
+    /// when none is bound or the bound one has closed (an action can close it).
+    private func refreshBoundSnapshot(for query: String, recoveryPolicy: SnapshotRecoveryPolicy) throws -> AppSnapshot {
+        if let pid = snapshotsByApp[query.lowercased()]?.app.pid, let windowID = boundWindows[pid],
+           let snapshot = try? refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy, windowID: windowID) {
+            return snapshot
+        }
+        return try refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy)
     }
 
     func rememberSnapshot(_ snapshot: AppSnapshot, for query: String) {

@@ -48,6 +48,8 @@ public final class ComputerUseToolDispatcher {
         switch name {
         case "list_apps":
             return service.listApps()
+        case "list_windows":
+            return .text(try renderedQueryMatches(["windows": try service.listWindows(app: requireString("app", in: arguments))]))
         case "query":
             let matches = try service.query(
                 app: requireString("app", in: arguments),
@@ -71,7 +73,8 @@ public final class ComputerUseToolDispatcher {
                 observation: SnapshotObservationOptions(
                     includeAX: try strictObservationBool("include_ax", in: arguments),
                     includeScreenshot: try strictObservationBool("include_screenshot", in: arguments)
-                )
+                ),
+                windowID: try validatedQueryWindowID(arguments["window_id"])
             )
         case "click":
             return try service.click(
@@ -175,7 +178,7 @@ public final class ComputerUseToolDispatcher {
         }
     }
 
-    /// Machine-readable matches with explicit completeness metadata.
+    /// Machine-readable matches with explicit completeness metadata (also list_windows' windows).
     private func renderedQueryMatches(_ matches: [String: Any]) throws -> String {
         let data = try JSONSerialization.data(withJSONObject: matches, options: [.sortedKeys])
         guard let text = String(data: data, encoding: .utf8) else {

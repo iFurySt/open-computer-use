@@ -24,6 +24,10 @@ first match. JavaScript exposes `app.selectText(elementIndex, text, options?)`. 
 macOS additionally exposes `query`: a targeted accessibility lookup that finds
 controls by text and/or role without rendering a tree or taking a screenshot.
 
+macOS also exposes `list_windows`, which lists a running app's windows with their `window_id`.
+Pass that id to `get_app_state` as `window_id` to read and act on a window other than the app's
+key window; see [references/usage.md](references/usage.md#choosing-a-window-macos).
+
 ## Core Workflow
 
 1. On macOS, run `sw_vers -productVersion` before invoking the CLI and require macOS 14.0 or later. On older versions, explain that the runtime cannot launch; do not recommend `doctor` or permission changes as a fix for binary incompatibility.

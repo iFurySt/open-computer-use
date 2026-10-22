@@ -38,7 +38,8 @@ The runtime exposes an asynchronous app-bound API:
 - \`await cua.listApps({ emit? })\`: list current apps.
 - \`await cua.getApp(nameOrBundleID, { initialState? })\`: bind an app; initialState defaults to true. Use false for a lightweight binding before query.
 - \`await app.query({ text?, role?, exact?, limit?, maxNodes?, windowId? })\`: macOS-only AX lookup; returns matches and truncation metadata, with indexes usable in this native session.
-- \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement? })\`
+- \`await app.listWindows()\`: macOS-only; the app's windows on this Space as \`[{ window_id, title, subrole, focused, minimized, bounds }]\`.
+- \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement?, windowId? })\`: windowId (macOS) reads that window instead of the key window; later actions stay on it until a read without windowId.
 - \`await app.getScreenshot({ emit? })\`
 - \`await app.getAXStateAndScreenshot(options?)\`
 - Optional observation on macOS, Windows and Linux: \`app.getScreenshot({ includeAX: false })\` skips AX/focus/selection and invalidates prior element indexes; refresh AX before element actions. \`app.getAXState({ includeScreenshot: false })\` skips capture; screenshot-coordinate actions require a fresh screenshot. Omitted options retain full native observation.
@@ -259,6 +260,7 @@ function optionsToSnapshotArgs(options = {}) {
   if (options.maxTreeNodes !== undefined) args.max_tree_nodes = options.maxTreeNodes;
   if (options.maxTreeDepth !== undefined) args.max_tree_depth = options.maxTreeDepth;
   if (options.windowPlacement !== undefined) args.window_placement = options.windowPlacement;
+  if (options.windowId !== undefined) args.window_id = options.windowId;
   for (const [option, argument] of [["includeAX", "include_ax"], ["includeScreenshot", "include_screenshot"]]) {
     if (options[option] !== undefined) {
       if (typeof options[option] !== "boolean") throw new Error(`${option} must be a boolean`);
@@ -325,6 +327,11 @@ export function createCuaApi(native, activeOutput) {
         const response = JSON.parse(toolResultText(result));
         if (!isPlainObject(response) || !Array.isArray(response.matches) || typeof response.truncated !== "boolean" || typeof response.stop_reason !== "string") throw new Error("Invalid query response");
         return response;
+      },
+      async listWindows() {
+        const response = JSON.parse(toolResultText(await call("list_windows", { app })));
+        if (!isPlainObject(response) || !Array.isArray(response.windows)) throw new Error("Invalid list_windows response");
+        return response.windows;
       },
       async getAXState(options = {}) {
         const result = await call("get_app_state", { app, ...optionsToSnapshotArgs(options) });

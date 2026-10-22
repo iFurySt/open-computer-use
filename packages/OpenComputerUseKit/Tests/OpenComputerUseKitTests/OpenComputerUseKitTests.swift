@@ -279,7 +279,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testToolDefinitionCount() {
-        XCTAssertEqual(ToolDefinitions.all.count, 11)
+        XCTAssertEqual(ToolDefinitions.all.count, 12)
         XCTAssertEqual(
             ToolDefinitions.all.map(\.name).sorted(),
             [
@@ -287,6 +287,7 @@ final class OpenComputerUseKitTests: XCTestCase {
                 "drag",
                 "get_app_state",
                 "list_apps",
+                "list_windows",
                 "perform_secondary_action",
                 "press_key",
                 "query",
@@ -732,6 +733,11 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(getAppStateProperties?["max_tree_depth"]?["type"] as? String, "integer")
         XCTAssertEqual(getAppStateProperties?["max_tree_depth"]?["minimum"] as? Int, 1)
         XCTAssertEqual(getAppStateSchema?["required"] as? [String], ["app"])
+        XCTAssertEqual(getAppStateProperties?["window_id"]?["type"] as? String, "integer")
+        XCTAssertEqual(getAppStateProperties?["window_id"]?["minimum"] as? Int, 1)
+        XCTAssertEqual(tools["list_windows"]?.annotations["readOnlyHint"] as? Bool, true)
+        XCTAssertEqual(tools["list_windows"]?.inputSchema["required"] as? [String], ["app"])
+        XCTAssertTrue(tools["list_windows"]?.description.hasSuffix("This tool is part of plugin `Computer Use`.") == true)
         let scrollPages = (tools["scroll"]?.inputSchema["properties"] as? [String: [String: Any]])?["pages"]
         XCTAssertEqual(scrollPages?["type"] as? String, "number")
         XCTAssertEqual(

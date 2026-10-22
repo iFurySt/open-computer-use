@@ -674,6 +674,10 @@ func TestLinuxWindowPlacementSchemaAndUnsupportedAgentDisplay(t *testing.T) {
 	if !result.IsError || result.Content[0].Text != "window_placement 'agent_display' is not supported on Linux" {
 		t.Fatalf("agent_display result = %#v", result)
 	}
+	result = newService().callTool("get_app_state", map[string]any{"app": "Text Editor", "window_id": 41})
+	if !result.IsError || result.Content[0].Text != "window_id is not supported on Linux" {
+		t.Fatalf("window_id result = %#v", result)
+	}
 }
 
 func TestDoctorJSONRejectsUnsupportedPermissionDiagnostics(t *testing.T) {

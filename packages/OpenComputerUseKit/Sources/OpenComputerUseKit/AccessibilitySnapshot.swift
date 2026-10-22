@@ -189,7 +189,8 @@ enum SnapshotBuilder {
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
         recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation,
-        observation: SnapshotObservationOptions = .defaults
+        observation: SnapshotObservationOptions = .defaults,
+        windowID: CGWindowID? = nil
     ) throws -> AppSnapshot {
         try observation.validate()
         if app.name == FixtureBridge.appName, let fixtureState = try FixtureBridge.readState() {
@@ -208,7 +209,17 @@ enum SnapshotBuilder {
             || appHasLazyWebAccessibility(bundleURL: app.runningApplication.bundleURL))
         let systemWide = AXUIElementCreateSystemWide()
         var focusedApplication = copyElement(systemWide, attribute: kAXFocusedApplicationAttribute)
-        var focusedWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
+        // A window asked for by id is read as it is: never swapped for another, activated or raised.
+        let recoveryPolicy = windowID == nil ? recoveryPolicy : .readOnly
+        var focusedWindow: AXUIElement?
+        if let windowID {
+            guard let named = windowElement(for: windowID, appElement: appElement) else {
+                throw ComputerUseError.stateUnavailable("window_id \(windowID) is not a current window of \(app.bundleIdentifier ?? app.name). Call list_windows for its current windows.")
+            }
+            focusedWindow = named
+        } else {
+            focusedWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
+        }
         if focusedWindow == nil,
            recoveryPolicy == .allowActivation,
            recoverVisibleWindow(for: app, appElement: appElement, preferredWindow: nil) {
@@ -228,7 +239,7 @@ enum SnapshotBuilder {
         // the title/area heuristics remain the fallback.
         var windowCapture = TimingLog.measure("snapshot.window_capture") {
             WindowCapture.resolve(for: app.pid, exactWindowID: SkyLightSPI.shared.windowID(for: rootWindow), capture: observation.includeScreenshot)
-                ?? WindowCapture.resolve(for: app.pid, titleHint: windowTitle, capture: observation.includeScreenshot)
+                ?? (windowID != nil ? nil : WindowCapture.resolve(for: app.pid, titleHint: windowTitle, capture: observation.includeScreenshot))
         }
         if windowCapture == nil,
            recoveryPolicy == .allowActivation,
@@ -257,7 +268,8 @@ enum SnapshotBuilder {
             textLimit: textLimit,
             treeLimits: treeLimits,
             lazyWebAccessibility: lazyWebAccessibility,
-            observation: observation
+            observation: observation,
+            windowBound: windowID != nil
         )
     }
 
@@ -272,7 +284,8 @@ enum SnapshotBuilder {
         textLimit: SnapshotTextLimit,
         treeLimits: AccessibilityTreeLimits,
         lazyWebAccessibility: Bool,
-        observation: SnapshotObservationOptions
+        observation: SnapshotObservationOptions,
+        windowBound: Bool = false
     ) -> AppSnapshot {
         let windowBounds = windowCapture.bounds
         let screenshot = observation.includeScreenshot ? windowCapture.screenshotResult()
@@ -286,7 +299,12 @@ enum SnapshotBuilder {
                                windowElement: rootElement, elements: [:], screenshotNote: screenshot.note,
                                observation: observation)
         }
-        let focusedElement = preferredFocusedElement(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
+        var focusedElement = preferredFocusedElement(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
+        // A window read by id need not be the key window; focus held in another window is not its
+        // focus, so type_text cannot write into that other window.
+        if windowBound, let element = focusedElement, !belongsToWindow(element, window: rootElement) {
+            focusedElement = nil
+        }
         let selectedText = focusedElement.flatMap { copySelectedText($0, textLimit: textLimit) }
         let context = RenderContext(
             windowBounds: windowBounds,
@@ -2382,6 +2400,34 @@ extension SnapshotBuilder {
             windowBounds: meta.bounds,
             focusedElement: focusedElement
         )
+    }
+
+    /// The app's windows as accessibility lists them on this Space, read-only: the window_id that
+    /// get_app_state and query take, title, subrole, whether it is the app's focused window,
+    /// whether it is minimized, and its frame in screen points.
+    static func listWindows(for app: RunningAppDescriptor) throws -> [[String: Any]] {
+        guard PermissionDiagnostics.current().accessibilityTrusted else {
+            throw ComputerUseError.permissionDenied("Accessibility permission is required. Run `open-computer-use doctor` and grant access to Open Computer Use.")
+        }
+
+        let appElement = AXUIElementCreateApplication(app.pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.1)
+        let focusedID = copyElement(appElement, attribute: kAXFocusedWindowAttribute).flatMap { SkyLightSPI.shared.windowID(for: $0) }
+        return (copyArray(appElement, attribute: kAXWindowsAttribute) ?? []).compactMap { window in
+            guard let id = SkyLightSPI.shared.windowID(for: window) else { return nil }
+            var entry: [String: Any] = [
+                "window_id": Int(id),
+                "title": stringValue(of: window, attribute: kAXTitleAttribute) ?? "",
+                "subrole": stringValue(of: window, attribute: kAXSubroleAttribute) ?? "",
+                "focused": id == focusedID,
+                "minimized": boolValue(of: window, attribute: kAXMinimizedAttribute) == true,
+            ]
+            if let frame = axFrame(position: attributeValue(of: window, attribute: kAXPositionAttribute),
+                                   size: attributeValue(of: window, attribute: kAXSizeAttribute)) {
+                entry["bounds"] = ["x": frame.origin.x, "y": frame.origin.y, "w": frame.width, "h": frame.height]
+            }
+            return entry
+        }
     }
 
     /// Current window bounds and element frame for a queried control, so an action

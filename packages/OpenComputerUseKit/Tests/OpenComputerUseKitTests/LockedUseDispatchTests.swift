@@ -40,7 +40,8 @@ final class LockedUseDispatchTests: XCTestCase {
             { try SkyClickDispatcher.click(target: click, clickCount: 1) },
             { try SkyKeyboardDispatcher.typeText(target: keyboard, text: "probe") },
             { try SkyKeyboardDispatcher.pressKey(target: keyboard, key: "cmd+a") },
-            { _ = try ComputerUseService().query(app: "NoSuchRevokedLeaseApp", text: "Send") }
+            { _ = try ComputerUseService().query(app: "NoSuchRevokedLeaseApp", text: "Send") },
+            { _ = try ComputerUseService().listWindows(app: "NoSuchRevokedLeaseApp") }
         ]
         for action in actions {
             try LockedUseActionScope.withValidator({ throw Revoked.lease }, body: {

@@ -88,6 +88,11 @@ verification throw through `js`. Verification still reads the applied range when
 action read-back is disabled. The tool does not use keyboard/pointer fallback or
 activate the application. Linux/Windows report the native unsupported-tool error.
 
+On macOS, `await app.listWindows()` returns the app's windows as
+`[{ window_id, title, subrole, focused, minimized, bounds }]`, and
+`app.getAXState({ windowId })` reads one of them instead of the key window; later
+actions stay on it until a state read without `windowId`.
+
 Discovery is available through `await cua.getState()` and
 `await cua.listApps()`. `listApps()` normalizes the native human-readable app
 catalog into an array of `{ id, displayName, lastUsedDate?, useCount?,

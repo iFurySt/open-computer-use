@@ -104,6 +104,7 @@ public enum ToolDefinitions {
                         description: "keep (default) leaves the window where it is. agent_display (macOS) parks the app's window on an invisible display owned by the agent so a covered or other-Space window renders, exposes its full tree and accepts input without touching the user's Space, focus or pointer; the window disappears from the user's desktop until restore or process exit. restore puts it back.",
                         enumValues: WindowPlacement.allCases.map(\.rawValue)
                     ),
+                    "window_id": positiveIntegerProperty(description: "Read this window (a window_id from list_windows) instead of the app's key window, without activating or raising it. Later actions and their results stay on this window until get_app_state is called without window_id or the window closes. Keyboard input still goes to the app's focused window unless key_method is sky_key."),
                 ],
                 required: ["app"]
             )
@@ -113,6 +114,17 @@ public enum ToolDefinitions {
             description: "List the apps on this computer. Returns the set of apps that are currently running, as well as any that have been used in the last 14 days, including details on usage frequency. This tool is part of plugin `Computer Use`.",
             annotations: readOnlyAnnotations(),
             inputSchema: objectSchema(properties: [:], required: [])
+        ),
+        ToolDefinition(
+            name: "list_windows",
+            description: "List a running app's windows as accessibility reports them on the current Space: window_id (what get_app_state and query take), title, subrole, focused, minimized, and bounds in screen points. Does not launch, activate or raise the app. This tool is part of plugin `Computer Use`.",
+            annotations: readOnlyAnnotations(),
+            inputSchema: objectSchema(
+                properties: [
+                    "app": stringProperty(description: "App name or bundle identifier"),
+                ],
+                required: ["app"]
+            )
         ),
         ToolDefinition(
             name: "perform_secondary_action",

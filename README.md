@@ -183,7 +183,7 @@ evaluation. `ocu repl` keeps them for the current terminal session until
 `.exit`, Ctrl-D, or termination; `.reset` clears its bindings. On macOS, the
 separate hidden `Open Computer Use.app` permission agent may remain resident so
 later commands reuse the same permission identity. `ocu mcp` continues to expose
-the nine core native tools, plus `query` on macOS.
+the nine core native tools, plus `query` and `list_windows` on macOS.
 
 The npm launcher itself currently requires Node.js 18 or newer. Its help always lists
 `js` / `repl`, while `ocu capabilities --json` reports whether Node, the REPL

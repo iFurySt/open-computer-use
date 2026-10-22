@@ -40,6 +40,7 @@ type_text
 press_key
 set_value
 select_text   (macOS runtime only)
+list_windows  (macOS runtime only)
 ```
 
 macOS also exposes `query` for targeted AX lookup. These nine core tools remain the cross-platform compatibility surface. The bundled Codex plugin uses a
@@ -106,7 +107,7 @@ ocu repl
 session and top-level bindings for the current terminal until `.exit`, Ctrl-D,
 or termination; `.editor` / `.end` accepts multiline input and `.reset`
 discards JavaScript bindings. Use `nodeRepl.write(value)` for explicit output.
-The native `ocu mcp` surface exposes the nine core tools above, plus `query` on macOS. Run
+The native `ocu mcp` surface exposes the nine core tools above, plus `query`, `select_text` and `list_windows` on macOS. Run
 `ocu capabilities --json` to inspect component availability instead of
 inferring support from a command being present in help.
 
@@ -182,6 +183,32 @@ open-computer-use snapshot --max-tree-nodes 3000 --max-tree-depth 96 "Google Chr
   Use persistent MCP or `ocu repl` for query then action; separate CLI calls cannot share indexes.
   Actions revalidate the process/window/control and current geometry. On failure, query again.
   See [targeted query](../../../docs/targeted-query.md) for options and examples.
+
+## Choosing a Window (macOS)
+
+`get_app_state` reads the app's key window. When the app has several windows, list them and
+pass the one you want as `window_id`:
+
+```sh
+ocu call --calls '[
+  {"tool":"list_windows","args":{"app":"Google Chrome"}},
+  {"tool":"get_app_state","args":{"app":"Google Chrome","window_id":4127}}
+]'
+```
+
+`list_windows` returns `{ "windows": [{ window_id, title, subrole, focused, minimized, bounds }] }`
+for the windows accessibility reports on the current Space; `bounds` is in screen points. It only
+reads running apps and never launches, activates or raises them. `query` takes the same `window_id`.
+
+With `window_id`, the tree, screenshot, focus and selection come from that window, which is not
+activated or raised. Element and coordinate actions then target it, and their read-back stays on it,
+until `get_app_state` is called without `window_id` or the window closes (the read-back then returns
+the key window). An id that is not a current window of the app returns an error. Keyboard input
+follows the app's keyboard focus: `type_text` refuses when the focused field is in another window,
+and `key_method: "sky_key"` delivers keys to the bound window. A coordinate click on a part of the
+window covered by another window of the same app needs `click_method: "sky_click"`. In JavaScript:
+`await app.listWindows()` and `await app.getAXState({ windowId })`. Linux and Windows do not
+implement `list_windows`, and reject `window_id`.
 
 ## Choosing a Click Method
 

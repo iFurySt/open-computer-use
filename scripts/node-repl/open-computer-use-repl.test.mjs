@@ -394,6 +394,22 @@ test("query returns truncation metadata and rejects malformed native responses",
   assert.match(bad.content.at(-1).text, /Invalid query response/);
 });
 
+test("listWindows returns the native windows and getAXState binds one by windowId", async () => {
+  const native = mockNative(), session = new PersistentJavaScriptSession({ native });
+  const request = native.request;
+  native.request = async (method, params) => params.name === "list_windows"
+    ? (native.calls.push(params), textResult(JSON.stringify({ windows: [{ window_id: 41, title: "Notes", focused: false }] })))
+    : request(method, params);
+  const result = await session.run(`var windowedApp = await cua.getApp("Text", { initialState: false }); var windows = await windowedApp.listWindows(); await windowedApp.getAXState({ windowId: windows[0].window_id, emit: false }); nodeRepl.write(windows[0].title);`);
+  assert.equal(result.isError, false, result.content.at(-1).text);
+  assert.deepEqual(native.calls.map(c => c.arguments), [{ app: "Text" }, { app: "Text", window_id: 41 }]);
+  assert.equal(result.content.at(-1).text, "Notes");
+  native.request = async () => textResult("[]");
+  const bad = await session.run(`await windowedApp.listWindows();`);
+  assert.equal(bad.isError, true);
+  assert.match(bad.content.at(-1).text, /Invalid list_windows response/);
+});
+
 
 for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
   test(`${Session.name}: selectText forwards all selection modes without a snapshot`, async t => {
