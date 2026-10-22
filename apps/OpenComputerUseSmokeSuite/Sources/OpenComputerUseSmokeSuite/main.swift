@@ -199,6 +199,7 @@ enum OpenComputerUseSmokeSuite {
         let expectedTools: Set<String> = [
             "list_apps", "get_app_state", "query", "click", "perform_secondary_action",
             "scroll", "drag", "type_text", "press_key", "set_value", "select_text",
+            "read_clipboard", "write_clipboard",
         ]
         let toolNames = Set(tools.compactMap { $0["name"] as? String })
         guard tools.count == expectedTools.count, toolNames == expectedTools else {

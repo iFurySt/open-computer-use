@@ -131,6 +131,10 @@ public final class ComputerUseToolDispatcher {
                 suffix: try selectionString("suffix", in: arguments),
                 selection: try parseSelectionMode(try selectionString("selection", in: arguments))
             )
+        case "read_clipboard":
+            return try service.readClipboard()
+        case "write_clipboard":
+            return try service.writeClipboard(text: requireString("text", in: arguments))
         default:
             throw ComputerUseError.unsupportedTool(name)
         }

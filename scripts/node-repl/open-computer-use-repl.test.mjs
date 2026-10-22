@@ -433,3 +433,27 @@ for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
     }
   });
 }
+
+for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
+  test(`${Session.name}: clipboard reads and writes plain text and preserves native errors`, async t => {
+    const native = mockNative(), session = new Session({ native });
+    t.after(() => session.close?.());
+    native.request = async (method, params) => {
+      native.calls.push(params);
+      return params.name === "read_clipboard" ? textResult("copied 中文🙂") : textResult("ok");
+    };
+    let result = await session.run(`nodeRepl.write(await cua.readClipboard()); await cua.writeClipboard("prepared");`);
+    assert.equal(result.isError, false, result.content.at(-1).text);
+    assert.ok(result.content.some(item => item.text === "copied 中文🙂"));
+    assert.deepEqual(native.calls.map(call => [call.name, call.arguments]), [["read_clipboard", {}], ["write_clipboard", { text: "prepared" }]]);
+    for (const args of [``, `""`, `3`, `null`]) {
+      result = await session.run(`await cua.writeClipboard(${args});`);
+      assert.equal(result.isError, true, args);
+    }
+    assert.equal(native.calls.length, 2);
+    native.request = async () => textResult("The clipboard item is marked concealed, transient or auto-generated, so it is not returned.", true);
+    result = await session.run(`await cua.readClipboard();`);
+    assert.equal(result.isError, true);
+    assert.match(result.content.at(-1).text, /not returned/);
+  });
+}
