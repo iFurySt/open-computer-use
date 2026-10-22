@@ -141,6 +141,18 @@ public enum ToolDefinitions {
             )
         ),
         ToolDefinition(
+            name: "press_menu",
+            description: "Press a menu bar command by its path through accessibility, with no keyboard or pointer input and without activating the app, so it works with the app in the background. Titles are matched case-insensitively and \"...\" matches \"…\". A title that is not found returns the items at that level; a disabled item is not pressed. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(
+                properties: [
+                    "app": stringProperty(description: "App name or bundle identifier"),
+                    "path": stringProperty(description: "Menu bar title, then each item down to the command, separated by >, e.g. \"File > Save As…\" or \"Format > Font > Show Fonts\""),
+                ],
+                required: ["app", "path"]
+            )
+        ),
+        ToolDefinition(
             name: "scroll",
             description: "Scroll an element in a direction by a number of pages. This tool is part of plugin `Computer Use`.",
             annotations: defaultAnnotations(),

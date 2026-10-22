@@ -47,6 +47,7 @@ getAXStateAndScreenshot({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windo
 click(elementIndexOrPoint, options?)
 drag([fromX, fromY], [toX, toY])
 pressKey(key, options?)
+pressMenu(path)  // macOS
 scroll(elementIndex, direction, pages?)
 setValue(elementIndex, value)
 selectText(elementIndex, text, { prefix?, suffix?, selection? })  // macOS
@@ -87,6 +88,11 @@ Missing/ambiguous text, unsupported range selection, changed text and failed ran
 verification throw through `js`. Verification still reads the applied range when full
 action read-back is disabled. The tool does not use keyboard/pointer fallback or
 activate the application. Linux/Windows report the native unsupported-tool error.
+
+On macOS, `pressMenu("File > Save As…")` presses a menu bar command through
+accessibility without activating the app, so it works in the background. A missing
+title throws with the items at that level; a disabled item or a path ending on a
+submenu throws. Linux/Windows report the native unsupported-tool error.
 
 Discovery is available through `await cua.getState()` and
 `await cua.listApps()`. `listApps()` normalizes the native human-readable app

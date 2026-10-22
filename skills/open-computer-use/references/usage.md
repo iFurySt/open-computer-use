@@ -40,6 +40,7 @@ type_text
 press_key
 set_value
 select_text   (macOS runtime only)
+press_menu    (macOS runtime only)
 ```
 
 macOS also exposes `query` for targeted AX lookup. These nine core tools remain the cross-platform compatibility surface. The bundled Codex plugin uses a
@@ -274,6 +275,31 @@ return errors. The action verifies the applied UTF-16 range even when full actio
 read-back is off; use `getAXState()` for the next UI observation. It does not activate
 the app or fall back to keyboard/pointer input. Linux and Windows do not implement
 `select_text` yet.
+
+## Menu Commands (macOS)
+
+`press_menu` presses a menu bar command by its path, such as `"File > Save As…"` or
+`"Format > Font > Show Fonts"`. In JavaScript it is `await app.pressMenu(path)`.
+
+```bash
+open-computer-use call press_menu --args '{"app":"TextEdit","path":"File > New"}'
+```
+
+The press goes through accessibility (`AXPress`): no keyboard or pointer input, no
+activation, no raise, so the app can stay in the background, hidden or behind other
+windows. It does not need `get_app_state` first; an app with no window still has menus.
+
+- Titles are matched case-insensitively, ignoring surrounding spaces, and `...` matches `…`.
+  A title that itself contains `>` cannot be named.
+- A title that is not found returns an error listing the items at that level.
+- A path that ends on a menu title or a submenu returns an error listing its items, since
+  pressing it would open the menu on screen.
+- A disabled item is not pressed and returns an error. A hidden app has no key window, so
+  commands that act on one, such as `File > Close`, are disabled there.
+- The command runs as if chosen from the menu. Ask before commands that close, quit, delete
+  or send.
+
+Linux and Windows do not implement `press_menu` and return `unsupportedTool`.
 
 ## Software Cursor
 
