@@ -37,6 +37,32 @@ func agentDisplayPlacement(windowSize: CGSize, displayBounds: CGRect, inset: CGF
     )
 }
 
+/// Where the agent display goes once macOS has added it, or nil to leave the
+/// arrangement alone. macOS puts a new display beside the main one and can push
+/// the user's other displays aside, leaving the invisible display between two
+/// of theirs where the pointer crosses it. When any of theirs moved, they go
+/// back to `displaysBefore` and the agent display goes past the right edge of
+/// the rightmost of them. A single display never moves.
+func agentDisplayOrigin(displaysBefore: [CGRect], displaysNow: [CGRect]) -> CGPoint? {
+    guard displaysBefore != displaysNow, let rightmost = displaysBefore.max(by: { $0.maxX < $1.maxX }) else {
+        return nil
+    }
+    return CGPoint(x: rightmost.maxX, y: rightmost.minY)
+}
+
+/// Windows macOS moved onto a new agent display: on one of the user's displays
+/// before the agent display was created and on the agent display now. Each maps
+/// to the origin it had before. A frame on none of the user's displays is not a
+/// place to return to (frames read while Spaces switch are shifted off them).
+func windowsMovedOntoAgentDisplay(_ displayBounds: CGRect, userDisplays: [CGRect], before: [CGWindowID: CGRect], now: [CGWindowID: CGRect]) -> [CGWindowID: CGPoint] {
+    before.reduce(into: [:]) { moved, window in
+        if !displayBounds.intersects(window.value), userDisplays.contains(where: { $0.intersects(window.value) }),
+           let frame = now[window.key], displayBounds.intersects(frame) {
+            moved[window.key] = window.value.origin
+        }
+    }
+}
+
 /// The agent's own display: a virtual display (the mechanism behind Screen
 /// Sharing's headless sessions) that the user never sees. A window parked on it
 /// is genuinely on screen for WindowServer, so its app renders it, exposes its
@@ -230,6 +256,8 @@ final class AgentDisplay: @unchecked Sendable {
         }
         let spi = SkyLightSPI.shared
         let spacesBefore = Set((spi.managedDisplaySpaces() ?? [:]).values.flatMap { $0 })
+        let displaysBefore = Self.activeDisplays().map { (id: $0, bounds: CGDisplayBounds($0)) }
+        let windowsBefore = Self.onScreenWindows()
         let start = TimingLog.now()
         var newHandle: UnsafeMutableRawPointer?
         let id = ocu_virtual_display_create("Open Computer Use", UInt32(Self.displaySize.width), UInt32(Self.displaySize.height), 60, &newHandle)
@@ -257,8 +285,74 @@ final class AgentDisplay: @unchecked Sendable {
             Thread.sleep(forTimeInterval: Self.displayFallbackSettle)
         }
         displaySpaceIDs = newSpaces
+        placeBesideUserDisplays(id, displaysBefore: displaysBefore)
+        returnRememberedWindows(windowsBefore, userDisplays: displaysBefore.map(\.bounds))
         TimingLog.log("agent_display.ready", since: start)
         return displayBounds ?? .zero
+    }
+
+    /// Put the user's displays back where they were when macOS pushed them
+    /// aside for the agent display, and the agent display past the rightmost
+    /// (see `agentDisplayOrigin`). A display mirroring another is left alone:
+    /// setting its origin would take it out of the mirror set.
+    private func placeBesideUserDisplays(_ id: CGDirectDisplayID, displaysBefore: [(id: CGDirectDisplayID, bounds: CGRect)]) {
+        let theirs = displaysBefore.filter { CGDisplayMirrorsDisplay($0.id) == kCGNullDirectDisplay }
+        guard let origin = agentDisplayOrigin(displaysBefore: theirs.map(\.bounds), displaysNow: theirs.map { CGDisplayBounds($0.id) }) else {
+            return
+        }
+        var config: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&config) == .success, let config else { return }
+        for display in theirs {
+            CGConfigureDisplayOrigin(config, display.id, Int32(display.bounds.minX), Int32(display.bounds.minY))
+        }
+        CGConfigureDisplayOrigin(config, id, Int32(origin.x), Int32(origin.y))
+        // Best effort: on failure the arrangement stays as macOS made it. The
+        // configuration is invalid on return either way.
+        _ = CGCompleteDisplayConfiguration(config, .forSession)
+    }
+
+    /// macOS remembers windows on a display it has seen before, and the agent
+    /// display has the same identity every time: a window still on an earlier
+    /// one when it went away (the process was killed before restoring) is moved
+    /// onto every new one, off the user's screen. Each goes back where it was.
+    private func returnRememberedWindows(_ before: [CGWindowID: (pid: pid_t, frame: CGRect)], userDisplays: [CGRect]) {
+        guard let bounds = displayBounds else { return }
+        let moved = windowsMovedOntoAgentDisplay(
+            bounds,
+            userDisplays: userDisplays,
+            before: before.filter { parked[$0.key] == nil }.mapValues(\.frame),
+            now: Self.onScreenWindows().mapValues(\.frame)
+        )
+        for (windowID, origin) in moved {
+            var windows: CFTypeRef?
+            guard let pid = before[windowID]?.pid,
+                  AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXWindowsAttribute as CFString, &windows) == .success,
+                  let element = (windows as? [AXUIElement])?.first(where: { SkyLightSPI.shared.windowID(for: $0) == windowID })
+            else { continue }
+            try? setAXPosition(element, origin)
+        }
+    }
+
+    private static func activeDisplays() -> [CGDirectDisplayID] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else { return [] }
+        var ids = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &ids, &count) == .success else { return [] }
+        return Array(ids.prefix(Int(count)))
+    }
+
+    /// On-screen app windows and their frames, keyed by window ID.
+    private static func onScreenWindows() -> [CGWindowID: (pid: pid_t, frame: CGRect)] {
+        let infoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        var windows: [CGWindowID: (pid: pid_t, frame: CGRect)] = [:]
+        for info in infoList where (info[kCGWindowLayer as String] as? Int) == 0 {
+            guard let number = info[kCGWindowNumber as String] as? NSNumber,
+                  let pid = info[kCGWindowOwnerPID as String] as? pid_t,
+                  let dictionary = info[kCGWindowBounds as String] as? NSDictionary,
+                  let frame = CGRect(dictionaryRepresentation: dictionary) else { continue }
+            windows[number.uint32Value] = (pid, frame)
+        }
+        return windows
     }
 
     private func destroyDisplayIfIdle() {
