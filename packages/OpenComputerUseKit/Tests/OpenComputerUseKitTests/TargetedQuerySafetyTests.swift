@@ -115,4 +115,52 @@ final class TargetedQuerySafetyTests: XCTestCase {
         XCTAssertEqual(failed.matches, [0])
         XCTAssertEqual(failed.stopReason, "ax_error")
     }
+
+    func testSettleMsRejectsAnythingButAPositiveInteger() {
+        let dispatcher = ComputerUseToolDispatcher()
+        for value: Any in [0, -1, 1.5, true, "300"] {
+            let result = dispatcher.callToolAsResult(name: "get_app_state", arguments: ["app": "NoSuchReviewApp", "settle_ms": value])
+            XCTAssertTrue(result.isError)
+            XCTAssertTrue(result.primaryText?.contains("settle_ms") == true, "\(value)")
+        }
+    }
+
+    func testStableDigestWaitSettlesAfterChangesStopAndHoldsTheCeiling() {
+        // A fake clock: sleeping advances it, and every digest read costs 20 ms.
+        var clock = 0.0
+        var polls: [Double] = []
+        func wait(quiet: Double, timeout: Double = 5, digest: @escaping (Double) -> Int) -> Bool {
+            clock = 0
+            polls = []
+            return waitForStableDigest(quiet: quiet, timeout: timeout, now: { clock }, sleep: { clock += $0 }) {
+                polls.append(clock)
+                defer { clock += 0.02 }
+                return digest(clock)
+            }
+        }
+
+        // Already still: costs the quiet period plus the first read.
+        XCTAssertTrue(wait(quiet: 0.3) { _ in 7 })
+        XCTAssertEqual(clock, 0.32, accuracy: 0.03)
+
+        // Loading until 2 s: settles one quiet period after the last change.
+        XCTAssertTrue(wait(quiet: 0.3) { t in t < 2 ? Int(t * 20) : -1 })
+        XCTAssertGreaterThanOrEqual(clock, 2.3)
+        XCTAssertLessThan(clock, 2.5)
+
+        // A blip restarts the quiet period from the read that sees it end (at 0.36 s).
+        XCTAssertTrue(wait(quiet: 0.3) { t in (0.2..<0.3).contains(t) ? 1 : 0 })
+        XCTAssertGreaterThanOrEqual(clock, 0.66)
+        XCTAssertLessThan(clock, 0.8)
+
+        // Never still: gives up at the ceiling, and no read starts past it.
+        var tick = 0
+        XCTAssertFalse(wait(quiet: 0.3, timeout: 5) { _ in tick += 1; return tick })
+        XCTAssertLessThanOrEqual(polls.max() ?? 0, 5)
+        XCTAssertLessThan(clock, 5.1)
+
+        // A quiet period longer than the ceiling cannot be met.
+        XCTAssertFalse(wait(quiet: 2, timeout: 1) { _ in 7 })
+        XCTAssertLessThanOrEqual(clock, 1.05)
+    }
 }

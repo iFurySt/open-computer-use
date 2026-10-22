@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-10-23 | macOS 等待窗口稳定 | 动作之后不必猜测 sleep 时长：读取状态时可以等到窗口不再变化，静止窗口只多花指定时长，持续变化的窗口最多等 5 秒。 | `get_app_state` 新增 `settle_ms`（JS `getAXState({ settleMs })`）：读取前轮询目标窗口的 AX 指纹（角色、文本、值、窗口内布局），连续 `settle_ms` 不变即读取，最长 5 秒，并在结果中注明是否稳定与等待时长；只读、不激活、不截图；Linux / Windows 明确报不支持。 |
 | 2026-10-13 | Windows 滚动与坐标 | Windows 上 `scroll` 不再在默认配置下直接失败；150% 缩放且窗口位于屏幕右侧时，`get_app_state` 也能返回截图和窗口 bounds。 | 修复 `scroll` 请求漏传 `windowBounds` 导致坐标回退必然报 `No usable screenshot coordinates`；滚轮消息保留屏幕坐标并修正横向方向，PowerShell bridge 启动时对齐 DPI 物理坐标；`ScrollPattern` 在当前状态不可滚动时回退到坐标路径而不是让整个 tool call 失败。 |
 | 2026-10-13 | Windows 全局输入兜底 | 需要真实指针或键盘的 Windows 动作（`click_method=global`、WinUI 键盘输入、子控件点击）在显式授权后可用，默认路径完全不变。 | Windows 实现 `click_method=global` 真实指针点击；`drag` / `scroll` 的坐标回退在 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` 时使用真实指针，按键另需显式 `key_method=global`，`app_post` 仍保持 HWND 消息语义；未授权时在任何物理输入前拒绝，核对目标前台 / 命中 / 几何并在异常时释放输入。 |
 | 2026-10-17 | 1.1.2 修复发布 | 软件光标持续跟随移动窗口，Linux 批量动作可减少回读开销，安装链接统一到新仓库。 | 同步所有版本源至 1.1.2；发布窗口锚点跟踪、Linux 动作回读配置与仓库改名后的 npm / 插件元信息，沿用既有命令和 App 签名身份。 |

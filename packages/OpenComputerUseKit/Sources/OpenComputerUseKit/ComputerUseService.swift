@@ -595,9 +595,19 @@ public final class ComputerUseService {
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
         windowPlacement: WindowPlacement = .keep,
-        observation: SnapshotObservationOptions = .defaults
+        observation: SnapshotObservationOptions = .defaults,
+        settleMs: Int? = nil
     ) throws -> ToolCallResult {
         try observation.validate()
+        if let settleMs {
+            let note = try waitForWindowToSettle(app: query, quiet: settleMs, maxNodes: treeLimits.maxNodeCount)
+            let result = try getAppState(app: query, textLimit: textLimit, treeLimits: treeLimits,
+                                         windowPlacement: windowPlacement, observation: observation)
+            // After the state text and before the screenshot, so primaryText stays the state.
+            var content = result.content
+            content.insert(.text(note), at: content.firstIndex { $0.dictionary["type"] as? String == "image" } ?? content.endIndex)
+            return ToolCallResult(content: content, isError: result.isError)
+        }
         guard windowPlacement != .keep else {
             return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, observation: observation), style: .fullState)
         }
@@ -620,6 +630,25 @@ public final class ComputerUseService {
         }
 
         return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation), style: .fullState)
+    }
+
+    /// Waits until the app's window has looked the same to accessibility (roles, text, values,
+    /// layout) for `quiet` ms, at most 5 s. Read-only: no activation, no capture.
+    private func waitForWindowToSettle(app query: String, quiet: Int, maxNodes: Int) throws -> String {
+        let quiet = min(quiet, 2000)
+        try requireUsableComputerUseSession()
+        let start = ProcessInfo.processInfo.systemUptime
+        guard let context = try? SnapshotBuilder.resolveTargetWindow(for: try AppDiscovery.resolve(query)) else {
+            return "Settle skipped: no window to watch yet."
+        }
+        let walk = TargetedAX.Criteria(text: nil, exact: false, role: nil, limit: 1, maxNodes: maxNodes, digestOnly: true)
+        let settled = try waitForStableDigest(quiet: TimeInterval(quiet) / 1000, timeout: 5) {
+            try TimingLog.measure("get_app_state.settle_digest") { try SnapshotBuilder.targetedSearch(walk, in: context).digest }
+        }
+        let waited = Int((ProcessInfo.processInfo.systemUptime - start) * 1000)
+        return settled
+            ? "Settled: the window was unchanged for \(quiet) ms (waited \(waited) ms)."
+            : "Not settled: the window was still changing after \(waited) ms; this is its state at that point."
     }
 
     public func click(

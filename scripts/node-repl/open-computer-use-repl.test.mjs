@@ -143,7 +143,7 @@ test("app-bound API forwards background-operation options", async () => {
   const session = new PersistentJavaScriptSession({ native });
   const result = await session.run(`
     var backgroundApp = await cua.getApp("Text");
-    await backgroundApp.getAXState({ emit: false, textLimit: "max", maxTreeNodes: 42, maxTreeDepth: 7, windowPlacement: "agent_display" });
+    await backgroundApp.getAXState({ emit: false, textLimit: "max", maxTreeNodes: 42, maxTreeDepth: 7, windowPlacement: "agent_display", settleMs: 300 });
     await backgroundApp.getScreenshot({ emit: false, windowPlacement: "keep" });
     await backgroundApp.getAXStateAndScreenshot({ emit: false, windowPlacement: "restore" });
     await backgroundApp.typeText("hello", { keyMethod: "sky_key" });
@@ -160,6 +160,7 @@ test("app-bound API forwards background-operation options", async () => {
       max_tree_nodes: 42,
       max_tree_depth: 7,
       window_placement: "agent_display",
+      settle_ms: 300,
     },
   });
   assert.deepEqual(native.calls[2], {
