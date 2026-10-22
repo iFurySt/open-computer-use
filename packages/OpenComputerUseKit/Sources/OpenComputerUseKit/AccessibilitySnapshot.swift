@@ -1797,8 +1797,12 @@ private func summarizedGenericText(
         return nil
     }
 
-    let texts = descendantTextsForSummary(of: element, textLimit: textLimit)
-    guard texts.count >= minimumTextCount else {
+    // A page that bolds the letters typed draws one name as a run of one-letter texts, a blank
+    // one between words; spelled, the run reads as the one name the picture shows.
+    let pieces = descendantTextsForSummary(of: element, textLimit: textLimit, keepsBlanks: true)
+    let texts = spellingSplitLetters(pieces)
+    let spelled = texts.count < pieces.filter { !$0.isEmpty }.count
+    guard texts.count >= minimumTextCount || spelled else {
         return nil
     }
 
@@ -1843,6 +1847,28 @@ private func summaryImageDescendants(of element: AXUIElement, depth: Int = 0) ->
 
 func shouldRenderGenericTextSummaryAsChildren(_ genericTextSummary: String?, summaryImageCount: Int) -> Bool {
     genericTextSummary != nil && summaryImageCount > 0
+}
+
+/// The texts a group holds, with each run of one-letter pieces spelled as the words it draws:
+/// a blank piece inside a run is the space between two words. Other pieces stay as they are,
+/// blanks outside a run are dropped, and a run with no lowercase letter stays letters (a
+/// calendar's "S M T W T F S" is not a word).
+func spellingSplitLetters(_ pieces: [String]) -> [String] {
+    var texts: [String] = [], run = ""
+    func close() {
+        let words = run.split(whereSeparator: \.isWhitespace)
+        if run.contains(where: \.isLowercase) {
+            texts.append(words.joined(separator: " "))
+        } else {
+            texts.append(contentsOf: words.flatMap { $0.map(String.init) })
+        }
+        run = ""
+    }
+    for piece in pieces {
+        if piece.count <= 1 { run += piece.isEmpty ? " " : piece } else { close(); texts.append(piece) }
+    }
+    close()
+    return texts
 }
 
 func shouldMergeTextOnlySiblings(_ texts: [String]) -> Bool {
@@ -2207,7 +2233,8 @@ private func descendantTexts(
 private func descendantTextsForSummary(
     of element: AXUIElement,
     depth: Int = 0,
-    textLimit: SnapshotTextLimit = .defaults
+    textLimit: SnapshotTextLimit = .defaults,
+    keepsBlanks: Bool = false
 ) -> [String] {
     guard depth < 8 else {
         return []
@@ -2229,8 +2256,10 @@ private func descendantTextsForSummary(
         }
     }
 
-    return (copyArray(element, attribute: kAXChildrenAttribute) ?? [])
-        .flatMap { descendantTextsForSummary(of: $0, depth: depth + 1, textLimit: textLimit) }
+    let texts = (copyArray(element, attribute: kAXChildrenAttribute) ?? [])
+        .flatMap { descendantTextsForSummary(of: $0, depth: depth + 1, textLimit: textLimit, keepsBlanks: keepsBlanks) }
+    // A blank static text is kept as "": between letters it is the space between two words.
+    return keepsBlanks && texts.isEmpty && role == kAXStaticTextRole as String ? [""] : texts
 }
 
 private func summaryTextForLink(
@@ -2398,9 +2427,13 @@ extension SnapshotBuilder {
             throw ComputerUseError.stateUnavailable("Query target no longer belongs to its window; run query again")
         }
         let scan = batchScan(element)
+        var budget = criteria.maxNodes
         guard scan.role == record.role,
               displayIdentifier(scan.identifier) == record.identifier,
-              targetedRecordMatches(criteria, role: scan.role, title: scan.title, description: scan.description, value: scan.value),
+              targetedRecordMatches(criteria, role: scan.role, title: scan.title, description: scan.description, value: scan.value,
+                                    help: scan.help, identifier: displayIdentifier(scan.identifier))
+                || (ownText(scan) == nil
+                    && targetedRecordMatches(criteria, role: scan.role, title: heldText(of: element, budget: &budget), description: nil, value: nil)),
               let frame = scan.globalFrame, !frame.isEmpty, frame.intersects(bounds) else {
             throw ComputerUseError.stateUnavailable("Query target changed or its current position is unavailable; run query again")
         }
@@ -2440,6 +2473,7 @@ extension SnapshotBuilder {
         kAXIdentifierAttribute as String,
         kAXPositionAttribute as String,
         kAXSizeAttribute as String,
+        kAXHelpAttribute as String,
     ]
 
     /// Use one bounded traversal so every app has the same visibility and match rules.
@@ -2448,6 +2482,9 @@ extension SnapshotBuilder {
         let expired = { ProcessInfo.processInfo.systemUptime >= deadline }
         var scans: [AXSearchNode: NodeScan] = [:]
         var records: [AXSearchNode: ElementRecord] = [:]
+        var order: [AXSearchNode] = []
+        var shown: Set<AXSearchNode> = []
+        var held: [AXSearchNode: [AXSearchNode]] = [:]
         var textTruncated = false
         var clip: CGRect?
         let root = AXSearchNode(element: context.windowElement)
@@ -2457,10 +2494,13 @@ extension SnapshotBuilder {
             let scan = batchScan(node.element)
             guard scan.role != nil else { throw ComputerUseError.stateUnavailable("AX node could not be read") }
             scans[node] = scan
+            order.append(node)
             if node == root { clip = scan.globalFrame }
             let visible = scan.globalFrame.map { frame in frame.isEmpty || clip.map { frame.intersects($0) } ?? true } ?? true
-            if visible, criteria.text != nil, [scan.title, scan.description, scan.value].contains(where: { ($0?.count ?? 0) > 1000 }) { textTruncated = true }
-            let matches = visible && targetedRecordMatches(criteria, role: scan.role, title: scan.title, description: scan.description, value: scan.value)
+            if visible { shown.insert(node) }
+            if visible, criteria.text != nil, [scan.title, scan.description, scan.value, scan.help].contains(where: { ($0?.count ?? 0) > 1000 }) { textTruncated = true }
+            let matches = visible && targetedRecordMatches(criteria, role: scan.role, title: scan.title, description: scan.description, value: scan.value,
+                                                           help: scan.help, identifier: displayIdentifier(scan.identifier))
             if matches { records[node] = makeRecord(node.element, scan: scan, windowBounds: context.windowBounds) }
             return (matches, visible)
         }, children: { node, remaining in
@@ -2480,12 +2520,47 @@ extension SnapshotBuilder {
                       let elements = values as? [AXUIElement] else {
                     throw ComputerUseError.stateUnavailable("AX children could not be read")
                 }
-                return (elements.map { AXSearchNode(element: $0) }, count > remaining)
+                let nodes = elements.map { AXSearchNode(element: $0) }
+                held[node] = nodes
+                return (nodes, count > remaining)
             }
             return ([], false)
         })
-        let reason = result.stopReason ?? (textTruncated ? "text_limit" : nil)
-        return .init(records: result.matches.compactMap { records[$0] }, truncated: reason != nil, stopReason: reason, visitedNodes: result.visitedNodes)
+        var reason = result.stopReason ?? (textTruncated ? "text_limit" : nil)
+        var found = result.matches.compactMap { records[$0] }
+        // A node with no text of its own is named by the text it holds, read from the scans the
+        // walk already took: no AX call per node.
+        if found.count < criteria.limit, criteria.text?.isEmpty == false {
+            let position = Dictionary(uniqueKeysWithValues: order.enumerated().map { ($1, $0) })
+            let named = namedByHeldText(criteria, roles: order.map { scans[$0]?.role },
+                                        own: order.map { scans[$0].flatMap(ownText) },
+                                        children: order.map { (held[$0] ?? []).compactMap { position[$0] } })
+            for hit in named where shown.contains(order[hit.node]) && records[order[hit.node]] == nil {
+                let node = order[hit.node]
+                found.append(makeRecord(node.element, scan: scans[node]!, windowBounds: context.windowBounds, title: hit.text))
+                if found.count >= criteria.limit { reason = reason ?? "limit"; break }
+            }
+        }
+        return .init(records: found, truncated: reason != nil, stopReason: reason, visitedNodes: result.visitedNodes)
+    }
+
+    /// What a node shows or says itself; nil when only what it holds can name it.
+    private static func ownText(_ scan: NodeScan) -> String? {
+        [scan.title, scan.description, scan.value].compactMap { $0 }
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
+
+    /// The text a node holds, read again before acting on a node the search named by it.
+    private static func heldText(of element: AXUIElement, budget: inout Int) -> String {
+        AXUIElementSetMessagingTimeout(element, 0.05)
+        budget -= 1
+        let scan = batchScan(element)
+        if let own = ownText(scan) { return own }
+        var pieces: [String] = []
+        for child in copyArray(element, attribute: kAXChildrenAttribute) ?? [] where budget > 0 {
+            pieces.append(heldText(of: child, budget: &budget))
+        }
+        return spellingSplitLetters(pieces).joined(separator: " ")
     }
 
     private struct AXSearchNode: Hashable {
@@ -2506,6 +2581,7 @@ extension SnapshotBuilder {
         let value: String?
         let identifier: String?
         let globalFrame: CGRect?
+        let help: String?
     }
 
     /// Read the scan attributes in a single `AXUIElementCopyMultipleAttributeValues`
@@ -2531,7 +2607,8 @@ extension SnapshotBuilder {
         func str(_ i: Int) -> String? { (raw[i] as? String).map { String($0.prefix(1001)) } }
         return NodeScan(
             role: str(0), title: str(1), description: str(2), value: str(3), identifier: str(4),
-            globalFrame: axFrame(position: raw[5], size: raw[6])
+            globalFrame: axFrame(position: raw[5], size: raw[6]),
+            help: str(7)
         )
     }
 
@@ -2552,7 +2629,7 @@ extension SnapshotBuilder {
         return CGRect(origin: point, size: extent)
     }
 
-    private static func makeRecord(_ element: AXUIElement, scan: NodeScan, windowBounds: CGRect?, index: Int = 0) -> ElementRecord {
+    private static func makeRecord(_ element: AXUIElement, scan: NodeScan, windowBounds: CGRect?, index: Int = 0, title: String? = nil) -> ElementRecord {
         let rawActions = copyActions(element) ?? []
         // Reuse the frame from the batched scan; window-relative when we have bounds.
         let localFrame: CGRect?
@@ -2567,7 +2644,7 @@ extension SnapshotBuilder {
             element: element,
             localFrame: localFrame,
             role: scan.role,
-            title: (scan.title ?? scan.description).map { String($0.prefix(1000)) },
+            title: (title ?? [scan.title, scan.description, scan.help].compactMap { $0 }.first { !$0.isEmpty }).map { String($0.prefix(1000)) },
             value: scan.value.map { String($0.prefix(1000)) },
             rawActions: rawActions,
             prettyActions: scan.role.map { meaningfulActions(rawActions, role: $0) } ?? rawActions
@@ -2578,20 +2655,23 @@ extension SnapshotBuilder {
 }
 
 /// Pure record filter, factored out so it is unit-testable without a live
-/// accessibility tree. `text` matches title/description/value (substring, or a
-/// full match when `exact`); `role` matches the AX role (the AX prefix optional).
+/// accessibility tree. `text` matches title/description/value, the tooltip (AXHelp)
+/// or the identifier the tree prints as `ID:` (substring, or a full match when
+/// `exact`); `role` matches the AX role (the AX prefix optional).
 func targetedRecordMatches(
     _ criteria: TargetedAX.Criteria,
     role: String?,
     title: String?,
     description: String?,
-    value: String?
+    value: String?,
+    help: String? = nil,
+    identifier: String? = nil
 ) -> Bool {
     if let wantedRole = criteria.role, !targetedRoleEquals(role, wantedRole) {
         return false
     }
     if let wantedText = criteria.text, !wantedText.isEmpty {
-        let fields = [title, description, value]
+        let fields = [title, description, value, help, identifier]
         let hit = fields.contains { field in
             guard let field else { return false }
             if criteria.exact {
@@ -2602,6 +2682,26 @@ func targetedRecordMatches(
         if !hit { return false }
     }
     return true
+}
+
+/// Nodes with no text of their own, named by the text they hold, as a person reads it: a page
+/// that bolds the letters typed draws one result as a nameless box of one-letter texts ("R",
+/// "e", "l"…), and then no node carries the name the picture shows. `own[i]` is node i's own
+/// text, `children[i]` the nodes it holds, which come after it in walk order. Returns the
+/// smallest such nodes that match, each with the text it holds.
+func namedByHeldText(_ criteria: TargetedAX.Criteria, roles: [String?], own: [String?], children: [[Int]]) -> [(node: Int, text: String)] {
+    guard criteria.text?.isEmpty == false else { return [] }
+    var text = [String](repeating: "", count: own.count)
+    var covered = [Bool](repeating: false, count: own.count)
+    var hits: [(node: Int, text: String)] = []
+    for node in own.indices.reversed() {
+        text[node] = own[node] ?? spellingSplitLetters(children[node].map { text[$0] }).joined(separator: " ")
+        let matches = targetedRecordMatches(criteria, role: roles[node], title: text[node], description: nil, value: nil)
+        let below = children[node].contains { covered[$0] }
+        if matches, !below, own[node] == nil { hits.append((node, text[node])) }
+        covered[node] = matches || below
+    }
+    return hits.reversed()
 }
 
 /// Role match tolerant of the `AX` prefix ("button" matches "AXButton").

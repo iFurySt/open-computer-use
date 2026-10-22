@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-10-23 | macOS 无名控件命名 | 网页把一个结果逐字母绘制（如搜索建议加粗已输入的字母）时，`get_app_state` 显示整词，`query` 也能按画面上的文字或 tooltip 找到它并直接操作。 | 文字摘要把连续单字符文本拼回单词，空白文本作为词间空格，不含小写字母的单字符（日历表头、数字、中文单字）保持原样；`query` 增加匹配 AXHelp 与 identifier，自身无文字的节点按包含文字匹配并以其为 title，动作前重新读取校验；不增加每个节点的 AX 往返。 |
 | 2026-10-13 | Windows 滚动与坐标 | Windows 上 `scroll` 不再在默认配置下直接失败；150% 缩放且窗口位于屏幕右侧时，`get_app_state` 也能返回截图和窗口 bounds。 | 修复 `scroll` 请求漏传 `windowBounds` 导致坐标回退必然报 `No usable screenshot coordinates`；滚轮消息保留屏幕坐标并修正横向方向，PowerShell bridge 启动时对齐 DPI 物理坐标；`ScrollPattern` 在当前状态不可滚动时回退到坐标路径而不是让整个 tool call 失败。 |
 | 2026-10-13 | Windows 全局输入兜底 | 需要真实指针或键盘的 Windows 动作（`click_method=global`、WinUI 键盘输入、子控件点击）在显式授权后可用，默认路径完全不变。 | Windows 实现 `click_method=global` 真实指针点击；`drag` / `scroll` 的坐标回退在 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` 时使用真实指针，按键另需显式 `key_method=global`，`app_post` 仍保持 HWND 消息语义；未授权时在任何物理输入前拒绝，核对目标前台 / 命中 / 几何并在异常时释放输入。 |
 | 2026-10-17 | 1.1.2 修复发布 | 软件光标持续跟随移动窗口，Linux 批量动作可减少回读开销，安装链接统一到新仓库。 | 同步所有版本源至 1.1.2；发布窗口锚点跟踪、Linux 动作回读配置与仓库改名后的 npm / 插件元信息，沿用既有命令和 App 签名身份。 |
