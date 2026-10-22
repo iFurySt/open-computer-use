@@ -32,7 +32,8 @@ func skyMenuKeyEquivalent(for parsed: ParsedKeyPress) -> SkyMenuKeyEquivalent? {
     var modifiers = 0
     for modifier in parsed.modifiers {
         switch modifier.flag {
-        case .maskShift:
+        // A menu lists a shifted character under the character alone (`?` with cmd only).
+        case .maskShift where !parsed.shiftedCharacter:
             modifiers |= 1
         case .maskAlternate:
             modifiers |= 2
