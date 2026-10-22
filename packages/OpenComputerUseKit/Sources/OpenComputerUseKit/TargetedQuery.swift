@@ -110,3 +110,28 @@ func boundedTargetedWalk<Node: Hashable>(
     }
     return result
 }
+
+/// Polls `digest` until it has returned the same value for `quiet` seconds, or `timeout`
+/// passes. Returns whether it settled; no poll starts past the deadline. A window that is
+/// already still costs about `quiet`. Clock and sleep are injectable for tests.
+func waitForStableDigest<Digest: Equatable>(
+    quiet: TimeInterval, timeout: TimeInterval, interval: TimeInterval = 0.1,
+    now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+    sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+    digest: () throws -> Digest
+) rethrows -> Bool {
+    let deadline = now() + timeout
+    var seen = try digest()
+    var since = now()
+    while now() - since < quiet {
+        let pause = min(interval, quiet - (now() - since))
+        guard now() + pause < deadline else { return false }
+        sleep(pause)
+        let next = try digest()
+        if next != seen {
+            seen = next
+            since = now()
+        }
+    }
+    return true
+}
