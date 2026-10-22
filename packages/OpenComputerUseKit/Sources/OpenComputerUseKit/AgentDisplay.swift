@@ -48,6 +48,9 @@ final class AgentDisplay: @unchecked Sendable {
     static let shared = AgentDisplay()
 
     static let displaySize = CGSize(width: 1920, height: 1080)
+    /// A parked window draws at this rate for nobody to see (Chrome: 60 fps on 60 Hz, 24 on
+    /// 24). 24 Hz is the lowest CGVirtualDisplay accepts. docs/references/agent-display-cost.md
+    static let refreshRate = max(24, Double(ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_AGENT_DISPLAY_REFRESH_HZ"] ?? "") ?? 24)
     // Upper bounds for the polls; the observed values are far lower and are
     // logged with OPEN_COMPUTER_USE_DEBUG_TIMING=1.
     static let displaySettle: TimeInterval = 3.0
@@ -232,7 +235,7 @@ final class AgentDisplay: @unchecked Sendable {
         let spacesBefore = Set((spi.managedDisplaySpaces() ?? [:]).values.flatMap { $0 })
         let start = TimingLog.now()
         var newHandle: UnsafeMutableRawPointer?
-        let id = ocu_virtual_display_create("Open Computer Use", UInt32(Self.displaySize.width), UInt32(Self.displaySize.height), 60, &newHandle)
+        let id = ocu_virtual_display_create("Open Computer Use", UInt32(Self.displaySize.width), UInt32(Self.displaySize.height), Self.refreshRate, &newHandle)
         guard id != 0, let newHandle else {
             throw ComputerUseError.message("window_placement 'agent_display' could not create the agent display")
         }
