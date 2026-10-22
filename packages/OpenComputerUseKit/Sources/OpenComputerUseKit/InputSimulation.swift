@@ -106,10 +106,11 @@ enum InputSimulation {
         )
     }
 
-    static func pressKeyWithSkyLight(_ specification: String, windowID: CGWindowID, pid: pid_t) throws {
+    static func pressKeyWithSkyLight(_ specification: String, windowID: CGWindowID, pid: pid_t, holdMs: Int? = nil) throws {
         try SkyKeyboardDispatcher.pressKey(
             target: SkyKeyboardTarget(windowID: windowID, pid: pid),
-            key: specification
+            key: specification,
+            holdMs: holdMs
         )
     }
 
@@ -229,7 +230,9 @@ enum InputSimulation {
         return chunks
     }
 
-    static func pressKey(_ specification: String, pid: pid_t) throws {
+    /// `holdMs` keeps the key and its modifiers down that long before the release,
+    /// for apps that poll key state once per frame and miss an instantaneous press.
+    static func pressKey(_ specification: String, pid: pid_t, holdMs: Int? = nil) throws {
         try requireUsableComputerUseSession()
         let parsed = try KeyPressParser.parse(specification)
         var activeFlags: CGEventFlags = []
@@ -252,6 +255,9 @@ enum InputSimulation {
         keyDown.flags = activeFlags
         keyUp.flags = activeFlags
         keyDown.postToPid(pid)
+        if let holdMs {
+            Thread.sleep(forTimeInterval: Double(holdMs) / 1000)
+        }
         keyUp.postToPid(pid)
 
         for modifier in parsed.modifiers.reversed() {
