@@ -88,6 +88,12 @@ verification throw through `js`. Verification still reads the applied range when
 action read-back is disabled. The tool does not use keyboard/pointer fallback or
 activate the application. Linux/Windows report the native unsupported-tool error.
 
+On macOS, `app.setPosition(elementIndex, [x, y], [width, height]?)` moves an element
+whose `AXPosition` the app lets accessibility set (a window, a timeline region) so its
+top-left corner lands at a screenshot point, and sizes it when a size is given. It
+sends no pointer events. It throws when the element is not movable or did not move;
+when the app clamps or snaps the request, the result says where the element landed.
+
 Discovery is available through `await cua.getState()` and
 `await cua.listApps()`. `listApps()` normalizes the native human-readable app
 catalog into an array of `{ id, displayName, lastUsedDate?, useCount?,

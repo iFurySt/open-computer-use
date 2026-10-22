@@ -129,6 +129,15 @@ public final class ComputerUseToolDispatcher {
                 elementIndex: requireElementIndex(in: arguments),
                 value: requireString("value", in: arguments, allowEmpty: true)
             )
+        case "set_position":
+            return try service.setPosition(
+                app: requireString("app", in: arguments),
+                elementIndex: requireElementIndex(in: arguments),
+                x: requireDouble("x", in: arguments),
+                y: requireDouble("y", in: arguments),
+                width: optionalDouble("width", in: arguments),
+                height: optionalDouble("height", in: arguments)
+            )
         case "select_text":
             return try service.selectText(
                 app: requireString("app", in: arguments),

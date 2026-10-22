@@ -24,6 +24,11 @@ first match. JavaScript exposes `app.selectText(elementIndex, text, options?)`. 
 macOS additionally exposes `query`: a targeted accessibility lookup that finds
 controls by text and/or role without rendering a tree or taking a screenshot.
 
+macOS also implements `set_position`, which moves an element the app lets accessibility move (a
+window, a timeline region) so its top-left corner lands at a screenshot point, and resizes it when
+`width` / `height` are given, without pointer events. JavaScript exposes
+`app.setPosition(elementIndex, [x, y], [width, height]?)`.
+
 ## Core Workflow
 
 1. On macOS, run `sw_vers -productVersion` before invoking the CLI and require macOS 14.0 or later. On older versions, explain that the runtime cannot launch; do not recommend `doctor` or permission changes as a fix for binary incompatibility.
