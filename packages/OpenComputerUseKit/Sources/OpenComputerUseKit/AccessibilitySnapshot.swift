@@ -300,8 +300,11 @@ enum SnapshotBuilder {
 
         // Pin the window's visible state (WindowServer occlusion notifications
         // off) so covering it or moving it to another Space later does not hide
-        // its content. Only possible while it is currently unoccluded.
-        let pinned = WindowOcclusionKeepAlive.shared.keepVisible(windowID: windowCapture.windowID, bounds: windowBounds)
+        // its content. Only possible while it is currently unoccluded. A window
+        // on the agent display is visible without a pin; pinned, it would keep
+        // drawing at full rate under other windows after `restore`.
+        let pinned = AgentDisplay.shared.isParked(windowID: windowCapture.windowID)
+            || WindowOcclusionKeepAlive.shared.keepVisible(windowID: windowCapture.windowID, bounds: windowBounds)
 
         // Engines that accept AXManualAccessibility build their web tree lazily
         // and drop it while hidden. Re-walk briefly while the window is visible;
