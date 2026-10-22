@@ -125,14 +125,17 @@ enum MacOSAppAgentProxy {
                 continue
             }
 
-            let response = try client.request([
-                "kind": "mcp",
-                "line": line,
-                "environment": proxiedEnvironment(),
-            ])
+            // No run loop drains this thread's autorelease pool either: one per request.
+            try autoreleasepool {
+                let response = try client.request([
+                    "kind": "mcp",
+                    "line": line,
+                    "environment": proxiedEnvironment(),
+                ])
 
-            if let responseLine = response["response"] as? String {
-                FileHandle.standardOutput.write(Data((responseLine + "\n").utf8))
+                if let responseLine = response["response"] as? String {
+                    FileHandle.standardOutput.write(Data((responseLine + "\n").utf8))
+                }
             }
         }
     }
@@ -326,7 +329,9 @@ private final class AppAgentConnection: @unchecked Sendable {
         }
         let monitorQueue = DispatchQueue(label: "ocu.client-disconnect")
         let monitor = DispatchSource.makeTimerSource(queue: monitorQueue)
-        monitor.schedule(deadline: .now(), repeating: .milliseconds(100))
+        // Polls only while a request runs (rescheduled below): between requests the blocking
+        // read sees the hang-up itself, and an idle client cost 10 wakeups a second.
+        monitor.schedule(deadline: .distantFuture)
         monitor.setEventHandler { [self] in
             var byte: UInt8 = 0
             let count = recv(fileDescriptor, &byte, 1, MSG_PEEK | MSG_DONTWAIT)
@@ -345,8 +350,13 @@ private final class AppAgentConnection: @unchecked Sendable {
         }
 
         while let line = readAgentLine(file) {
-            let response = handle(requestLine: line)
-            writeAgentLine(response, to: file)
+            // A pool per request: this thread's own drains only when the client disconnects.
+            autoreleasepool {
+                monitor.schedule(deadline: .now(), repeating: .milliseconds(100))
+                let response = handle(requestLine: line)
+                monitor.schedule(deadline: .distantFuture)
+                writeAgentLine(response, to: file)
+            }
         }
     }
 
