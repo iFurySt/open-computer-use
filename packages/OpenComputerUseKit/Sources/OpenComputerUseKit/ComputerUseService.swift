@@ -336,15 +336,18 @@ func screenshotPixelScale(
 func screenshotPixelToWindowPoint(
     _ point: CGPoint,
     screenshotPixelSize: CGSize?,
-    windowBounds: CGRect?
+    windowBounds: CGRect?,
+    zoom: CGRect? = nil
 ) -> CGPoint {
+    // A zoomed screenshot's pixels cover only its region of the window.
+    let region = zoom.flatMap { zoom in windowBounds.map { zoomRegion(zoom, of: $0.size) } }
     let scale = screenshotPixelScale(
         screenshotPixelSize: screenshotPixelSize,
-        windowBounds: windowBounds
+        windowBounds: region ?? windowBounds
     )
     return CGPoint(
-        x: point.x / scale.width,
-        y: point.y / scale.height
+        x: (region?.minX ?? 0) + point.x / scale.width,
+        y: (region?.minY ?? 0) + point.y / scale.height
     )
 }
 
@@ -2060,7 +2063,8 @@ public final class ComputerUseService {
         return screenshotPixelToWindowPoint(
             point,
             screenshotPixelSize: screenshotPixelSize(snapshot: snapshot),
-            windowBounds: snapshot.windowBounds
+            windowBounds: snapshot.windowBounds,
+            zoom: snapshot.observation.zoom
         )
     }
 

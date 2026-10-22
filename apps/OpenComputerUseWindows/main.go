@@ -285,6 +285,16 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 		if windowPlacement != "keep" {
 			return textResult("window_placement '"+windowPlacement+"' is not supported on Windows", true)
 		}
+		marks, err := optionalBool(args, "marks")
+		if err != nil {
+			return textResult(err.Error(), true)
+		}
+		if marks != nil && *marks {
+			return textResult("marks is not supported on Windows", true)
+		}
+		if _, ok := args["zoom"]; ok {
+			return textResult("zoom is not supported on Windows", true)
+		}
 		includeAX, err := optionalBool(args, "include_ax")
 		if err != nil {
 			return textResult(err.Error(), true)

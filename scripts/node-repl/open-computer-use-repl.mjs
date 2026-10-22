@@ -42,6 +42,7 @@ The runtime exposes an asynchronous app-bound API:
 - \`await app.getScreenshot({ emit? })\`
 - \`await app.getAXStateAndScreenshot(options?)\`
 - Optional observation on macOS, Windows and Linux: \`app.getScreenshot({ includeAX: false })\` skips AX/focus/selection and invalidates prior element indexes; refresh AX before element actions. \`app.getAXState({ includeScreenshot: false })\` skips capture; screenshot-coordinate actions require a fresh screenshot. Omitted options retain full native observation.
+- macOS-only: \`app.getAXStateAndScreenshot({ marks: true })\` draws each actionable element's index on the screenshot, the index click and setValue take; \`zoom: { x, y, width, height }\` (fractions of the window) returns only that part of the window, and click/drag coordinates then refer to the zoomed image.
 - \`await app.click(elementIndexOrPoint, { mouseButton?, clickCount?, clickMethod? })\`
 - \`await app.scroll(elementIndex, direction, pages?)\`
 - \`await app.drag([fromX, fromY], [toX, toY])\`
@@ -259,12 +260,13 @@ function optionsToSnapshotArgs(options = {}) {
   if (options.maxTreeNodes !== undefined) args.max_tree_nodes = options.maxTreeNodes;
   if (options.maxTreeDepth !== undefined) args.max_tree_depth = options.maxTreeDepth;
   if (options.windowPlacement !== undefined) args.window_placement = options.windowPlacement;
-  for (const [option, argument] of [["includeAX", "include_ax"], ["includeScreenshot", "include_screenshot"]]) {
+  for (const [option, argument] of [["includeAX", "include_ax"], ["includeScreenshot", "include_screenshot"], ["marks", "marks"]]) {
     if (options[option] !== undefined) {
       if (typeof options[option] !== "boolean") throw new Error(`${option} must be a boolean`);
       args[argument] = options[option];
     }
   }
+  if (options.zoom !== undefined) args.zoom = options.zoom;
   if (args.include_ax === false && args.include_screenshot === false) {
     throw new Error("At least one of includeAX or includeScreenshot must be true");
   }

@@ -496,6 +496,15 @@ func TestWindowsWindowPlacementSchemaAndUnsupportedAgentDisplay(t *testing.T) {
 	}
 }
 
+func TestWindowsMarksAndZoomAreUnsupported(t *testing.T) {
+	for key, value := range map[string]any{"marks": true, "zoom": map[string]any{"x": 0.0, "y": 0.0, "width": 1.0, "height": 1.0}} {
+		result := newService().callTool("get_app_state", map[string]any{"app": "Notepad", key: value})
+		if !result.IsError || result.Content[0].Text != key+" is not supported on Windows" {
+			t.Fatalf("%s result = %#v", key, result)
+		}
+	}
+}
+
 func TestDoctorJSONRejectsUnsupportedPermissionDiagnostics(t *testing.T) {
 	var out bytes.Buffer
 	if err := runCLI([]string{"doctor", "--json"}, &out); err == nil {

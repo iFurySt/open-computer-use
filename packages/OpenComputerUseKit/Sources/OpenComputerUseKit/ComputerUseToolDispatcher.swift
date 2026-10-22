@@ -70,7 +70,9 @@ public final class ComputerUseToolDispatcher {
                 windowPlacement: try parseWindowPlacement(optionalString("window_placement", in: arguments)),
                 observation: SnapshotObservationOptions(
                     includeAX: try strictObservationBool("include_ax", in: arguments),
-                    includeScreenshot: try strictObservationBool("include_screenshot", in: arguments)
+                    includeScreenshot: try strictObservationBool("include_screenshot", in: arguments),
+                    marks: try strictObservationBool("marks", in: arguments, default: false),
+                    zoom: try optionalZoom(in: arguments)
                 )
             )
         case "click":
@@ -158,12 +160,25 @@ public final class ComputerUseToolDispatcher {
         return value
     }
 
-    private func strictObservationBool(_ key: String, in arguments: [String: Any]) throws -> Bool {
-        guard let value = arguments[key] else { return true }
+    private func strictObservationBool(_ key: String, in arguments: [String: Any], default fallback: Bool = true) throws -> Bool {
+        guard let value = arguments[key] else { return fallback }
         guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else {
             throw ComputerUseError.invalidArguments("\(key) must be a boolean")
         }
         return number.boolValue
+    }
+
+    /// `zoom` as {x, y, width, height}; the range is checked with the other observation options.
+    private func optionalZoom(in arguments: [String: Any]) throws -> CGRect? {
+        guard let value = arguments["zoom"] else { return nil }
+        let box = value as? [String: Any]
+        func fraction(_ key: String) throws -> CGFloat {
+            guard let number = box?[key] as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else {
+                throw ComputerUseError.invalidArguments("zoom must be an object with numeric x, y, width and height")
+            }
+            return CGFloat(number.doubleValue)
+        }
+        return CGRect(x: try fraction("x"), y: try fraction("y"), width: try fraction("width"), height: try fraction("height"))
     }
 
     private func optionalBool(_ key: String, in arguments: [String: Any]) -> Bool? {
