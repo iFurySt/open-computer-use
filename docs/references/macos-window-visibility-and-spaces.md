@@ -43,7 +43,9 @@ agent 第一次接触时就已经被遮挡或已在其他 Space 的 Chromium 窗
 - `SLSMoveWindowsToManagedSpace` 单独不能把窗口跨显示器移到那个 Space；先用 AX `kAXPosition` 把窗口 frame 移进 virtual display 的 bounds（不激活），再移 Space，`SLSCopySpacesForWindows` 就报告它在新 Space。
 - 一个此前被完全遮挡、页面 `hidden`、没有 `AXWebArea` 的 Chrome 窗口，放到 virtual display 上后页面立刻 `visible`；生产 `SnapshotBuilder` 返回网页内容与截图，`sky_click` / `sky_key` 正常；结束后把窗口移回原位置与原 Space，进程退出后显示器消失。
 - spike 里用 Swift KVC / IMP 直接驱动这些类会在 dealloc 崩溃；正式实现放在 ObjC shim 里，ARC 管理对象生命周期，`AgentDisplayLiveTests` 验证创建、停靠、点击输入、恢复与销毁全程无崩溃，显示器数量恢复。
-- 已知副作用：agent 显示器排在主屏右侧，鼠标可能滑入；停靠期间窗口不在用户桌面上。所以它是显式 opt-in，不进入默认路径。
+- 多显示器时 macOS 会把新显示器放在主屏旁边，并把用户的其他显示器挤开，agent 显示器夹在用户两块显示器之间，鼠标跨屏会穿过它。创建后若用户的显示器被移动过，`AgentDisplay` 把它们放回原位（`kCGConfigureForSession`），agent 显示器放到最右侧显示器的右边；用户显示器没动（单屏总是如此）时不改排列，镜像中的显示器不设 origin。
+- agent 显示器每次的身份相同（vendor / product / serial 固定）。上一块 agent 显示器消失时还在它上面的窗口（进程被强杀、未恢复），macOS 会在下一块创建时把它移回去，用户屏幕上看不到。单屏实测可复现；现在创建后把这类窗口按创建前的位置移回，之后再创建 macOS 不再移动它。创建前 frame 不在任何用户显示器上的窗口（例如切换 Space 途中读到的偏移 frame）不移动。
+- 已知副作用：agent 显示器在最右侧显示器（单屏时为主屏）右边，鼠标可能从右边缘滑入；停靠期间窗口不在用户桌面上。所以它是显式 opt-in，不进入默认路径。
 
 ## 实测耗时（macOS 27.0，M 系列，2026-09-09）
 
@@ -84,7 +86,7 @@ agent display：创建显示器约 330–350 ms，WindowServer 登记 Space 后�
 ## 还没有解决的部分
 
 - `CrossSpaceLiveTests` 需要机器上有第二个 Desktop（Mission Control 里手动创建；`SLSSpaceCreate` 造的 Space 不是 managed Desktop，Dock 的 Mission Control AX tree 只在鼠标悬停时才暴露 Spaces bar）。测试通过 `SLSManagedDisplaySetCurrentSpace` 切到 Desktop 2 启动 Chrome 再切回来，因为窗口不能被第三方进程跨 Space 移动。
-- agent display 的鼠标滑入与显示器排列没有额外处理；`SLSSpaceCreate` 类跨 Space 移动窗口的 API 对第三方进程无效，所以停靠只能靠移动 frame。
+- agent display 的鼠标滑入没有额外处理（显示器之间不能留空隙，只能把它放在用户显示器的最右边）；`SLSSpaceCreate` 类跨 Space 移动窗口的 API 对第三方进程无效，所以停靠只能靠移动 frame。
 
 ## 参考来源
 
