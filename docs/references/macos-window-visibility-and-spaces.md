@@ -67,7 +67,7 @@ agent display：创建显示器约 330–350 ms，WindowServer 登记 Space 后�
 
 窗口截图：主路径改为 `SLSHWCaptureWindowList(cid, &wid, 1, 0x800)`（WindowServer 直接读窗口 backing store，retina 分辨率，15–45 ms），ScreenCaptureKit 只做 fallback（90–155 ms）。ScreenCaptureKit 对处于非活动全屏 Space 的窗口返回 `-3811`，HW capture 对它们同样有效（实测 VS Code、Blender）。
 
-窗口绑定：AX root window 用 `_AXUIElementGetWindow` 直接绑定到 `CGWindowID`，tree、截图、元素坐标指向同一个窗口；标题 / 面积启发式只做 fallback。
+窗口绑定：AX root window 用 `_AXUIElementGetWindow` 直接绑定到 `CGWindowID`，tree、截图、元素坐标指向同一个窗口；标题 / 面积启发式只做 fallback。app 的 focused window 是 sheet（打开 / 保存面板、“Leave site?”）时，root 就是这个 sheet：它挡住下面的窗口，有自己的 `CGWindowID`，而 Firefox 的窗口 `AXChildren` 不含 sheet。
 
 ## 多 app 扫描（`AppMatrixLiveTests`，2026-09-09）
 

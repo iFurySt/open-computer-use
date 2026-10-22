@@ -609,8 +609,16 @@ public final class ComputerUseService {
         }
         switch windowPlacement {
         case .agentDisplay:
-            guard let windowID = snapshot.targetWindowID, let windowElement = snapshot.windowElement else {
+            guard var windowID = snapshot.targetWindowID, var windowElement = snapshot.windowElement else {
                 throw ComputerUseError.stateUnavailable("window_placement 'agent_display' requires a current target window. Run get_app_state again.")
+            }
+            // A sheet cannot move on its own; park its window and the sheet goes along.
+            if stringValue(of: windowElement, attribute: kAXRoleAttribute) == kAXSheetRole as String,
+               let parent = copyParent(of: windowElement),
+               let parentID = SkyLightSPI.shared.windowID(for: parent)
+            {
+                windowElement = parent
+                windowID = parentID
             }
             try AgentDisplay.shared.park(windowID: windowID, pid: snapshot.app.pid, window: windowElement)
         case .restore:

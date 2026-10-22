@@ -448,7 +448,7 @@ enum SnapshotBuilder {
     }
 
     private static func isUsableWindowElement(_ element: AXUIElement) -> Bool {
-        stringValue(of: element, attribute: kAXRoleAttribute) == kAXWindowRole as String
+        isSnapshotRootRole(stringValue(of: element, attribute: kAXRoleAttribute))
             && boolValue(of: element, attribute: kAXMinimizedAttribute) != true
     }
 
@@ -511,6 +511,14 @@ enum SnapshotBuilder {
             observation: observation
         )
     }
+}
+
+/// A sheet (an open/save panel, a "Leave site?" prompt) is the app's focused
+/// window while it blocks the window under it, so it roots the snapshot itself:
+/// the tree, the screenshot and the input target then all come from the sheet,
+/// also in apps whose own window tree leaves the sheet out (Firefox).
+func isSnapshotRootRole(_ role: String?) -> Bool {
+    role == kAXWindowRole as String || role == kAXSheetRole as String
 }
 
 /// Returns `true` when the app accepts `AXManualAccessibility`, i.e. it builds
@@ -2424,9 +2432,10 @@ extension SnapshotBuilder {
     }
 
     private static func windowElement(for windowID: CGWindowID, appElement: AXUIElement) -> AXUIElement? {
-        copyArray(appElement, attribute: kAXWindowsAttribute)?.first {
-            SkyLightSPI.shared.windowID(for: $0) == windowID
-        }
+        let isWindow = { SkyLightSPI.shared.windowID(for: $0) == windowID }
+        // AXWindows leaves sheets out; a sheet is found as the focused window.
+        return copyArray(appElement, attribute: kAXWindowsAttribute)?.first(where: isWindow)
+            ?? copyElement(appElement, attribute: kAXFocusedWindowAttribute).flatMap { isWindow($0) ? $0 : nil }
     }
 
     // Attributes read for every visited node, in one batched IPC call. Position
