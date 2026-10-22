@@ -135,6 +135,12 @@ public enum ToolDefinitions {
                 properties: [
                     "app": stringProperty(description: "App name or bundle identifier"),
                     "key": stringProperty(description: "Key or key combination to press"),
+                    "hold_ms": [
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 5000,
+                        "description": "Opt-in key hold in milliseconds: the key and its modifiers stay down this long before release; omitted preserves the existing instantaneous press. Useful for frame-polled applications such as games. The held key does not auto-repeat. sky_key cannot hold command chords, which it presses through the app's menu.",
+                    ],
                     "key_method": keyMethodProperty(),
                 ],
                 required: ["app", "key"]

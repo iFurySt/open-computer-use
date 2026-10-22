@@ -2008,6 +2008,36 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testPressKeyHoldIsValidatedBeforeAnyKeyIsSent() throws {
+        let dispatcher = ComputerUseToolDispatcher()
+        // The bad key_method stops an accepted hold before the service resolves any app.
+        func result(_ hold: Any) -> String? {
+            dispatcher.callToolAsResult(
+                name: "press_key",
+                arguments: ["app": "missing-test-app", "key": "a", "hold_ms": hold, "key_method": "none"]
+            ).primaryText
+        }
+        for hold: Any in [0, -1, 5001, 1.5, "100", NSNumber(value: true), NSNull()] {
+            XCTAssertEqual(result(hold), #"invalidArguments("hold_ms must be an integer from 1 to 5000")"#, "\(hold)")
+        }
+        for hold: Any in [1, 5000, 80.0] {
+            XCTAssertEqual(result(hold)?.hasPrefix("Invalid key_method 'none'"), true, "\(hold)")
+        }
+
+        // sky_key turns a command chord into a menu press, which has no duration.
+        XCTAssertThrowsError(
+            try SkyKeyboardDispatcher.pressKey(target: SkyKeyboardTarget(windowID: 0, pid: 0), key: "cmd+s", holdMs: 100)
+        ) { error in
+            XCTAssertTrue(error.localizedDescription.contains("hold_ms cannot hold 'cmd+s'"), "\(error)")
+        }
+
+        let tool = try XCTUnwrap(ToolDefinitions.all.first { $0.name == "press_key" })
+        let hold = try XCTUnwrap((tool.inputSchema["properties"] as? [String: Any])?["hold_ms"] as? [String: Any])
+        XCTAssertEqual(hold["type"] as? String, "integer")
+        XCTAssertEqual(hold["minimum"] as? Int, 1)
+        XCTAssertEqual(hold["maximum"] as? Int, 5000)
+    }
+
     func testSkyLightRuntimeSPIProbeCanStampEventWithoutPosting() throws {
         let spi = SkyLightSPI.shared
         guard spi.capability.isAvailable else {
