@@ -909,6 +909,32 @@ final class OpenComputerUseKitTests: XCTestCase {
         )
     }
 
+    func testCoordinateClickDescendantMustContainThePoint() {
+        // A blank spot in a 560x372 window: the window is the best record, so its descendants get scanned.
+        let blankSpot = CGPoint(x: 400, y: 250)
+        let window = CGRect(x: 0, y: 0, width: 560, height: 372)
+        let closeButton = CGRect(x: 8, y: 8, width: 16, height: 16)
+        let zeroSizeButton = CGRect(x: 400, y: 250, width: 0, height: 0)
+        let buttonUnderPoint = CGRect(x: 380, y: 236, width: 80, height: 28)
+
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: closeButton, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: zeroSizeButton, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertTrue(isDescendantClickCandidateAtTarget(candidateFrame: buttonUnderPoint, clickPoint: blankSpot, targetFrame: window))
+    }
+
+    func testElementClickDescendantMustOverlapTheElement() {
+        let card = CGRect(x: 40, y: 120, width: 300, height: 120)
+
+        XCTAssertTrue(
+            isDescendantClickCandidateAtTarget(candidateFrame: CGRect(x: 52, y: 128, width: 120, height: 20), clickPoint: nil, targetFrame: card)
+        )
+        XCTAssertFalse(
+            isDescendantClickCandidateAtTarget(candidateFrame: CGRect(x: 8, y: 8, width: 16, height: 16), clickPoint: nil, targetFrame: card)
+        )
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: nil, targetFrame: card))
+    }
+
     func testContainingRowActionAcceptsTightClickableAncestor() {
         XCTAssertTrue(
             isLikelyContainingRowActionFrame(
