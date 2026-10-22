@@ -11,6 +11,9 @@ public struct ParsedKeyPress: Sendable {
     public let keyCode: CGKeyCode
     public let modifiers: [Modifier]
     public let displayValue: String
+    /// The layout types `displayValue` only with shift (`?` on a US layout), so
+    /// `modifiers` carries a shift the character already implies.
+    public let shiftedCharacter: Bool
 }
 
 public enum KeyPressParser {
@@ -24,16 +27,65 @@ public enum KeyPressParser {
             throw ComputerUseError.invalidArguments("key specification is empty")
         }
 
-        let modifiers = try tokens.dropLast().map(parseModifier(_:))
-        guard let keyCode = keyCodeMap[keyToken] else {
+        var modifiers = try tokens.dropLast().map(parseModifier(_:))
+        let keyCode: CGKeyCode
+        var shiftedCharacter = false
+        if let named = keyCodeMap[keyToken] {
+            keyCode = named
+        } else if keyToken.count == 1, let key = layoutKeys[keyToken.first!] {
+            // Any character the keyboard layout can type: its key, with shift when it needs it.
+            keyCode = key.code
+            shiftedCharacter = key.shift
+            if key.shift, !modifiers.contains(where: { $0.flag == .maskShift }) {
+                modifiers.append(ParsedKeyPress.Modifier(flag: .maskShift, keyCode: CGKeyCode(kVK_Shift)))
+            }
+        } else {
             throw ComputerUseError.invalidArguments("unsupported key '\(specification)'")
         }
 
         return ParsedKeyPress(
             keyCode: keyCode,
             modifiers: modifiers,
-            displayValue: keyToken
+            displayValue: keyToken,
+            shiftedCharacter: shiftedCharacter
         )
+    }
+
+    /// Read at each lookup, so a layout the person switches to mid-session is followed.
+    private static var layoutKeys: [Character: (code: CGKeyCode, shift: Bool)] {
+        guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue() else {
+            return [:]
+        }
+        return characterKeys(in: source)
+    }
+
+    /// Every character `layout` types with one main-keyboard key, plain or shifted
+    /// (a plain key wins), so a key needs no name of its own in `keyCodeMap`.
+    static func characterKeys(in layout: TISInputSource) -> [Character: (code: CGKeyCode, shift: Bool)] {
+        var table: [Character: (code: CGKeyCode, shift: Bool)] = [:]
+        guard let pointer = TISGetInputSourceProperty(layout, kTISPropertyUnicodeKeyLayoutData) else {
+            return table
+        }
+        let data = Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue() as Data
+        data.withUnsafeBytes { raw in
+            guard let keyboard = raw.baseAddress?.assumingMemoryBound(to: UCKeyboardLayout.self) else { return }
+            for shift in [false, true] {
+                // The keypad keeps its `kp_*` names: `*` is shift+8 on a US layout, not the keypad key.
+                for code in 0..<128 where !(kVK_ANSI_KeypadDecimal...kVK_ANSI_Keypad9).contains(code) {
+                    var dead: UInt32 = 0
+                    var length = 0
+                    var chars = [UniChar](repeating: 0, count: 4)
+                    let modifiers: UInt32 = shift ? UInt32((shiftKey >> 8) & 0xFF) : 0
+                    let status = UCKeyTranslate(keyboard, UInt16(code), UInt16(kUCKeyActionDown), modifiers, UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit), &dead, chars.count, &length, &chars)
+                    guard status == noErr, length == 1, let scalar = Unicode.Scalar(chars[0]) else { continue }
+                    let character = Character(scalar)
+                    if table[character] == nil {
+                        table[character] = (CGKeyCode(code), shift)
+                    }
+                }
+            }
+        }
+        return table
     }
 
     private static func parseModifier(_ token: String) throws -> ParsedKeyPress.Modifier {
