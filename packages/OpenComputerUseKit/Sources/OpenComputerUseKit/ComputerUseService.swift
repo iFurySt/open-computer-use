@@ -925,17 +925,27 @@ public final class ComputerUseService {
             )
         }
 
-        if try typeTextBySettingFocusedValueIfAvailable(text, in: snapshot) {
+        // The focus now, not at the snapshot's read: a key since then (⌘S opening a save sheet,
+        // ⌘L) moves it, and text meant for the sheet went into the document under it.
+        let focused = Self.focusedElement(pid: snapshot.app.pid) ?? snapshot.focusedElement
+        if try typeTextBySettingFocusedValueIfAvailable(text, on: focused) {
             pauseBeforeReadBack(0.1)
             return try actionResult(for: query)
         }
 
-        guard try canTypeTextUsingKeyboardFallback(in: snapshot) else {
+        guard try canTypeTextUsingKeyboardFallback(on: focused) else {
             throw ComputerUseError.stateUnavailable("type_text requires a focused editable text element. Click a text entry area first, or use set_value on a settable text element.")
         }
 
         try InputSimulation.typeText(text, pid: snapshot.app.pid)
         return try actionResult(for: query)
+    }
+
+    private static func focusedElement(pid: pid_t) -> AXUIElement? {
+        var focused: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        return (focused as! AXUIElement)
     }
 
     public func pressKey(app query: String, key: String, keyMethod: KeyMethod = .auto) throws -> ToolCallResult {
@@ -1802,8 +1812,8 @@ public final class ComputerUseService {
         }
     }
 
-    private func typeTextBySettingFocusedValueIfAvailable(_ text: String, in snapshot: AppSnapshot) throws -> Bool {
-        guard let element = snapshot.focusedElement else {
+    private func typeTextBySettingFocusedValueIfAvailable(_ text: String, on element: AXUIElement?) throws -> Bool {
+        guard let element else {
             return false
         }
 
@@ -1811,8 +1821,21 @@ public final class ComputerUseService {
             return false
         }
 
-        let baseValue = editableBaseValue(for: element)
         try requireUsableComputerUseSession()
+        // With a selection, or the caret before the end, typed text replaces the selection at
+        // the caret, as keys do: ⌘A then type replaced nothing and appended to the whole text.
+        var rangeValue: CFTypeRef?
+        var range = CFRange()
+        if AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &rangeValue) == .success,
+           let rangeValue, CFGetTypeID(rangeValue) == AXValueGetTypeID(),
+           AXValueGetValue(rangeValue as! AXValue, .cfRange, &range),
+           range.length > 0 || range.location < (stringValue(of: element, attribute: kAXValueAttribute) as NSString?)?.length ?? 0,
+           (try? isSettableForSetValue(element: element, attribute: kAXSelectedTextAttribute)) == true,
+           AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString) == .success {
+            return true
+        }
+
+        let baseValue = editableBaseValue(for: element)
         let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, (baseValue + text) as CFString)
         switch result {
         case .success:
@@ -1824,8 +1847,8 @@ public final class ComputerUseService {
         }
     }
 
-    private func canTypeTextUsingKeyboardFallback(in snapshot: AppSnapshot) throws -> Bool {
-        guard let element = snapshot.focusedElement else {
+    private func canTypeTextUsingKeyboardFallback(on element: AXUIElement?) throws -> Bool {
+        guard let element else {
             return false
         }
 
