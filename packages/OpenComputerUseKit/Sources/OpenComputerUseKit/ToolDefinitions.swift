@@ -96,6 +96,11 @@ public enum ToolDefinitions {
                 properties: [
                     "include_ax": ["type": "boolean", "default": true, "description": "Include accessibility tree, focus and selection. False skips collection and invalidates previous element indexes; read AX again before element actions."],
                     "include_screenshot": ["type": "boolean", "default": true, "description": "Capture and return a screenshot. False skips capture and encoding; screenshot-coordinate actions require a fresh screenshot."],
+                    "marks": ["type": "boolean", "default": false, "description": "Outline each actionable element on the screenshot and label it with its element_index, the index click, set_value and the other element actions take. Requires include_ax and include_screenshot."],
+                    "zoom": objectSchema(
+                        properties: Dictionary(uniqueKeysWithValues: ["x", "y", "width", "height"].map { ($0, ["type": "number", "minimum": 0, "maximum": 1] as [String: Any]) }),
+                        required: ["x", "y", "width", "height"]
+                    ).merging(["description": "Return only this box of the window in the screenshot, as fractions of the window's width and height, at up to the capture's full resolution. Click and drag x/y then refer to pixels of the zoomed image."]) { $1 },
                     "app": stringProperty(description: "App name or bundle identifier"),
                     "text_limit": textLimitProperty(description: "Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
                     "max_tree_nodes": positiveIntegerProperty(description: "Maximum accessibility tree nodes to render. Defaults to 1200."),

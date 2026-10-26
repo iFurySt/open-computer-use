@@ -63,6 +63,11 @@ Disabling both channels is rejected before a native call. These options do not
 deduplicate unchanged images. See [selective observation](../selective-observation.md)
 for collection semantics and real GTK/Worker validation.
 
+On macOS, `app.getAXStateAndScreenshot({marks:true})` draws each actionable
+element's index on the screenshot, and `zoom: {x, y, width, height}` (fractions of
+the window) returns only that part of it; coordinate clicks then refer to the
+zoomed image. Both are forwarded as `get_app_state` `marks` / `zoom`.
+
 On Windows, explicit `app.pressKey("ctrl+a", {keyMethod:"global"})` uses
 physical SendInput keys and requires `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`.
 Auto key delivery remains window messages even with this flag enabled. Explicit

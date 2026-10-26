@@ -136,6 +136,25 @@ for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
     assert.match(empty.content.at(-1).text, /At least one/);
     assert.equal(native.calls.length, count);
   });
+
+  test(`${Session.name}: marks and zoom are forwarded to get_app_state`, async t => {
+    const native = mockNative();
+    const session = new Session({ native });
+    t.after(() => session.close?.());
+    const result = await session.run(`
+      var markedApp = await cua.getApp("Text", { initialState: false });
+      await markedApp.getAXStateAndScreenshot({ marks: true, zoom: { x: 0, y: 0.5, width: 0.5, height: 0.5 }, emit: false });
+    `);
+    assert.equal(result.isError, false);
+    // The zoom object comes from the REPL's own realm; compare it as the JSON the native call sends.
+    assert.deepEqual(JSON.parse(JSON.stringify(native.calls.map(call => call.arguments))), [
+      { app: "Text", marks: true, zoom: { x: 0, y: 0.5, width: 0.5, height: 0.5 } },
+    ]);
+    const invalid = await session.run('await markedApp.getAXStateAndScreenshot({ marks: "true" })');
+    assert.equal(invalid.isError, true);
+    assert.match(invalid.content.at(-1).text, /marks must be a boolean/);
+    assert.equal(native.calls.length, 1);
+  });
 }
 
 test("app-bound API forwards background-operation options", async () => {
