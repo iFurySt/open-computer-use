@@ -36,3 +36,5 @@
   - 被遮挡 / 其他 Space 窗口的 AX tree 与截图为什么会丢、WindowServer occlusion 通知 keep-alive、Chromium 懒加载 AX tree、已验证与未解决的边界。
 - `macos-skylight-background-keyboard.md`
   - `key_method=sky_key` 的实机研究记录：为什么后台 Chromium 收得到按键却不输入文字、yabai key-window record、菜单快捷键走 AX、跨 Space 验证，以及哪些方案被实测否定。
+- `agent-display-cost.md`
+  - agent display 的 CPU / 内存 / 能耗实测：停靠窗口按显示器刷新率绘制、24 Hz 下限、hiDPI 与尺寸、创建/销毁的全局开销、restore 后 keep-alive 让窗口继续全速绘制，以及各设置下的截图与输入延迟（英文）。
