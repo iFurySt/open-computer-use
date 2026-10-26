@@ -116,6 +116,11 @@ public final class ComputerUseToolDispatcher {
                 key: requireString("key", in: arguments),
                 keyMethod: try parseKeyMethod(optionalString("key_method", in: arguments))
             )
+        case "press_menu":
+            return try service.pressMenu(
+                app: requireString("app", in: arguments),
+                path: requireString("path", in: arguments)
+            )
         case "set_value":
             return try service.setValue(
                 app: requireString("app", in: arguments),

@@ -960,6 +960,17 @@ public final class ComputerUseService {
         return try actionResult(for: query)
     }
 
+    /// A menu bar command by its path, pressed through accessibility. It needs no window or
+    /// snapshot: an app with no window shown still has its menus. The press itself is the
+    /// action, so a window that cannot be read back afterwards is not an error.
+    public func pressMenu(app query: String, path: String) throws -> ToolCallResult {
+        let titles = try menuPathTitles(path)
+        try requireUsableComputerUseSession()
+        let app = try AppDiscovery.resolveRunning(query)
+        try SkyKeyboardDispatcher.pressMenuItem(path: titles, pid: app.pid)
+        return (try? actionResult(for: query, recoveryPolicy: .readOnly)) ?? .text("ok")
+    }
+
     private func requireAutoKeyMethodForFixture(_ keyMethod: KeyMethod) throws {
         guard keyMethod == .auto else {
             throw ComputerUseError.message(

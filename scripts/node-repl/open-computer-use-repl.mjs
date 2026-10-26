@@ -47,6 +47,7 @@ The runtime exposes an asynchronous app-bound API:
 - \`await app.drag([fromX, fromY], [toX, toY])\`
 - \`await app.typeText(text, { keyMethod? })\`
 - \`await app.pressKey(key, { keyMethod? })\`
+- \`await app.pressMenu(path)\`: macOS-only; presses a menu bar command such as "File > Save As…" through accessibility, without activating the app. A missing title lists the items at that level; disabled items throw.
 - \`await app.setValue(elementIndex, value)\`
 - \`await app.selectText(elementIndex, text, { prefix?, suffix?, selection? })\`: macOS-only; selection is text (default), cursor_before or cursor_after. Ambiguous text and unverified selections throw.
 - \`await app.performSecondaryAction(elementIndex, action)\`
@@ -354,6 +355,10 @@ export function createCuaApi(native, activeOutput) {
       },
       async drag(from, to) { await call("drag", { app, from_x: from[0], from_y: from[1], to_x: to[0], to_y: to[1] }); },
       async pressKey(key, options = {}) { await call("press_key", { app, key, ...optionsToKeyArgs(options) }); },
+      async pressMenu(path) {
+        if (typeof path !== "string" || !path.trim()) throw new Error("pressMenu requires a menu path such as \"File > Save As…\"");
+        await call("press_menu", { app, path });
+      },
       async scroll(target, direction, pages = 1) {
         if (Array.isArray(target)) throw new Error("coordinate scroll is not supported by this Open Computer Use runtime");
         await call("scroll", { app, element_index: target, direction, pages });
