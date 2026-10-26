@@ -494,6 +494,10 @@ func TestWindowsWindowPlacementSchemaAndUnsupportedAgentDisplay(t *testing.T) {
 	if !result.IsError || result.Content[0].Text != "window_placement 'agent_display' is not supported on Windows" {
 		t.Fatalf("agent_display result = %#v", result)
 	}
+	result = newService().callTool("get_app_state", map[string]any{"app": "Notepad", "settle_ms": 300})
+	if !result.IsError || result.Content[0].Text != "settle_ms is not supported on Windows" {
+		t.Fatalf("settle_ms result = %#v", result)
+	}
 }
 
 func TestDoctorJSONRejectsUnsupportedPermissionDiagnostics(t *testing.T) {

@@ -71,7 +71,8 @@ public final class ComputerUseToolDispatcher {
                 observation: SnapshotObservationOptions(
                     includeAX: try strictObservationBool("include_ax", in: arguments),
                     includeScreenshot: try strictObservationBool("include_screenshot", in: arguments)
-                )
+                ),
+                settleMs: try optionalPositiveInt("settle_ms", in: arguments)
             )
         case "click":
             return try service.click(

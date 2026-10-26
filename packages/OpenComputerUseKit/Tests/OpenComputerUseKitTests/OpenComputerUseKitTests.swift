@@ -732,6 +732,8 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(getAppStateProperties?["max_tree_depth"]?["type"] as? String, "integer")
         XCTAssertEqual(getAppStateProperties?["max_tree_depth"]?["minimum"] as? Int, 1)
         XCTAssertEqual(getAppStateSchema?["required"] as? [String], ["app"])
+        XCTAssertEqual(getAppStateProperties?["settle_ms"]?["type"] as? String, "integer")
+        XCTAssertEqual(getAppStateProperties?["settle_ms"]?["minimum"] as? Int, 1)
         let scrollPages = (tools["scroll"]?.inputSchema["properties"] as? [String: [String: Any]])?["pages"]
         XCTAssertEqual(scrollPages?["type"] as? String, "number")
         XCTAssertEqual(

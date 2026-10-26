@@ -33,7 +33,7 @@ controls by text and/or role without rendering a tree or taking a screenshot.
 5. Capture current UI state with `open-computer-use call get_app_state --args '{"app":"TextEdit"}'`. The default state is usually enough for UI operation.
 6. When the task needs longer semantic text, such as chat history, email bodies, document text, or long form content, call `get_app_state` with `text_limit: 1000` or `text_limit: "max"`.
 7. When visible long pages or lists appear incomplete even after scrolling, call `get_app_state` with a larger `max_tree_nodes` or `max_tree_depth`.
-8. Prefer element-targeted actions using `element_index` from the latest `get_app_state` result.
+8. Prefer element-targeted actions using `element_index` from the latest `get_app_state` result. On macOS, when an action makes the app load or animate, call `get_app_state` with `settle_ms` (for example 400) instead of sleeping before you read.
 9. For multi-step CLI work, use `open-computer-use call --calls '<json-array>'` so one process can reuse the latest element index mapping.
 10. For agent runtimes that support local MCP servers, configure `open-computer-use mcp` or `ocu mcp` and call the exposed Computer Use tools directly. Read [references/usage.md](references/usage.md).
 11. For direct code-first orchestration, run `ocu capabilities` and then use one-shot `ocu js` or persistent `ocu repl`. Read [references/usage.md](references/usage.md).

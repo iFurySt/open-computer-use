@@ -172,6 +172,7 @@ open-computer-use snapshot --max-tree-nodes 3000 --max-tree-depth 96 "Google Chr
 - Prefer app names or bundle identifiers returned by `list_apps`.
 - Run `get_app_state` immediately before element-targeted actions.
 - Re-run `get_app_state` after navigation, modal changes, page reloads, or failed actions.
+- On macOS, when an action starts loading or animating, read with `settle_ms` instead of sleeping first (see below).
 - Use coordinate actions only when the rendered tree does not expose the target as an element.
 - On macOS, use `app.query` when you know the control's text or role. Bind with
   `await cua.getApp("Safari", { initialState: false })` to skip the initial snapshot.
@@ -182,6 +183,25 @@ open-computer-use snapshot --max-tree-nodes 3000 --max-tree-depth 96 "Google Chr
   Use persistent MCP or `ocu repl` for query then action; separate CLI calls cannot share indexes.
   Actions revalidate the process/window/control and current geometry. On failure, query again.
   See [targeted query](../../../docs/targeted-query.md) for options and examples.
+
+## Waiting for the Window to Settle (macOS)
+
+`get_app_state` takes `settle_ms`: before reading, it waits until the window's accessibility
+tree (roles, text, values and window-relative layout) has stayed unchanged for that many
+milliseconds, for at most 5 seconds. `settle_ms` is capped at 2000. A window that is already
+still costs about `settle_ms`; one that keeps changing (a video, a ticking clock) returns its
+state after 5 seconds. A text note after the state says which happened and how long it waited:
+
+```sh
+ocu call --calls '[
+  {"tool":"click","args":{"app":"Safari","element_index":"12"}},
+  {"tool":"get_app_state","args":{"app":"Safari","settle_ms":400}}
+]'
+```
+
+The wait reads the same window `get_app_state` will read, without activating it or taking a
+screenshot, and polls about every 100 ms. In JavaScript: `await app.getAXState({ settleMs: 400 })`.
+Action results keep their fixed short pause before read-back. Linux and Windows reject `settle_ms`.
 
 ## Choosing a Click Method
 

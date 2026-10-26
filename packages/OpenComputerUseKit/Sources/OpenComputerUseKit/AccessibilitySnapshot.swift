@@ -2313,6 +2313,8 @@ enum TargetedAX {
         var role: String?
         var limit: Int
         var maxNodes: Int
+        /// Walk only to fingerprint the window: nothing matches, every visited node is hashed.
+        var digestOnly = false
     }
 
     struct WindowContext {
@@ -2330,6 +2332,7 @@ enum TargetedAX {
         let truncated: Bool
         let stopReason: String?
         let visitedNodes: Int
+        var digest: Int?
     }
 
 }
@@ -2450,6 +2453,7 @@ extension SnapshotBuilder {
         var records: [AXSearchNode: ElementRecord] = [:]
         var textTruncated = false
         var clip: CGRect?
+        var digest = Hasher()
         let root = AXSearchNode(element: context.windowElement)
         let result = try boundedTargetedWalk(root: root, maxNodes: criteria.maxNodes, limit: criteria.limit,
                                             expired: expired, inspect: { node in
@@ -2459,6 +2463,14 @@ extension SnapshotBuilder {
             scans[node] = scan
             if node == root { clip = scan.globalFrame }
             let visible = scan.globalFrame.map { frame in frame.isEmpty || clip.map { frame.intersects($0) } ?? true } ?? true
+            if criteria.digestOnly {
+                // Role, text and window-relative layout: a sheet sliding in or a list still
+                // scrolling changes it, a moved window does not.
+                let frame = scan.globalFrame.map { $0.offsetBy(dx: -(clip?.minX ?? 0), dy: -(clip?.minY ?? 0)) }
+                digest.combine(scan.role); digest.combine(scan.title); digest.combine(scan.description); digest.combine(scan.value)
+                digest.combine(frame.map { [$0.minX, $0.minY, $0.width, $0.height].map { Int($0.rounded()) } })
+                return (false, visible)
+            }
             if visible, criteria.text != nil, [scan.title, scan.description, scan.value].contains(where: { ($0?.count ?? 0) > 1000 }) { textTruncated = true }
             let matches = visible && targetedRecordMatches(criteria, role: scan.role, title: scan.title, description: scan.description, value: scan.value)
             if matches { records[node] = makeRecord(node.element, scan: scan, windowBounds: context.windowBounds) }
@@ -2485,7 +2497,8 @@ extension SnapshotBuilder {
             return ([], false)
         })
         let reason = result.stopReason ?? (textTruncated ? "text_limit" : nil)
-        return .init(records: result.matches.compactMap { records[$0] }, truncated: reason != nil, stopReason: reason, visitedNodes: result.visitedNodes)
+        return .init(records: result.matches.compactMap { records[$0] }, truncated: reason != nil, stopReason: reason, visitedNodes: result.visitedNodes,
+                     digest: criteria.digestOnly ? digest.finalize() : nil)
     }
 
     private struct AXSearchNode: Hashable {
