@@ -111,10 +111,18 @@ public final class ComputerUseToolDispatcher {
                 keyMethod: try parseKeyMethod(optionalString("key_method", in: arguments))
             )
         case "press_key":
+            var holdMs: Int?
+            if arguments["hold_ms"] != nil {
+                guard let hold = try? optionalPositiveInt("hold_ms", in: arguments), hold <= 5000 else {
+                    throw ComputerUseError.invalidArguments("hold_ms must be an integer from 1 to 5000")
+                }
+                holdMs = hold
+            }
             return try service.pressKey(
                 app: requireString("app", in: arguments),
                 key: requireString("key", in: arguments),
-                keyMethod: try parseKeyMethod(optionalString("key_method", in: arguments))
+                keyMethod: try parseKeyMethod(optionalString("key_method", in: arguments)),
+                holdMs: holdMs
             )
         case "set_value":
             return try service.setValue(
@@ -269,6 +277,11 @@ public final class ComputerUseToolDispatcher {
     }
 
     private func positiveInt(from value: Any, key: String, expectedDescription: String) throws -> Int {
+        // Checked first: a JSON boolean also casts to Int (true as 1).
+        if let number = value as? NSNumber, CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() {
+            throw ComputerUseError.invalidArguments("\(key) must be \(expectedDescription)")
+        }
+
         if let integer = value as? Int {
             return try validatePositiveInt(integer, key: key, expectedDescription: expectedDescription)
         }
@@ -278,9 +291,6 @@ public final class ComputerUseToolDispatcher {
         }
 
         if let number = value as? NSNumber {
-            if CFGetTypeID(number as CFTypeRef) == CFBooleanGetTypeID() {
-                throw ComputerUseError.invalidArguments("\(key) must be \(expectedDescription)")
-            }
             return try validatePositiveWholeNumber(number.doubleValue, key: key, expectedDescription: expectedDescription)
         }
 

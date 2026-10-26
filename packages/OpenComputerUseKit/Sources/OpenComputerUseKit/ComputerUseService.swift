@@ -938,10 +938,13 @@ public final class ComputerUseService {
         return try actionResult(for: query)
     }
 
-    public func pressKey(app query: String, key: String, keyMethod: KeyMethod = .auto) throws -> ToolCallResult {
+    public func pressKey(app query: String, key: String, keyMethod: KeyMethod = .auto, holdMs: Int? = nil) throws -> ToolCallResult {
         let snapshot = try currentSnapshot(for: query)
         if snapshot.mode == .fixture {
             try requireAutoKeyMethodForFixture(keyMethod)
+            if holdMs != nil {
+                throw ComputerUseError.message("hold_ms is not supported for fixture apps")
+            }
             try FixtureBridge.post(FixtureCommand(kind: "press_key", identifier: "fixture-key-capture", value: key))
             Thread.sleep(forTimeInterval: 0.15)
             return try actionResult(for: query)
@@ -949,14 +952,14 @@ public final class ComputerUseService {
 
         if keyMethod == .skyKey {
             let target = try skyKeyTarget(for: snapshot)
-            try InputSimulation.pressKeyWithSkyLight(key, windowID: target.windowID, pid: target.pid)
+            try InputSimulation.pressKeyWithSkyLight(key, windowID: target.windowID, pid: target.pid, holdMs: holdMs)
             return snapshotResult(
                 for: try refreshSnapshot(for: query, recoveryPolicy: keyActionSnapshotRecoveryPolicy(for: keyMethod)),
                 style: .actionResult
             )
         }
 
-        try InputSimulation.pressKey(key, pid: snapshot.app.pid)
+        try InputSimulation.pressKey(key, pid: snapshot.app.pid, holdMs: holdMs)
         return try actionResult(for: query)
     }
 
