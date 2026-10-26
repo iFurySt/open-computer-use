@@ -1539,6 +1539,49 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertTrue(AppSafetyPolicy.isBlocked(bundleIdentifier: "me.proton.pass.electron"))
     }
 
+    func testAdaptiveCursorTempoSpeedsUpInBurstsAndRecoversWhenIdle() {
+        var tempo = adaptiveCursorTempo(previous: 1, gap: .infinity, floor: 0.15)
+        XCTAssertEqual(tempo, 1, "first action after idle runs at full length")
+
+        var burst: [Double] = []
+        for _ in 0..<10 {
+            tempo = adaptiveCursorTempo(previous: tempo, gap: 0.1, floor: 0.15)
+            burst.append(tempo)
+        }
+        XCTAssertEqual(burst, burst.sorted(by: >).map { max($0, 0.15) }, "each back-to-back action is no slower than the last")
+        XCTAssertLessThan(burst[0], 1)
+        XCTAssertEqual(burst.last, 0.15, "a burst bottoms out at the floor")
+
+        XCTAssertEqual(adaptiveCursorTempo(previous: tempo, gap: 2, floor: 0.15), 1, "a relaxed gap restores full length")
+        XCTAssertEqual(adaptiveCursorTempo(previous: 1, gap: 0, floor: 1), 1, "floor 1 turns the speed-up off")
+    }
+
+    func testVisualCursorActionsFromAToolThreadPlayInOrderWithoutBlockingIt() {
+        nonisolated(unsafe) var played: [String] = []
+        nonisolated(unsafe) var callerBlockedMs = Double.infinity
+        let drained = expectation(description: "cursor queue drained")
+
+        Thread.detachNewThread {
+            let start = TimingLog.now()
+            VisualCursorSupport.performOnMain {
+                played.append("first start")
+                // Animations pump the run loop; the next action must not start inside one.
+                let end = Date().addingTimeInterval(0.2)
+                while Date() < end {
+                    RunLoop.current.run(mode: .default, before: Date().addingTimeInterval(1 / 120))
+                }
+                played.append("first end")
+            }
+            VisualCursorSupport.performOnMain { played.append("second") }
+            callerBlockedMs = (TimingLog.now() - start) * 1000
+            VisualCursorSupport.performOnMain { drained.fulfill() }
+        }
+        wait(for: [drained], timeout: 5)
+
+        XCTAssertEqual(played, ["first start", "first end", "second"])
+        XCTAssertLessThan(callerBlockedMs, 100, "the tool thread must not wait for the animation")
+    }
+
     func testVisualCursorEnvFlagDefaultsToEnabled() {
         XCTAssertTrue(visualCursorEnabled(environment: [:]))
         XCTAssertTrue(visualCursorEnabled(environment: ["OPEN_COMPUTER_USE_VISUAL_CURSOR": "1"]))

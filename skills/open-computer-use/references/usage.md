@@ -290,6 +290,11 @@ released when the cursor is cleared or its idle timeout expires.
 This follows the window's position, not layout changes inside it. Refresh app state after a layout change
 before choosing another target. Input delivery continues to use the existing action paths.
 
+The tool call does not wait for the cursor animation: the action returns while the cursor finishes its
+travel and click feedback. Back-to-back actions play faster, down to 15% of the normal length
+(`OPEN_COMPUTER_USE_CURSOR_BURST_FLOOR`; `1` turns this off), and return to normal after 2 s without
+actions. Window screenshots never include the cursor.
+
 ## Platform Notes
 
 ### macOS

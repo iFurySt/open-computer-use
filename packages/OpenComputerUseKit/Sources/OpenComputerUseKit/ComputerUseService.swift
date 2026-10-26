@@ -166,8 +166,13 @@ func makeCursorWindowAnchor(snapshot: AppSnapshot, windowLocalPoint: CGPoint) ->
 
     // Registering here keeps the live-frame source next to the anchor that
     // depends on it: the window list can lag a move by about a second, so the
-    // accessibility element is what makes the re-derivation immediate.
-    CursorWindowFrameTracker.register(windowID: windowID, element: snapshot.windowElement)
+    // accessibility element is what makes the re-derivation immediate. It goes
+    // through the cursor queue so an earlier queued action that clears tracking
+    // cannot drop it.
+    nonisolated(unsafe) let element = snapshot.windowElement
+    VisualCursorSupport.performOnMain {
+        CursorWindowFrameTracker.register(windowID: windowID, element: element)
+    }
 
     return CursorRestingAnchor(
         windowID: windowID,
@@ -2108,11 +2113,13 @@ public final class ComputerUseService {
     private func visualCursorTarget(for record: ElementRecord, snapshot: AppSnapshot) -> VisualCursorTarget? {
         // The accessibility element is the overlay's only immediate source of
         // truth for the window frame: the window list can keep reporting the
-        // pre-move origin for about a second.
-        CursorWindowFrameTracker.register(
-            windowID: snapshot.targetWindowID,
-            element: snapshot.windowElement
-        )
+        // pre-move origin for about a second. Queued like the cursor actions, see
+        // `makeCursorWindowAnchor`.
+        let windowID = snapshot.targetWindowID
+        nonisolated(unsafe) let element = snapshot.windowElement
+        VisualCursorSupport.performOnMain {
+            CursorWindowFrameTracker.register(windowID: windowID, element: element)
+        }
 
         return makeVisualCursorTarget(
             localFrame: record.localFrame,
