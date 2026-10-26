@@ -1380,6 +1380,18 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertFalse(shouldMergeTextOnlySiblings(["消息", "126/126"]))
     }
 
+    func testAccessibilityRendererSpellsNamesDrawnLetterByLetter() {
+        XCTAssertEqual(spellingSplitLetters(["R", "S", "I", "", "S", "t", "r", "a", "t"]), ["RSI Strat"])
+        // a row that also holds an author and a count keeps them as their own texts
+        XCTAssertEqual(spellingSplitLetters(["R", "e", "l", "glaz", "26.3 K"]), ["Rel", "glaz", "26.3 K"])
+        XCTAssertEqual(spellingSplitLetters(["Total", "42"]), ["Total", "42"])
+        XCTAssertEqual(spellingSplitLetters(["", "Send", ""]), ["Send"])
+        // a run with no lowercase letter stays letters: a calendar header, digits, CJK
+        XCTAssertEqual(spellingSplitLetters(["S", "M", "T", "W", "T", "F", "S"]), ["S", "M", "T", "W", "T", "F", "S"])
+        XCTAssertEqual(spellingSplitLetters(["1", "", "2"]), ["1", "2"])
+        XCTAssertEqual(spellingSplitLetters(["是", "否"]), ["是", "否"])
+    }
+
     func testAccessibilityRendererRendersSummariesWithImagesAsChildren() {
         XCTAssertTrue(shouldRenderGenericTextSummaryAsChildren("AgentSphere 17:18 好的，谢谢", summaryImageCount: 1))
         XCTAssertFalse(shouldRenderGenericTextSummaryAsChildren("AgentSphere 17:18 好的，谢谢", summaryImageCount: 0))
