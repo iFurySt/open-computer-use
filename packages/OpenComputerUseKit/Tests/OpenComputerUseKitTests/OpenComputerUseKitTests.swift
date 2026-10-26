@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import ImageIO
 import XCTest
 @testable import OpenComputerUseKit
@@ -642,6 +643,40 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(try KeyPressParser.parse("KP_9").displayValue, "kp_9")
         XCTAssertEqual(try KeyPressParser.parse("KP_Enter").displayValue, "kp_enter")
         XCTAssertEqual(try KeyPressParser.parse("F12").displayValue, "f12")
+    }
+
+    func testLayoutCharacterKeysReadTheUSLayout() throws {
+        // The US layout itself, not the machine's current one, so this holds on any layout.
+        let filter = [kTISPropertyInputSourceID as String: "com.apple.keylayout.US"] as CFDictionary
+        let sources = TISCreateInputSourceList(filter, true)?.takeRetainedValue() as? [TISInputSource]
+        let keys = KeyPressParser.characterKeys(in: try XCTUnwrap(sources?.first))
+
+        let expected: [Character: (code: Int, shift: Bool)] = [
+            "/": (kVK_ANSI_Slash, false),
+            "?": (kVK_ANSI_Slash, true),
+            "@": (kVK_ANSI_2, true),
+            "{": (kVK_ANSI_LeftBracket, true),
+            "*": (kVK_ANSI_8, true),
+        ]
+        for (character, key) in expected {
+            let found = try XCTUnwrap(keys[character], "\(character)")
+            XCTAssertEqual(found.code, CGKeyCode(key.code), "\(character)")
+            XCTAssertEqual(found.shift, key.shift, "\(character)")
+        }
+    }
+
+    func testKeyPressParserAddsShiftForShiftedLayoutCharacters() throws {
+        // Expectations come from the current layout, so this holds wherever `?` is one key.
+        let current = try XCTUnwrap(TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue())
+        let question = try XCTUnwrap(KeyPressParser.characterKeys(in: current)["?"])
+
+        let parsed = try KeyPressParser.parse("cmd+?")
+        XCTAssertEqual(parsed.keyCode, question.code)
+        XCTAssertEqual(parsed.modifiers.map(\.flag), question.shift ? [.maskCommand, .maskShift] : [.maskCommand])
+        XCTAssertEqual(try KeyPressParser.parse("shift+?").modifiers.count, 1, "an explicit shift is not added twice")
+        XCTAssertThrowsError(try KeyPressParser.parse("??"))
+        // Menus list `?` under cmd alone, so sky_key matches it without the implied shift.
+        XCTAssertEqual(skyMenuKeyEquivalent(for: parsed), SkyMenuKeyEquivalent(character: "?", modifiers: 0))
     }
 
     func testInitializeResponseContainsToolsCapability() throws {
