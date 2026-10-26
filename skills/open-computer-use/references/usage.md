@@ -39,6 +39,7 @@ drag
 type_text
 press_key
 set_value
+set_position  (macOS runtime only)
 select_text   (macOS runtime only)
 ```
 
@@ -187,7 +188,7 @@ open-computer-use snapshot --max-tree-nodes 3000 --max-tree-depth 96 "Google Chr
 
 `click_method` is optional. Omitting it uses `auto`, which preserves the platform's existing semantic-first behavior. Explicit methods never fall back to a different implementation:
 
-- `accessibility`: only invoke the element's accessibility action and require `element_index`.
+- `accessibility`: only invoke the element's accessibility action and require `element_index`. On macOS a table or outline row that has no press action (and the cell or text inside it) is selected by setting its `AXSelected`, as `auto` does before it falls back to a mouse event.
 - `app_post`: bypass accessibility and post a mouse event directly to the target app/window without moving the system pointer. Supported on macOS and Windows.
 - `sky_click`: use the macOS private SkyLight background-window path with target-only synthetic focus and a Chromium primer click. It supports left single/double click on a current, on-screen window in the same Space and does not move the system pointer, deactivate the foreground app, change its key/first-responder state, or raise the target window. Its action-result snapshot refresh is read-only. Supported on macOS only.
 - `global`: bypass accessibility and use the desktop's global pointer path. Supported on macOS, Windows and Linux, and requires `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` because it may move the real pointer or change foreground focus.
@@ -255,7 +256,7 @@ open-computer-use call --calls '[
 
 Every non-fixture `drag` result includes a text item that begins `Drag delivered via app_post` or `Drag delivered via global pointer path`, so a default drag that did nothing is legible instead of looking like success. For an MCP server the variable belongs in the server entry's `env`, not in the calling shell, and the server must be restarted afterwards.
 
-When the gate is not enabled, treat window-server drags as unavailable and reach the same outcome another way: copy or move files with a shell command instead of a Finder drag, use `set_value` or keyboard selection instead of drag-selecting text, and use the app's own window controls instead of dragging a title bar.
+When the gate is not enabled, treat window-server drags as unavailable and reach the same outcome another way: copy or move files with a shell command instead of a Finder drag, use `set_value` or keyboard selection instead of drag-selecting text, and use the app's own window controls instead of dragging a title bar. On macOS, `set_position` moves a window, or an element the app lets accessibility move, without a drag.
 
 ## Text Selection (macOS)
 
@@ -274,6 +275,20 @@ return errors. The action verifies the applied UTF-16 range even when full actio
 read-back is off; use `getAXState()` for the next UI observation. It does not activate
 the app or fall back to keyboard/pointer input. Linux and Windows do not implement
 `select_text` yet.
+
+## Moving Elements (macOS)
+
+`set_position` moves an element whose `AXPosition` the app lets accessibility set (a window, a region on a timeline) so its top-left corner lands at `x`, `y`, and sets its `AXSize` when `width` and `height` are given. All four are screenshot pixel coordinates, the same space `click` and `drag` use; element 0, the window, moves relative to where it is now. No pointer or mouse events are sent, so it works with the window in the background and is the way to move what a default `drag` cannot.
+
+- An element whose position (or size, when asked) is not settable is refused before anything is written.
+- The size is written first, then the position. Each write is read back: the call fails only when the element is still exactly where it was. When the app clamps or snaps the request, the result says where the element landed; when the frame cannot be read back, the result says so.
+- Fixture apps and the Windows / Linux runtimes do not implement `set_position`.
+
+```bash
+open-computer-use call set_position --args '{"app":"GarageBand","element_index":"42","x":640,"y":310}'
+```
+
+JavaScript exposes `app.setPosition(elementIndex, [x, y], [width, height]?)`.
 
 ## Software Cursor
 

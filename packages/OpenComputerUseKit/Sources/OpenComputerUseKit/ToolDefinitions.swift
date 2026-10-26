@@ -46,7 +46,7 @@ public enum ToolDefinitions {
                         enumValues: ["left", "right", "middle"]
                     ),
                     "click_method": stringProperty(
-                        description: "Click implementation: auto (default), accessibility, app_post, sky_click, or global. Accessibility requires element_index. app_post sends a public event directly to the target app. sky_click uses the macOS SkyLight background window path. Global may move the system pointer and requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1.",
+                        description: "Click implementation: auto (default), accessibility, app_post, sky_click, or global. Accessibility requires element_index; on a table or outline row that has no press action it selects the row through AXSelected. app_post sends a public event directly to the target app. sky_click uses the macOS SkyLight background window path. Global may move the system pointer and requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1.",
                         enumValues: ClickMethod.allCases.map(\.rawValue)
                     ),
                 ],
@@ -165,6 +165,22 @@ public enum ToolDefinitions {
                     "value": stringProperty(description: "Value to assign"),
                 ],
                 required: ["app", "element_index", "value"]
+            )
+        ),
+        ToolDefinition(
+            name: "set_position",
+            description: "Move an element the app lets accessibility move, such as a window or a timeline region, so its top-left corner lands at a screenshot point, and resize it when width and height are given. Sends no pointer or drag events. Fails when the element is not movable or did not move; reports where it landed when the app placed it elsewhere. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(
+                properties: [
+                    "app": stringProperty(description: "App name or bundle identifier"),
+                    "element_index": stringProperty(description: "Element identifier"),
+                    "x": numberProperty(description: "X coordinate for the element's top-left corner, in screenshot pixel coordinates"),
+                    "y": numberProperty(description: "Y coordinate for the element's top-left corner, in screenshot pixel coordinates"),
+                    "width": numberProperty(description: "New width in screenshot pixels. Requires height."),
+                    "height": numberProperty(description: "New height in screenshot pixels. Requires width."),
+                ],
+                required: ["app", "element_index", "x", "y"]
             )
         ),
         ToolDefinition(

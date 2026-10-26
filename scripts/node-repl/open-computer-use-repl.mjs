@@ -48,6 +48,7 @@ The runtime exposes an asynchronous app-bound API:
 - \`await app.typeText(text, { keyMethod? })\`
 - \`await app.pressKey(key, { keyMethod? })\`
 - \`await app.setValue(elementIndex, value)\`
+- \`await app.setPosition(elementIndex, [x, y], [width, height]?)\`: macOS-only; moves an element the app lets accessibility move (a window, a timeline region) so its top-left corner lands at a screenshot point, and sizes it when given. No pointer events; throws when the element is not movable or did not move.
 - \`await app.selectText(elementIndex, text, { prefix?, suffix?, selection? })\`: macOS-only; selection is text (default), cursor_before or cursor_after. Ambiguous text and unverified selections throw.
 - \`await app.performSecondaryAction(elementIndex, action)\`
 
@@ -359,6 +360,9 @@ export function createCuaApi(native, activeOutput) {
         await call("scroll", { app, element_index: target, direction, pages });
       },
       async setValue(elementIndex, value) { await call("set_value", { app, element_index: elementIndex, value }); },
+      async setPosition(elementIndex, [x, y], size) {
+        await call("set_position", { app, element_index: elementIndex, x, y, width: size?.[0], height: size?.[1] });
+      },
       async selectText(elementIndex, text, options = {}) {
         const index = typeof elementIndex === "string" && /^(0|[1-9]\d*)$/u.test(elementIndex) ? Number(elementIndex) : elementIndex;
         if (!Number.isSafeInteger(index) || index < 0) throw new Error("selectText requires a non-negative integer element index");

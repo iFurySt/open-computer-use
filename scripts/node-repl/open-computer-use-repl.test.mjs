@@ -410,6 +410,17 @@ for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
     assert.equal(native.calls.some(call => call.name === "get_app_state"), false);
   });
 
+  test(`${Session.name}: setPosition forwards the point and an optional size`, async t => {
+    const native = mockNative(), session = new Session({ native });
+    t.after(() => session.close?.());
+    let result = await session.run(`var movedApp = await cua.getApp("GarageBand", { initialState: false }); await movedApp.setPosition(12, [340, 88]);`);
+    assert.equal(result.isError, false, result.content.at(-1).text);
+    assert.deepEqual(native.calls[0], { name: "set_position", arguments: { app: "GarageBand", element_index: 12, x: 340, y: 88, width: undefined, height: undefined } });
+    result = await session.run(`await movedApp.setPosition("0", [-100, 0], [800, 600]);`);
+    assert.equal(result.isError, false, result.content.at(-1).text);
+    assert.deepEqual(native.calls.at(-1).arguments, { app: "GarageBand", element_index: "0", x: -100, y: 0, width: 800, height: 600 });
+  });
+
   test(`${Session.name}: selectText rejects invalid inputs before native calls`, async t => {
     const native = mockNative(), session = new Session({ native });
     t.after(() => session.close?.());

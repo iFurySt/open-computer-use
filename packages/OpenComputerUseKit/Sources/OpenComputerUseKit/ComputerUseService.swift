@@ -358,6 +358,39 @@ func setValueAttributeIsSettable(result: AXError, settable: Bool, attribute: Str
     return settable
 }
 
+func validateSetPositionArguments(x: Double, y: Double, width: Double?, height: Double?) throws {
+    guard x.isFinite, y.isFinite else {
+        throw ComputerUseError.invalidArguments("set_position requires finite x and y")
+    }
+    guard (width == nil) == (height == nil) else {
+        throw ComputerUseError.invalidArguments("set_position requires width and height together")
+    }
+    if let width, let height, !(width.isFinite && height.isFinite && width > 0 && height > 0) {
+        throw ComputerUseError.invalidArguments("set_position width and height must be positive numbers")
+    }
+}
+
+enum AXFrameReadBack: Equatable {
+    case applied
+    case unchanged
+    case adjusted
+    case unverifiable
+}
+
+/// How an element's frame reads back after an AXPosition or AXSize write, comparing only the
+/// parts written, within a point. Only `unchanged` (still where it was) is a failure: an app may
+/// clamp or snap the request (`adjusted`), and some elements cannot be read back.
+func axFrameReadBack(before: CGRect?, after: CGRect?, origin: CGPoint?, size: CGSize?) -> AXFrameReadBack {
+    guard let after else { return .unverifiable }
+    func matches(_ origin: CGPoint?, _ size: CGSize?) -> Bool {
+        (origin.map { abs(after.minX - $0.x) <= 1 && abs(after.minY - $0.y) <= 1 } ?? true)
+            && (size.map { abs(after.width - $0.width) <= 1 && abs(after.height - $0.height) <= 1 } ?? true)
+    }
+    if matches(origin, size) { return .applied }
+    if let before, matches(origin.map { _ in before.origin }, size.map { _ in before.size }) { return .unchanged }
+    return .adjusted
+}
+
 func invalidSecondaryActionErrorMessage(action: String, elementIndex: Int) -> String {
     "\(action) is not a valid secondary action for \(elementIndex)"
 }
@@ -1023,6 +1056,90 @@ public final class ComputerUseService {
         return try actionResult(for: query)
     }
 
+    /// Moves an element the app lets accessibility move (a window, a timeline region) so its
+    /// top-left corner lands at a screenshot point, and sizes it when width and height are given.
+    /// No pointer or mouse events: the background route to what a drag needs the pointer for.
+    public func setPosition(app query: String, elementIndex: String, x: Double, y: Double, width: Double?, height: Double?) throws -> ToolCallResult {
+        try validateSetPositionArguments(x: x, y: y, width: width, height: height)
+        let snapshot = try snapshotForAction(app: query, elementIndex: elementIndex)
+        guard snapshot.mode != .fixture else {
+            throw ComputerUseError.message("set_position is not supported for fixture apps")
+        }
+        let record = try lookupElement(snapshot: snapshot, index: elementIndex)
+        guard let element = record.element else {
+            throw ComputerUseError.stateUnavailable("element \(elementIndex) has no backing accessibility object")
+        }
+        guard isSettable(element: element, attribute: kAXPositionAttribute) else {
+            throw ComputerUseError.message("element \(elementIndex) cannot be moved: its AXPosition is not settable")
+        }
+        if width != nil, !isSettable(element: element, attribute: kAXSizeAttribute) {
+            throw ComputerUseError.message("element \(elementIndex) cannot be resized: its AXSize is not settable")
+        }
+
+        // Screenshot pixels, as click and drag take them, to screen points and back for the notes.
+        let windowPoint = try screenshotPixelToWindowPointInSnapshot(snapshot: snapshot, point: CGPoint(x: x, y: y))
+        var origin = try windowPointToGlobalPoint(snapshot: snapshot, point: windowPoint)
+        let scale = screenshotPixelScale(screenshotPixelSize: screenshotPixelSize(snapshot: snapshot), windowBounds: snapshot.windowBounds)
+        let window = snapshot.windowBounds ?? .zero
+        func pixels(_ frame: CGRect) -> String {
+            "x=\(Int(((frame.minX - window.minX) * scale.width).rounded())), y=\(Int(((frame.minY - window.minY) * scale.height).rounded())), "
+                + "w=\(Int((frame.width * scale.width).rounded())), h=\(Int((frame.height * scale.height).rounded()))"
+        }
+
+        var notes: [String] = []
+        // Sized first, and given time to take it: GarageBand's movie window, moved while it is
+        // still resizing, goes back to its old size.
+        if let width, let height {
+            var size = CGSize(width: width / scale.width, height: height / scale.height)
+            let value = AXValueCreate(.cgSize, &size)
+            notes += try writeFrame(kAXSizeAttribute, value, of: element, origin: nil, size: size, elementIndex: elementIndex, describe: pixels)
+        }
+        let value = AXValueCreate(.cgPoint, &origin)
+        notes += try writeFrame(kAXPositionAttribute, value, of: element, origin: origin, size: nil, elementIndex: elementIndex, describe: pixels)
+        // AppKit animates a window moved this way: AX reports the new frame at once, the window
+        // list (and so the next state's coordinates) only after about 0.2 s.
+        if record.role == kAXWindowRole as String {
+            pauseBeforeReadBack(0.3)
+        }
+
+        let result = try actionResult(for: query)
+        var content = result.content
+        let insertIndex = content.firstIndex { $0.dictionary["type"] as? String == "image" } ?? content.endIndex
+        content.insert(contentsOf: notes.map(ToolResultContentItem.text), at: insertIndex)
+        return ToolCallResult(content: content, isError: result.isError)
+    }
+
+    /// Writes one frame attribute, then reads the frame back for up to 0.6 s while it is still
+    /// where it was. Returns a note when the app put the element elsewhere or it cannot be read.
+    private func writeFrame(_ attribute: String, _ value: AXValue?, of element: AXUIElement, origin: CGPoint?, size: CGSize?,
+                            elementIndex: String, describe: (CGRect) -> String) throws -> [String] {
+        guard let value else {
+            throw ComputerUseError.message("could not encode \(attribute) for element \(elementIndex)")
+        }
+        let before = localFrame(of: element, windowBounds: nil)
+        try requireUsableComputerUseSession()
+        let result = AXUIElementSetAttributeValue(element, attribute as CFString, value)
+        guard result == .success else {
+            throw ComputerUseError.message("AXUIElementSetAttributeValue(\(attribute)) failed with \(result.rawValue)")
+        }
+        let deadline = Date().addingTimeInterval(0.6)
+        var after = localFrame(of: element, windowBounds: nil)
+        while axFrameReadBack(before: before, after: after, origin: origin, size: size) == .unchanged, Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.05)
+            after = localFrame(of: element, windowBounds: nil)
+        }
+        switch axFrameReadBack(before: before, after: after, origin: origin, size: size) {
+        case .applied:
+            return []
+        case .unchanged:
+            throw ComputerUseError.message("set_position failed: macOS accepted the \(attribute) write, but element \(elementIndex) is still at \(after.map(describe) ?? "its old frame"); the app does not apply programmatic changes to it")
+        case .adjusted:
+            return ["The app placed element \(elementIndex) at \(after.map(describe) ?? "another frame") (screenshot pixels) instead of the requested \(attribute == kAXSizeAttribute ? "size" : "position")."]
+        case .unverifiable:
+            return ["Element \(elementIndex)'s frame could not be read back after the \(attribute) write; check the next state."]
+        }
+    }
+
     public func selectText(
         app query: String,
         elementIndex: String,
@@ -1391,6 +1508,26 @@ public final class ComputerUseService {
         return nil
     }
 
+    /// Selects the element, or the nearest row or cell holding it, whose AXSelected is settable.
+    /// A cell that accepts the write but stays unselected hands the selection to its row.
+    private func selectContainingRow(for element: AXUIElement) throws -> Bool {
+        var current: AXUIElement? = element
+        for _ in 0..<4 {
+            guard let candidate = current else { return false }
+            if let role = stringValue(of: candidate, attribute: kAXRoleAttribute),
+               role == kAXRowRole as String || role == kAXCellRole as String,
+               isSettable(element: candidate, attribute: kAXSelectedAttribute),
+               try setBoolAttribute(named: kAXSelectedAttribute, on: candidate)
+            {
+                var selected: CFTypeRef?
+                AXUIElementCopyAttributeValue(candidate, kAXSelectedAttribute as CFString, &selected)
+                if (selected as? Bool) != false { return true }
+            }
+            current = copyParent(of: candidate)
+        }
+        return false
+    }
+
     private func performAXClickSequence(
         on record: ElementRecord,
         snapshot: AppSnapshot,
@@ -1456,6 +1593,20 @@ public final class ComputerUseService {
                     }
                 }
             }
+        }
+
+        // A table or outline row that takes no press (GarageBand's library) is chosen the way a
+        // click chooses it, by setting AXSelected. Element clicks only, after every press failed.
+        if allowActivationFallback,
+           button == .left,
+           clickCount <= 1,
+           let element = record.element,
+           !hasAncestorRole("AXWebArea", of: element),
+           try selectContainingRow(for: element)
+        {
+            debugClickDecision("handled by row selection \(clickDebugDescription(record))")
+            pauseBeforeReadBack(0.15)
+            return true
         }
 
         guard
