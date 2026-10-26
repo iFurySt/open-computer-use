@@ -141,6 +141,12 @@ public enum ToolDefinitions {
             )
         ),
         ToolDefinition(
+            name: "read_clipboard",
+            description: "Read the plain text on the clipboard, such as text an app just copied that its accessibility tree does not expose. Items marked concealed, transient or auto-generated (the nspasteboard.org markers password managers set) are never returned, nor is non-text content or text over 100000 UTF-16 code units. Only read the clipboard when the task needs it. This tool is part of plugin `Computer Use`.",
+            annotations: readOnlyAnnotations(),
+            inputSchema: objectSchema(properties: [:], required: [])
+        ),
+        ToolDefinition(
             name: "scroll",
             description: "Scroll an element in a direction by a number of pages. This tool is part of plugin `Computer Use`.",
             annotations: defaultAnnotations(),
@@ -197,6 +203,17 @@ public enum ToolDefinitions {
                     "key_method": keyMethodProperty(),
                 ],
                 required: ["app", "text"]
+            )
+        ),
+        ToolDefinition(
+            name: "write_clipboard",
+            description: "Replace the clipboard contents with plain text, for example to paste prepared text with press_key super+v. This overwrites what the user copied, so only use it when the user asked for it. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(
+                properties: [
+                    "text": stringProperty(description: "Text to put on the clipboard"),
+                ],
+                required: ["text"]
             )
         ),
     ]

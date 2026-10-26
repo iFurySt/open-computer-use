@@ -37,6 +37,7 @@ The runtime exposes an asynchronous app-bound API:
 - \`await cua.getState({ emit? })\`: list current apps.
 - \`await cua.listApps({ emit? })\`: list current apps.
 - \`await cua.getApp(nameOrBundleID, { initialState? })\`: bind an app; initialState defaults to true. Use false for a lightweight binding before query.
+- \`await cua.readClipboard()\` / \`await cua.writeClipboard(text)\`: macOS-only plain-text clipboard. Items marked concealed, transient or auto-generated are not returned. Write only when the user asked, since it replaces what they copied.
 - \`await app.query({ text?, role?, exact?, limit?, maxNodes?, windowId? })\`: macOS-only AX lookup; returns matches and truncation metadata, with indexes usable in this native session.
 - \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement? })\`
 - \`await app.getScreenshot({ emit? })\`
@@ -410,6 +411,11 @@ export function createCuaApi(native, activeOutput) {
         await emitText(toolResultText(result));
       }
       return appBinding(app);
+    },
+    async readClipboard() { return toolResultText(await call("read_clipboard", {})); },
+    async writeClipboard(text) {
+      if (typeof text !== "string" || !text.length) throw new Error("writeClipboard requires non-empty text");
+      await call("write_clipboard", { text });
     },
     async rewriteDocumentation() { activeOutput().write(COMPUTER_USE_GUIDANCE, "cua.core"); },
   };

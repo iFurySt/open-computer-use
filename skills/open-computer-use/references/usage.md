@@ -40,6 +40,8 @@ type_text
 press_key
 set_value
 select_text   (macOS runtime only)
+read_clipboard   (macOS runtime only)
+write_clipboard  (macOS runtime only)
 ```
 
 macOS also exposes `query` for targeted AX lookup. These nine core tools remain the cross-platform compatibility surface. The bundled Codex plugin uses a
@@ -274,6 +276,24 @@ return errors. The action verifies the applied UTF-16 range even when full actio
 read-back is off; use `getAXState()` for the next UI observation. It does not activate
 the app or fall back to keyboard/pointer input. Linux and Windows do not implement
 `select_text` yet.
+
+## Clipboard (macOS)
+
+`read_clipboard` returns the clipboard's plain text, for text an app copied that its
+accessibility tree does not expose, such as a document drawn on a canvas. `write_clipboard`
+replaces the clipboard with `text`, for an app to paste with `press_key` `super+v`. In
+JavaScript they are `await cua.readClipboard()` and `await cua.writeClipboard(text)`.
+
+- An item marked concealed, transient or auto-generated (the nspasteboard.org markers
+  password managers set) is never returned, and its contents are not read.
+- Non-text content, an empty clipboard and text over 100000 UTF-16 code units return errors.
+- Both are refused when the Mac is locked without a Locked Use lease, like every other GUI
+  action.
+- macOS may ask the user before the app reads the clipboard; if clipboard access is set
+  to deny in System Settings, `read_clipboard` reports that.
+- `write_clipboard` replaces what the user copied. Use it only when they asked.
+
+Linux and Windows do not implement the clipboard tools and return `unsupportedTool`.
 
 ## Software Cursor
 
