@@ -51,17 +51,81 @@ final class PermissionAccessoryPanelTests: XCTestCase {
         }
     }
 
+    func testPanelAnchorsBelowPermissionListAndFitsItsWidth() async throws {
+        try await MainActor.run {
+            let fixture = Fixture()
+            defer { fixture.close() }
+            let list = CGRect(x: 380, y: 650, width: 460, height: 250)
+            fixture.permissionListFrame = list
+            fixture.controller.show(for: .screenRecording, sourceFrameInScreen: nil)
+            XCTAssertEqual(fixture.panel.frame.maxY, list.minY - 8, accuracy: 0.01)
+            XCTAssertEqual(fixture.panel.frame.midX, list.midX, accuracy: 0.01)
+            fixture.assertFullPanel(expectedWidth: 460)
+        }
+    }
+
+    func testMovingListUpdatesAnimationTargetAndInterruptedRecovery() async throws {
+        try await MainActor.run {
+            let fixture = Fixture()
+            defer { fixture.close() }
+            fixture.permissionListFrame = CGRect(x: 380, y: 650, width: 560, height: 250)
+            fixture.controller.show(for: .accessibility, sourceFrameInScreen: fixture.sourceFrame)
+            fixture.time = 0.18
+            fixture.controller.stepLaunchAnimation()
+            let moved = CGRect(x: 400, y: 600, width: 460, height: 250)
+            fixture.permissionListFrame = moved
+            fixture.controller.refresh()
+            fixture.time = 0.73
+            fixture.controller.stepLaunchAnimation()
+            XCTAssertEqual(fixture.panel.frame.maxY, moved.minY - 8, accuracy: 0.01)
+            XCTAssertEqual(fixture.panel.frame.midX, moved.midX, accuracy: 0.01)
+            fixture.settingsVisible = false
+            fixture.controller.refresh()
+            fixture.settingsVisible = true
+            fixture.controller.refresh()
+            fixture.assertFullPanel(expectedWidth: 460)
+        }
+    }
+
+    func testMissingListGeometryKeepsWindowFallback() async throws {
+        await MainActor.run {
+            let fixture = Fixture()
+            defer { fixture.close() }
+            fixture.controller.show(for: .accessibility, sourceFrameInScreen: nil)
+            XCTAssertEqual(fixture.panel.frame.maxY, fixture.referenceWindow.frame.minY + 6, accuracy: 0.01)
+        }
+    }
+
+    func testListDiscoveryAndLossSwitchBetweenListAndWindowEdges() async throws {
+        await MainActor.run {
+            let fixture = Fixture()
+            defer { fixture.close() }
+            fixture.controller.show(for: .screenRecording, sourceFrameInScreen: nil)
+            let fallback = fixture.panel.frame
+            fixture.permissionListFrame = CGRect(x: 380, y: 650, width: 460, height: 250)
+            fixture.controller.refresh()
+            XCTAssertEqual(fixture.panel.frame.maxY, 642, accuracy: 0.01)
+            fixture.assertFullPanel(expectedWidth: 460)
+            fixture.permissionListFrame = nil
+            fixture.controller.refresh()
+            XCTAssertEqual(fixture.panel.frame, fallback)
+            fixture.assertFullPanel()
+        }
+    }
+
     @MainActor
     private final class Fixture {
         var time: CFTimeInterval = 0
         var settingsVisible = true
+        var permissionListFrame: CGRect?
         let sourceFrame = CGRect(x: 500, y: 500, width: 104, height: 44)
         let referenceWindow: NSWindow
         let existingWindows: Set<ObjectIdentifier>
         lazy var controller = PermissionAccessoryPanelController(
             onBack: {},
             windowContextProvider: { [unowned self] in
-                settingsVisible ? .init(bounds: referenceWindow.frame, windowNumber: referenceWindow.windowNumber) : nil
+                settingsVisible ? .init(bounds: referenceWindow.frame, windowNumber: referenceWindow.windowNumber,
+                                        permissionListFrame: permissionListFrame) : nil
             },
             animationTimeProvider: { [unowned self] in time }
         )
@@ -85,9 +149,9 @@ final class PermissionAccessoryPanelTests: XCTestCase {
             referenceWindow.close()
         }
 
-        func assertFullPanel(file: StaticString = #filePath, line: UInt = #line) {
+        func assertFullPanel(expectedWidth: CGFloat = 530, file: StaticString = #filePath, line: UInt = #line) {
             XCTAssertTrue(panel.isVisible, file: file, line: line)
-            XCTAssertEqual(panel.frame.width, 530, accuracy: 0.01, file: file, line: line)
+            XCTAssertEqual(panel.frame.width, expectedWidth, accuracy: 0.01, file: file, line: line)
             XCTAssertEqual(panel.frame.height, 109, accuracy: 0.01, file: file, line: line)
             XCTAssertEqual(panel.alphaValue, 1, accuracy: 0.001, file: file, line: line)
             let content = panel.contentView!

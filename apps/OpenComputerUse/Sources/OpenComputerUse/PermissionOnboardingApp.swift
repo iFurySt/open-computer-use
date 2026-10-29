@@ -550,7 +550,6 @@ final class PermissionAccessoryPanelController {
     private enum Layout {
         static let panelWidth: CGFloat = 530
         static let panelHeight: CGFloat = 109
-        static let panelSize = NSSize(width: panelWidth, height: panelHeight)
         static let screenHorizontalInset: CGFloat = 16
         static let screenBottomInset: CGFloat = 12
         static let windowBottomOverlap: CGFloat = 6
@@ -561,25 +560,26 @@ final class PermissionAccessoryPanelController {
         static let sidebarWidthMax: CGFloat = 272
     }
 
-    private struct PanelAnchor {
-        let windowBounds: CGRect
-        let contentTrackRect: CGRect
-    }
-
     struct SystemSettingsWindowContext {
         let bounds: CGRect
         let windowNumber: Int
+        let permissionListFrame: CGRect?
+
+        init(bounds: CGRect, windowNumber: Int, permissionListFrame: CGRect? = nil) {
+            self.bounds = bounds
+            self.windowNumber = windowNumber
+            self.permissionListFrame = permissionListFrame
+        }
     }
 
     init(
         onBack: @escaping () -> Void,
-        windowContextProvider: @escaping () -> SystemSettingsWindowContext? = {
-            PermissionAccessoryPanelController.liveSystemSettingsWindowContext()
-        },
+        windowContextProvider: (() -> SystemSettingsWindowContext?)? = nil,
         animationTimeProvider: @escaping () -> CFTimeInterval = CACurrentMediaTime
     ) {
         self.onBack = onBack
-        self.windowContextProvider = windowContextProvider
+        let reader = PermissionSettingsWindowReader()
+        self.windowContextProvider = windowContextProvider ?? { reader.context() }
         self.animationTimeProvider = animationTimeProvider
     }
 
@@ -701,11 +701,12 @@ final class PermissionAccessoryPanelController {
     }
 
     private func refreshPosition() {
-        guard let panel, currentPermission != nil, panel.isVisible, let windowContext = windowContextProvider() else {
+        guard let panel, currentPermission != nil, panel.isVisible,
+              let windowContext = windowContextProvider() else {
             return
         }
 
-        position(panel: panel, windowBounds: windowContext.bounds)
+        position(panel: panel, windowContext: windowContext)
     }
 
     private func updatePanelVisibility() {
@@ -731,7 +732,7 @@ final class PermissionAccessoryPanelController {
         } else {
             let previousOrderedWindowNumber = orderedWindowNumber
             orderedWindowNumber = windowContext.windowNumber
-            position(panel: panel, windowBounds: windowContext.bounds)
+            position(panel: panel, windowContext: windowContext)
             if !isAnimatingLaunch {
                 panel.alphaValue = 1
             }
@@ -742,21 +743,21 @@ final class PermissionAccessoryPanelController {
 
     }
 
-    private func position(panel: NSPanel, windowBounds: CGRect) {
+    private func position(panel: NSPanel, windowContext: SystemSettingsWindowContext) {
         guard let origin = preferredPanelOrigin(
-            for: Layout.panelSize,
-            windowBounds: windowBounds
+            for: panelSize(for: windowContext),
+            windowContext: windowContext
         ) else {
             return
         }
 
         if isAnimatingLaunch {
-            launchToFrame.origin = origin
+            launchToFrame = NSRect(origin: origin, size: panelSize(for: windowContext))
             return
         }
 
         // A hidden panel may retain an interrupted animation's smaller frame.
-        let targetFrame = NSRect(origin: origin, size: Layout.panelSize)
+        let targetFrame = NSRect(origin: origin, size: panelSize(for: windowContext))
         if panel.frame != targetFrame {
             panel.setFrame(targetFrame, display: true)
         }
@@ -768,13 +769,13 @@ final class PermissionAccessoryPanelController {
         relativeTo windowContext: SystemSettingsWindowContext
     ) {
         guard let targetOrigin = preferredPanelOrigin(
-            for: Layout.panelSize,
-            windowBounds: windowContext.bounds
+            for: panelSize(for: windowContext),
+            windowContext: windowContext
         ) else {
             return
         }
 
-        let targetFrame = NSRect(origin: targetOrigin, size: Layout.panelSize)
+        let targetFrame = NSRect(origin: targetOrigin, size: panelSize(for: windowContext))
         orderedWindowNumber = windowContext.windowNumber
 
         guard let sourceFrameInScreen, sourceFrameInScreen.isEmpty == false else {
@@ -844,13 +845,13 @@ final class PermissionAccessoryPanelController {
     private func updateLaunchTargetFrameIfNeeded() {
         guard
             let windowContext = windowContextProvider(),
-            let origin = preferredPanelOrigin(for: Layout.panelSize, windowBounds: windowContext.bounds)
+            let origin = preferredPanelOrigin(for: panelSize(for: windowContext), windowContext: windowContext)
         else {
             return
         }
 
         orderedWindowNumber = windowContext.windowNumber
-        launchToFrame = NSRect(origin: origin, size: Layout.panelSize)
+        launchToFrame = NSRect(origin: origin, size: panelSize(for: windowContext))
     }
 
     private func scheduleLaunchSettlePasses(for generation: Int) {
@@ -912,23 +913,24 @@ final class PermissionAccessoryPanelController {
         )
     }
 
+    private func panelSize(for context: SystemSettingsWindowContext) -> CGSize {
+        CGSize(width: min(Layout.panelWidth, context.permissionListFrame?.width ?? Layout.panelWidth), height: Layout.panelHeight)
+    }
+
     private func preferredPanelOrigin(
         for panelSize: CGSize,
-        windowBounds: CGRect
+        windowContext: SystemSettingsWindowContext
     ) -> CGPoint? {
-        guard let anchor = preferredPanelAnchor(windowBounds: windowBounds) else {
-            return nil
-        }
-
-        let referenceRect = anchor.windowBounds
-        let visibleFrame = targetVisibleScreenFrame(for: referenceRect) ?? referenceRect
-        let trackRect = anchor.contentTrackRect
+        let referenceRect = windowContext.permissionListFrame ?? windowContext.bounds
+        let visibleFrame = targetVisibleScreenFrame(for: referenceRect) ?? windowContext.bounds
+        let trackRect = windowContext.permissionListFrame ?? systemSettingsContentTrackRect(in: windowContext.bounds)
         let x = clamp(
             trackRect.midX - (panelSize.width / 2),
             lower: visibleFrame.minX + Layout.screenHorizontalInset,
             upper: visibleFrame.maxX - panelSize.width - Layout.screenHorizontalInset
         )
-        let desiredY = referenceRect.minY - panelSize.height + Layout.windowBottomOverlap
+        let edgeOffset = windowContext.permissionListFrame == nil ? Layout.windowBottomOverlap : -8
+        let desiredY = referenceRect.minY - panelSize.height + edgeOffset
         let y = max(
             visibleFrame.minY + Layout.screenBottomInset,
             desiredY
@@ -936,18 +938,8 @@ final class PermissionAccessoryPanelController {
         return CGPoint(x: x, y: y)
     }
 
-    private func preferredPanelAnchor(windowBounds: CGRect) -> PanelAnchor? {
-        let referenceRect = windowBounds
-
-        return PanelAnchor(
-            windowBounds: referenceRect,
-            contentTrackRect: systemSettingsContentTrackRect(in: referenceRect)
-        )
-    }
-
     private func systemSettingsContentTrackRect(in windowBounds: CGRect) -> CGRect {
-        // Keep the panel centered under the content area even when the
-        // vertical anchor comes from a specific controls row.
+        // Fallback when Accessibility cannot provide the list controls.
         let sidebarWidth = clamp(
             windowBounds.width * Layout.sidebarWidthRatio,
             lower: Layout.sidebarWidthMin,
@@ -967,24 +959,11 @@ final class PermissionAccessoryPanelController {
     }
 
     private func targetVisibleScreenFrame(for rect: CGRect) -> CGRect? {
-        NSScreen.screens.first(where: { $0.visibleFrame.intersects(rect) })?.visibleFrame
-    }
-
-    private static func appKitRect(fromCGWindowBounds bounds: CGRect) -> CGRect {
-        guard let screen = NSScreen.screens.first(where: { screen in
-            let screenBoundsInQuartz = CGRect(
-                x: screen.frame.minX,
-                y: screen.frame.minY,
-                width: screen.frame.width,
-                height: screen.frame.height
-            )
-            return screenBoundsInQuartz.intersects(bounds)
-        }) ?? NSScreen.main else {
-            return bounds
-        }
-
-        let convertedY = screen.frame.maxY - bounds.maxY
-        return CGRect(x: bounds.minX, y: convertedY, width: bounds.width, height: bounds.height)
+        NSScreen.screens.filter { $0.visibleFrame.intersects(rect) }.max {
+            let left = $0.visibleFrame.intersection(rect)
+            let right = $1.visibleFrame.intersection(rect)
+            return left.width * left.height < right.width * right.height
+        }?.visibleFrame
     }
 
     private func clamp(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
@@ -994,39 +973,6 @@ final class PermissionAccessoryPanelController {
 
         return min(max(value, lower), upper)
     }
-
-    private static func liveSystemSettingsWindowContext() -> SystemSettingsWindowContext? {
-        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" else {
-            return nil
-        }
-        guard let runningApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.systempreferences" }) else {
-            return nil
-        }
-
-        guard let windowInfoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] else {
-            return nil
-        }
-
-        let windows = windowInfoList.compactMap { info -> (SystemSettingsWindowContext, Int)? in
-            guard
-                let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t,
-                ownerPID == runningApp.processIdentifier,
-                let layer = info[kCGWindowLayer as String] as? Int,
-                layer == 0,
-                let windowNumber = info[kCGWindowNumber as String] as? Int,
-                let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
-                let bounds = CGRect(dictionaryRepresentation: boundsDictionary)
-            else {
-                return nil
-            }
-
-            let appKitBounds = appKitRect(fromCGWindowBounds: bounds)
-            return (SystemSettingsWindowContext(bounds: appKitBounds, windowNumber: windowNumber), Int(appKitBounds.width * appKitBounds.height))
-        }
-
-        return windows.sorted(by: { $0.1 > $1.1 }).first?.0
-    }
-
 }
 
 @MainActor
