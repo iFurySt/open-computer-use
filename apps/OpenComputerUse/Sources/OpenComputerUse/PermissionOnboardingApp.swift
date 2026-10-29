@@ -524,6 +524,8 @@ final class GuidancePlaceholderView: NSView {
 @MainActor
 final class PermissionAccessoryPanelController {
     private let onBack: () -> Void
+    private let windowContextProvider: () -> SystemSettingsWindowContext?
+    private let animationTimeProvider: () -> CFTimeInterval
     private let trackingInterval: TimeInterval = 0.15
     private let launchAnimationDuration: TimeInterval = 0.72
     private let launchAnimationResponse = 0.72
@@ -548,6 +550,7 @@ final class PermissionAccessoryPanelController {
     private enum Layout {
         static let panelWidth: CGFloat = 530
         static let panelHeight: CGFloat = 109
+        static let panelSize = NSSize(width: panelWidth, height: panelHeight)
         static let screenHorizontalInset: CGFloat = 16
         static let screenBottomInset: CGFloat = 12
         static let windowBottomOverlap: CGFloat = 6
@@ -563,13 +566,21 @@ final class PermissionAccessoryPanelController {
         let contentTrackRect: CGRect
     }
 
-    private struct SystemSettingsWindowContext {
+    struct SystemSettingsWindowContext {
         let bounds: CGRect
         let windowNumber: Int
     }
 
-    init(onBack: @escaping () -> Void) {
+    init(
+        onBack: @escaping () -> Void,
+        windowContextProvider: @escaping () -> SystemSettingsWindowContext? = {
+            PermissionAccessoryPanelController.liveSystemSettingsWindowContext()
+        },
+        animationTimeProvider: @escaping () -> CFTimeInterval = CACurrentMediaTime
+    ) {
         self.onBack = onBack
+        self.windowContextProvider = windowContextProvider
+        self.animationTimeProvider = animationTimeProvider
     }
 
     func show(for permission: SystemPermissionKind, sourceFrameInScreen: CGRect?) {
@@ -671,7 +682,7 @@ final class PermissionAccessoryPanelController {
         stopTrackingTimer()
         let timer = Timer(timeInterval: trackingInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.handleTrackingTick()
+                self?.refresh()
             }
         }
         timer.tolerance = 0.03
@@ -684,13 +695,13 @@ final class PermissionAccessoryPanelController {
         trackingTimer = nil
     }
 
-    private func handleTrackingTick() {
+    func refresh() {
         updatePanelVisibility()
         refreshPosition()
     }
 
     private func refreshPosition() {
-        guard let panel, currentPermission != nil, panel.isVisible, let windowContext = systemSettingsWindowContext() else {
+        guard let panel, currentPermission != nil, panel.isVisible, let windowContext = windowContextProvider() else {
             return
         }
 
@@ -702,7 +713,7 @@ final class PermissionAccessoryPanelController {
             return
         }
 
-        guard isSystemSettingsFrontmost, let windowContext = systemSettingsWindowContext() else {
+        guard let windowContext = windowContextProvider() else {
             stopLaunchAnimation()
             panel.orderOut(nil)
             return
@@ -721,6 +732,9 @@ final class PermissionAccessoryPanelController {
             let previousOrderedWindowNumber = orderedWindowNumber
             orderedWindowNumber = windowContext.windowNumber
             position(panel: panel, windowBounds: windowContext.bounds)
+            if !isAnimatingLaunch {
+                panel.alphaValue = 1
+            }
             if previousOrderedWindowNumber != windowContext.windowNumber || panelWasVisible == false {
                 panel.order(.above, relativeTo: windowContext.windowNumber)
             }
@@ -730,7 +744,7 @@ final class PermissionAccessoryPanelController {
 
     private func position(panel: NSPanel, windowBounds: CGRect) {
         guard let origin = preferredPanelOrigin(
-            for: panel.frame.size,
+            for: Layout.panelSize,
             windowBounds: windowBounds
         ) else {
             return
@@ -741,8 +755,10 @@ final class PermissionAccessoryPanelController {
             return
         }
 
-        if panel.frame.origin != origin {
-            panel.setFrameOrigin(origin)
+        // A hidden panel may retain an interrupted animation's smaller frame.
+        let targetFrame = NSRect(origin: origin, size: Layout.panelSize)
+        if panel.frame != targetFrame {
+            panel.setFrame(targetFrame, display: true)
         }
     }
 
@@ -752,13 +768,13 @@ final class PermissionAccessoryPanelController {
         relativeTo windowContext: SystemSettingsWindowContext
     ) {
         guard let targetOrigin = preferredPanelOrigin(
-            for: panel.frame.size,
+            for: Layout.panelSize,
             windowBounds: windowContext.bounds
         ) else {
             return
         }
 
-        let targetFrame = NSRect(origin: targetOrigin, size: panel.frame.size)
+        let targetFrame = NSRect(origin: targetOrigin, size: Layout.panelSize)
         orderedWindowNumber = windowContext.windowNumber
 
         guard let sourceFrameInScreen, sourceFrameInScreen.isEmpty == false else {
@@ -773,7 +789,7 @@ final class PermissionAccessoryPanelController {
         isAnimatingLaunch = true
         launchFromFrame = sourceFrameInScreen
         launchToFrame = targetFrame
-        launchStartTime = CACurrentMediaTime()
+        launchStartTime = animationTimeProvider()
         launchSettleGeneration += 1
 
         panel.alphaValue = launchInitialAlpha
@@ -792,13 +808,13 @@ final class PermissionAccessoryPanelController {
         stepLaunchAnimation()
     }
 
-    private func stepLaunchAnimation() {
+    func stepLaunchAnimation() {
         guard let panel else {
             stopLaunchAnimation()
             return
         }
 
-        let elapsed = max(0, CACurrentMediaTime() - launchStartTime)
+        let elapsed = max(0, animationTimeProvider() - launchStartTime)
         if elapsed >= launchAnimationDuration {
             isAnimatingLaunch = false
             stopLaunchAnimation()
@@ -827,15 +843,14 @@ final class PermissionAccessoryPanelController {
 
     private func updateLaunchTargetFrameIfNeeded() {
         guard
-            let panel,
-            let windowContext = systemSettingsWindowContext(),
-            let origin = preferredPanelOrigin(for: panel.frame.size, windowBounds: windowContext.bounds)
+            let windowContext = windowContextProvider(),
+            let origin = preferredPanelOrigin(for: Layout.panelSize, windowBounds: windowContext.bounds)
         else {
             return
         }
 
         orderedWindowNumber = windowContext.windowNumber
-        launchToFrame = NSRect(origin: origin, size: panel.frame.size)
+        launchToFrame = NSRect(origin: origin, size: Layout.panelSize)
     }
 
     private func scheduleLaunchSettlePasses(for generation: Int) {
@@ -955,7 +970,7 @@ final class PermissionAccessoryPanelController {
         NSScreen.screens.first(where: { $0.visibleFrame.intersects(rect) })?.visibleFrame
     }
 
-    private func appKitRect(fromCGWindowBounds bounds: CGRect) -> CGRect {
+    private static func appKitRect(fromCGWindowBounds bounds: CGRect) -> CGRect {
         guard let screen = NSScreen.screens.first(where: { screen in
             let screenBoundsInQuartz = CGRect(
                 x: screen.frame.minX,
@@ -972,10 +987,6 @@ final class PermissionAccessoryPanelController {
         return CGRect(x: bounds.minX, y: convertedY, width: bounds.width, height: bounds.height)
     }
 
-    private var isSystemSettingsFrontmost: Bool {
-        NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences"
-    }
-
     private func clamp(_ value: CGFloat, lower: CGFloat, upper: CGFloat) -> CGFloat {
         guard lower <= upper else {
             return lower
@@ -984,7 +995,10 @@ final class PermissionAccessoryPanelController {
         return min(max(value, lower), upper)
     }
 
-    private func systemSettingsWindowContext() -> SystemSettingsWindowContext? {
+    private static func liveSystemSettingsWindowContext() -> SystemSettingsWindowContext? {
+        guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.systempreferences" else {
+            return nil
+        }
         guard let runningApp = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.systempreferences" }) else {
             return nil
         }
