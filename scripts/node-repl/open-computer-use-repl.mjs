@@ -56,6 +56,8 @@ After actions, call \`getAXState()\` in the same js invocation when the next dec
 
 export function virtualDisplayEnabled(environment = process.env, platform = process.platform) {
   if (platform !== "darwin") return false;
+  const override = environment.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
+  if (override !== undefined) return override === "true";
   try { return inspectConfig(environment).values["virtualDisplay.enabled"] === true; }
   catch { return false; }
 }

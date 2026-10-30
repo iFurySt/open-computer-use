@@ -448,6 +448,8 @@ test("virtual display guidance follows explicit host configuration", () => {
   assert.doesNotMatch(computerUseGuidance(env, "darwin"), /windowPlacement/);
   const enabled = { ...env, OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED: "true" };
   assert.match(computerUseGuidance(enabled, "darwin"), /windowPlacement/);
+  assert.equal(virtualDisplayEnabled({ ...enabled, OPEN_COMPUTER_USE_CONFIG_FILE: "relative" }, "darwin"), true);
+  assert.equal(virtualDisplayEnabled({ ...enabled, OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED: "1" }, "darwin"), false);
   assert.doesNotMatch(computerUseGuidance(enabled, "linux"), /windowPlacement/);
   assert.doesNotMatch(computerUseGuidance(enabled, "win32"), /windowPlacement/);
 });
