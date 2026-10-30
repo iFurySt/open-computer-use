@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { JsonLinePeer, PersistentJavaScriptSession, WorkerJavaScriptSession, parseListApps, toolDefinitions } from "./open-computer-use-repl.mjs";
+import { JsonLinePeer, PersistentJavaScriptSession, WorkerJavaScriptSession, parseListApps, toolDefinitions, computerUseGuidance, virtualDisplayEnabled } from "./open-computer-use-repl.mjs";
 
 function textResult(text, isError = false, image) {
   const content = [{ type: "text", text }];
@@ -138,7 +138,14 @@ for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
   });
 }
 
-test("app-bound API forwards background-operation options", async () => {
+test("app-bound API forwards explicitly enabled background-operation options", async t => {
+  const previous = process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
+  process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED = "true";
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
+    else process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED = previous;
+  });
+  if (process.platform !== "darwin") { t.skip("virtual displays are macOS-only"); return; }
   const native = mockNative();
   const session = new PersistentJavaScriptSession({ native });
   const result = await session.run(`
@@ -433,3 +440,35 @@ for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
     }
   });
 }
+
+
+test("virtual display guidance follows explicit host configuration", () => {
+  const env = { OPEN_COMPUTER_USE_CONFIG_FILE: "/nonexistent/ocu-test-config.json" };
+  assert.equal(virtualDisplayEnabled(env, "darwin"), false);
+  assert.doesNotMatch(computerUseGuidance(env, "darwin"), /windowPlacement/);
+  const enabled = { ...env, OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED: "true" };
+  assert.match(computerUseGuidance(enabled, "darwin"), /windowPlacement/);
+  assert.doesNotMatch(computerUseGuidance(enabled, "linux"), /windowPlacement/);
+  assert.doesNotMatch(computerUseGuidance(enabled, "win32"), /windowPlacement/);
+});
+
+test("disabled virtual displays reject stale JS options before native dispatch", async t => {
+  const previous = process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
+  process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED = "false";
+  t.after(() => {
+    if (previous === undefined) delete process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED;
+    else process.env.OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED = previous;
+  });
+  const native = mockNative();
+  const session = new PersistentJavaScriptSession({ native });
+  const result = await session.run(`
+    var app = await cua.getApp("Text", { initialState: false });
+    await app.getAXState({ windowPlacement: "agent_display" });
+  `);
+  assert.equal(result.isError, true);
+  assert.match(result.content.at(-1).text, /disabled by virtualDisplay.enabled/);
+  assert.equal(native.calls.length, 0);
+  const restored = await session.run('await app.getAXState({ windowPlacement: "restore", emit: false });');
+  assert.equal(restored.isError, false);
+  assert.equal(native.calls.at(-1).arguments.window_placement, "restore");
+});

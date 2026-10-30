@@ -242,6 +242,15 @@ open-computer-use call --calls '[
 ]'
 ```
 
+Virtual displays are disabled by default. The host must explicitly set
+`virtualDisplay.enabled=true` with `ocu config`, or
+`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED=true`, before using the examples above.
+While disabled, MCP omits `window_placement`, JS guidance omits `windowPlacement`,
+and stale `agent_display` calls fail before creating a display. The agent must not
+enable this setting on the user's behalf without their request: it adds a system
+monitor and can change the user's display arrangement. Existing `restore` and
+turn/connection cleanup remain available when disabled.
+
 `agent_display` moves the window's frame onto a virtual display the user never sees (macOS only): the app renders it, exposes its full tree and accepts `sky_click` / `sky_key`, while the user's Space, focus and pointer stay untouched. The window is gone from the user's desktop until `restore`, the assistant turn ends, the MCP/REPL connection closes, or the runtime exits, so treat it as a deliberate, temporary step. `restore` restores every window parked by the runtime for that app. Keep park/action/restore calls in one `js`, REPL, MCP, or `call --calls` session; a one-shot CLI connection restores its background state when it closes. `sky_click` and `sky_key` accept covered and other-Space windows.
 
 `sky_key` types into whatever element the target window has focused, so click or AX-focus the field first. It fails closed for hidden apps (`cmd+h`), stale window ids, and missing private symbols; Windows and Linux return an unsupported error.

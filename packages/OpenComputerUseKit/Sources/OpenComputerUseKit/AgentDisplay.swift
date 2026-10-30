@@ -222,6 +222,7 @@ final class AgentDisplay: @unchecked Sendable {
     // MARK: - Display lifecycle (call with lock held)
 
     private func ensureDisplay() throws -> CGRect {
+        try VirtualDisplayConfig.current.requireEnabled()
         if displayID != 0, let bounds = displayBounds, !bounds.isEmpty {
             return bounds
         }

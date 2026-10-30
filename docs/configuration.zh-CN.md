@@ -6,6 +6,9 @@
 
 ```json
 {
+  "virtualDisplay": {
+    "enabled": false
+  },
   "image": {
     "format": "png",
     "jpegQuality": 0.8,
@@ -52,3 +55,20 @@ ocu config path
 | `image.scaleDownAfterMaxSize` | `true` | 超过长边上限时，`true` 等比例缩小，`false` 丢弃截图。 | `ocu config set image.scaleDownAfterMaxSize false` |
 | `image.discardBelowPixelCount` | `64` | 宽 × 高小于此值时丢弃，等于时保留。范围 `0–268435456`，整数；`0` 关闭过滤。比如 `4096` 就是 `64×64` 的面积。缩小后的图片也会检查。 | `ocu config set image.discardBelowPixelCount 4096` |
 | `image.captureTimeout` | `5` | ScreenCaptureKit 后备截图的超时，单位秒，范围 `0.01–300`。 | `ocu config set image.captureTimeout 10` |
+
+
+## 虚拟显示器（macOS，显式启用）
+
+`virtualDisplay.enabled` 默认 `false`。关闭时，`get_app_state` 的 MCP schema 不包含
+`window_placement`，JS 使用提示不包含 `windowPlacement`，遮挡窗口提示也不推荐停放。
+旧客户端显式传入 `agent_display` 时，在查找应用或创建显示器之前报错。
+
+通过 `ocu config set virtualDisplay.enabled true` 显式启用，或在调用进程设置
+`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED=true`。配置文件只接受 JSON 布尔值；环境变量
+只接受字面量 `true`/`false`，非法环境值关闭创建。优先级为环境变量、配置文件、默认值。
+Windows/Linux 始终不暴露这个参数。
+
+创建虚拟显示器会增加系统显示器，可能影响已有显示器布局。关闭使用
+`ocu config set virtualDisplay.enabled false`，同时移除启用它的环境变量；重新连接 MCP
+客户端以刷新缓存的 schema。已停放窗口仍可用显式 `restore` 或 `turn-ended`/连接清理恢复，
+关闭配置不会直接销毁仍承载窗口的显示器。升级后需重启旧版常驻进程。

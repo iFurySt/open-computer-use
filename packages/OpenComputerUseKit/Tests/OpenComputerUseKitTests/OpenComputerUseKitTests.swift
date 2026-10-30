@@ -1921,7 +1921,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(huge, CGPoint(x: 1512, y: 0), "oversized windows are pinned to the display origin")
         XCTAssertTrue(display.contains(huge))
         for name in ["get_app_state"] {
-            let tool = ToolDefinitions.all.first { $0.name == name }
+            let tool = ToolDefinitions.configured(virtualDisplayEnabled: true).first { $0.name == name }
             let properties = tool?.inputSchema["properties"] as? [String: Any]
             XCTAssertEqual((properties?["window_placement"] as? [String: Any])?["enum"] as? [String], ["keep", "agent_display", "restore"])
         }

@@ -9,6 +9,7 @@ import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
+import { inspectConfig } from "./ocu-config.mjs";
 
 const require = createRequire(import.meta.url);
 // The js call whose code is running. Timers and promises carry it, so a callback
@@ -52,6 +53,18 @@ The runtime exposes an asynchronous app-bound API:
 - \`await app.performSecondaryAction(elementIndex, action)\`
 
 After actions, call \`getAXState()\` in the same js invocation when the next decision depends on the updated UI. Re-derive element indexes from fresh state after navigation or layout changes. Prefer element indexes over coordinates. Open Computer Use keeps its existing local safety gates, including password-manager denial and explicit authorization for global pointer fallbacks.`;
+
+export function virtualDisplayEnabled(environment = process.env, platform = process.platform) {
+  if (platform !== "darwin") return false;
+  try { return inspectConfig(environment).values["virtualDisplay.enabled"] === true; }
+  catch { return false; }
+}
+
+export function computerUseGuidance(environment = process.env, platform = process.platform) {
+  return virtualDisplayEnabled(environment, platform)
+    ? COMPUTER_USE_GUIDANCE
+    : COMPUTER_USE_GUIDANCE.replace(", windowPlacement?", "");
+}
 
 function asError(error) {
   if (error instanceof Error) return error;
@@ -258,7 +271,12 @@ function optionsToSnapshotArgs(options = {}) {
   if (options.textLimit !== undefined) args.text_limit = options.textLimit;
   if (options.maxTreeNodes !== undefined) args.max_tree_nodes = options.maxTreeNodes;
   if (options.maxTreeDepth !== undefined) args.max_tree_depth = options.maxTreeDepth;
-  if (options.windowPlacement !== undefined) args.window_placement = options.windowPlacement;
+  if (options.windowPlacement !== undefined) {
+    if (options.windowPlacement === "agent_display" && !virtualDisplayEnabled()) {
+      throw new Error("windowPlacement 'agent_display' is disabled by virtualDisplay.enabled");
+    }
+    args.window_placement = options.windowPlacement;
+  }
   for (const [option, argument] of [["includeAX", "include_ax"], ["includeScreenshot", "include_screenshot"]]) {
     if (options[option] !== undefined) {
       if (typeof options[option] !== "boolean") throw new Error(`${option} must be a boolean`);
@@ -302,7 +320,7 @@ export function createCuaApi(native, activeOutput) {
   }
   async function emitDocs() {
     if (docsEmitted) return;
-    activeOutput().write(COMPUTER_USE_GUIDANCE, "cua.core");
+    activeOutput().write(computerUseGuidance(), "cua.core");
     docsEmitted = true;
   }
   function appBinding(app) {
@@ -411,7 +429,7 @@ export function createCuaApi(native, activeOutput) {
       }
       return appBinding(app);
     },
-    async rewriteDocumentation() { activeOutput().write(COMPUTER_USE_GUIDANCE, "cua.core"); },
+    async rewriteDocumentation() { activeOutput().write(computerUseGuidance(), "cua.core"); },
   };
   return Object.freeze(api);
 }

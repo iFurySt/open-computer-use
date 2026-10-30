@@ -5,6 +5,7 @@ import Darwin
 /// Shared path resolution for native calls and app-agent request forwarding.
 public enum OCUConfiguration {
     public static let environmentKeys: Set<String> = [
+        "OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED",
         "OPEN_COMPUTER_USE_CONFIG_FILE", "OPEN_COMPUTER_USE_IMAGE_FORMAT",
         "OPEN_COMPUTER_USE_IMAGE_JPEG_QUALITY", "OPEN_COMPUTER_USE_IMAGE_CAPTURE_TIMEOUT",
         "OPEN_COMPUTER_USE_IMAGE_MAX_DIMENSION",

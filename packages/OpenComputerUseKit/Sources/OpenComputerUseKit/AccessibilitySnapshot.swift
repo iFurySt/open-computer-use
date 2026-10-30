@@ -318,7 +318,11 @@ enum SnapshotBuilder {
                     }
                 }
             } else {
-                occlusionNote = "Note: this window is covered or on another Space, so the app hides its web content and it is not in the tree. Bring the window into view once (covering it afterwards keeps working), or call get_app_state with window_placement=agent_display to park it on the agent's own display."
+                var note = "Note: this window is covered or on another Space, so the app hides its web content and it is not in the tree. Bring the window into view once (covering it afterwards keeps working)."
+                if VirtualDisplayConfig.current.enabled {
+                    note += " Alternatively, call get_app_state with window_placement=agent_display to park it on the agent's own display."
+                }
+                occlusionNote = note
             }
         }
 

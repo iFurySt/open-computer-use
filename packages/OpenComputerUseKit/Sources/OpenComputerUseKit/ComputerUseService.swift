@@ -597,6 +597,7 @@ public final class ComputerUseService {
         windowPlacement: WindowPlacement = .keep,
         observation: SnapshotObservationOptions = .defaults
     ) throws -> ToolCallResult {
+        if windowPlacement == .agentDisplay { try VirtualDisplayConfig.current.requireEnabled() }
         try observation.validate()
         guard windowPlacement != .keep else {
             return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, observation: observation), style: .fullState)

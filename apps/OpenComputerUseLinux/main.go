@@ -1306,7 +1306,6 @@ func toolDefinitions() []toolDefinition {
 				"text_limit":       textLimitProperty("Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
 				"max_tree_nodes":   positiveIntegerProperty("Maximum accessibility tree nodes to render. Defaults to 1200."),
 				"max_tree_depth":   positiveIntegerProperty("Maximum accessibility tree depth to render. Defaults to 64."),
-				"window_placement": enumStringProperty("keep (default) leaves the window where it is. agent_display and restore are macOS-only and not supported on Linux.", windowPlacementValues),
 
 				"include_ax":         map[string]any{"type": "boolean", "default": true, "description": "Include accessibility tree, focus and selection. False skips AX collection and invalidates prior element indexes; coordinate actions remain available."},
 				"include_screenshot": map[string]any{"type": "boolean", "default": true, "description": "Capture and return a screenshot. False skips capture and PNG encoding."},

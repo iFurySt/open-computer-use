@@ -437,6 +437,10 @@ function copyInstallerScripts(packageRoot) {
     );
   }
   cpSync(
+    path.join(repoRoot, "scripts", "node-repl", "ocu-config.mjs"),
+    path.join(packageRoot, "plugins", "open-computer-use", "scripts", "ocu-config.mjs")
+  );
+  cpSync(
     path.join(repoRoot, "scripts", "node-repl", "open-computer-use-repl.mjs"),
     path.join(packageRoot, "plugins", "open-computer-use", "scripts", "open-computer-use-repl.mjs")
   );

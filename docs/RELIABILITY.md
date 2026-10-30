@@ -15,7 +15,7 @@
 - 输入默认值以跨版本可靠性优先：普通 `auto` 的 type chunk / press-key settle 保持 20 / 100 ms，`sky_key` 的 key-window / release settle 为 10 / 10 ms；六个 timing knob 均可通过对应 `OPEN_COMPUTER_USE_*` 环境变量显式覆盖。
 - 逐阶段耗时：任何命令前加 `OPEN_COMPUTER_USE_DEBUG_TIMING=1`，stderr 输出 `[open-computer-use] timing <阶段> <ms>ms`（`sky_key.*`、`sky_click.total`、`snapshot.window_capture`、`snapshot.tree_walk`、`agent_display.*`）。
 - 跑实机回归时不要在这台 Mac 上打字或点鼠标：测试会短暂把目标窗口放到前台，用户的按键会落进去，前台 fixture 也会因用户操作失去 active。
-- macOS agent display 实机回归（会短暂创建并销毁一块 virtual display）：`OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST=1 swift test --filter AgentDisplayLiveTests`
+- macOS agent display 实机回归（会短暂创建并销毁一块 virtual display）：`OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED=true OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST=1 swift test --filter AgentDisplayLiveTests`
 - macOS 其他 Desktop 实机回归（需要第二个 Desktop，测试会短暂切换 Space 启动目标）：`OPEN_COMPUTER_USE_RUN_CROSS_SPACE_LIVE_TEST=1 swift test --filter CrossSpaceLiveTests`
 - Linux runtime：`(cd apps/OpenComputerUseLinux && go test ./...)`、`./scripts/build-open-computer-use-linux.sh --arch arm64`
 - Linux 隐藏控件实测：`bash scripts/run-linux-read-back-smoke.sh /path/to/linux/open-computer-use --hidden-checks`，在私有 D-Bus / Xvfb 中验证真实 GTK 隐藏状态、属性读取、索引及页面切换；依赖与范围见 [测试说明](linux-hidden-details.md)。
