@@ -149,6 +149,7 @@ public struct AppSnapshot {
     let elements: [Int: ElementRecord]
     var screenshotNote: String? = nil
     var observation: SnapshotObservationOptions = .defaults
+    var treeIndentationStyle: AXTreeIndentationStyle = .current
 
     public var renderedText: String {
         renderedText(style: .fullState)
@@ -161,6 +162,7 @@ public struct AppSnapshot {
 
         lines.append("App=\(appReference) (pid \(app.pid))")
         lines.append("Window: \(quoted(displayTitle)), App: \(app.name).")
+        if observation.includeAX && mode == .accessibility { lines.append(AXTreeTextFormatting.legend(for: treeIndentationStyle)) }
         lines.append(contentsOf: treeLines)
         if !observation.includeAX {
             lines.append(SnapshotObservationOptions.accessibilityOmittedNote)
@@ -831,13 +833,16 @@ private struct RenderContext {
     let focusedElement: AXUIElement?
     let textLimit: SnapshotTextLimit
     let treeLimits: AccessibilityTreeLimits
+    var compactText = true
+    var indentationStyle: AXTreeIndentationStyle = .current
 }
 
 // Runs the real renderer against a scoped, injected AX provider. The returned
 // records let semantic fixtures verify the actual numeric action lookup targets.
-func renderAXSemanticFixture(root: AXUIElement, focused: AXUIElement? = nil) -> (lines: [String], records: [Int: ElementRecord]) {
+func renderAXSemanticFixture(root: AXUIElement, focused: AXUIElement? = nil,
+                             compactText: Bool = false, indentationStyle: AXTreeIndentationStyle = .tab4) -> (lines: [String], records: [Int: ElementRecord]) {
     var renderer = TreeRenderer(context: RenderContext(windowBounds: .zero, focusedElement: focused,
-        textLimit: .max, treeLimits: .defaults))
+        textLimit: .max, treeLimits: .defaults, compactText: compactText, indentationStyle: indentationStyle))
     renderer.render(root)
     return (renderer.lines, renderer.records)
 }
@@ -972,7 +977,8 @@ private struct TreeRenderer {
 
         nextIndex += 1
 
-        let traitsSegment = traits.isEmpty ? "" : " (\(traits.joined(separator: ", ")))"
+        let displayedTraits = AXTreeTextFormatting.traitTokens(traits, compact: context.compactText)
+        let traitsSegment = displayedTraits.isEmpty ? "" : " (\(displayedTraits.joined(separator: ", ")))"
         let titleSegment = displayTitle.map { " \($0)" } ?? ""
         let rowSummary = inlineRowSummary ?? (rendersSummaryAsChildren ? nil : genericTextSummary)
         let rowSummarySegment = rowSummary.map { " \($0)" } ?? ""
@@ -988,7 +994,8 @@ private struct TreeRenderer {
         }()
         let urlSegment = formattedURLSegment(for: root, title: displayTitle, label: label, textLimit: context.textLimit)
         let identifierSegment = displayIdentifierSegment(for: root, role: role, identifier: axIdentifier, title: displayTitle)
-        let rawValueSegment = formattedValueSegment(for: root, roleText: roleText, title: displayTitle, value: value)
+        let rawValueSegment = AXTreeTextFormatting.valueSegment(
+            formattedValueSegment(for: root, roleText: roleText, title: displayTitle, value: value), compact: context.compactText)
         let valueSegment = formattedValueSegmentWithSeparator(
             rawValueSegment,
             precedingSegments: [labelSegment, helpSegment, urlSegment, identifierSegment]
@@ -1012,11 +1019,11 @@ private struct TreeRenderer {
             segments: [labelSegment, helpSegment, urlSegment, identifierSegment, valueSegment, placeholderSegment]
         ) ? ", Secondary Actions: " : " Secondary Actions: "
         let actionsSegment = prettyActions.isEmpty ? "" : "\(actionsPrefix)\(prettyActions.joined(separator: ", "))"
-        let renderedRoleText = rendersCompactGenericActionTarget ? "button" : roleText
+        let renderedRoleText = rendersCompactGenericActionTarget ? "button" : AXTreeTextFormatting.role(roleText, compact: context.compactText)
         let linePrefix = renderedRoleText.isEmpty ? "\(index)" : "\(index) \(renderedRoleText)"
 
         let lineBody = "\(linePrefix)\(traitsSegment)\(titleSegment)\(rowSummarySegment)\(labelSegment)\(helpSegment)\(urlSegment)\(identifierSegment)\(valueSegment)\(placeholderSegment)\(frameSegment)"
-        lines.append("\(String(repeating: "\t", count: depth))\(lineBody)\(actionsSegment)")
+        lines.append("\(AXTreeTextFormatting.indentation(depth, compact: context.compactText, style: context.indentationStyle))\(lineBody)\(actionsSegment)")
 
         let record = ElementRecord(
             index: index,
@@ -1068,7 +1075,7 @@ private struct TreeRenderer {
 
         let index = nextIndex
         nextIndex += 1
-        lines.append("\(String(repeating: "\t", count: depth))\(index) text \(text)")
+        lines.append("\(AXTreeTextFormatting.indentation(depth, compact: context.compactText, style: context.indentationStyle))\(index) text \(text)")
 
         records[index] = ElementRecord(
             index: index,
