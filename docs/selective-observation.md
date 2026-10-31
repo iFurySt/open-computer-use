@@ -1,21 +1,21 @@
 # 按需观察
 
-macOS、Windows、Linux 的 `get_app_state` 都可以选择读取 AX 或截图。原生参数 `include_ax` / `include_screenshot` 对应 JS 的 `includeAX` / `includeScreenshot`，均默认 `true`，不能同时设为 `false`。
+macOS、Windows、Linux 的 `get_app_state` 都可以选择读取 AX 或截图。原生参数 `include_ax` / `include_screenshot` 对应 JS 的 `includeAX` / `includeScreenshot`，原生和 combined getter 默认 `true`，不能同时设为 `false`。JS `getAXState()` 默认读取完整 AX 文本（`textLimit: "max"`），并设置 `includeScreenshot: false`；显式参数仍可覆盖。
 
 | 需要什么 | JS 调用 | 实际采集 |
 | --- | --- | --- |
-| 只读控件和选区 | `await app.getAXState({includeScreenshot: false})` | AX、焦点、选区；不截图、不编码 |
+| 只读控件和选区 | `await app.getAXState()` | AX、焦点、选区；不截图、不编码 |
 | 只看画面 | `await app.getScreenshot({includeAX: false})` | 截图；不遍历 AX、不查焦点和选区 |
 | 两者都要 | `await app.getAXStateAndScreenshot()` | 完整 AX 和截图 |
 
 ```js
 var app = await cua.getApp("gedit", {initialState: false});
-await app.getAXState({includeScreenshot: false});
+await app.getAXState();
 ```
 
 只取截图后，旧元素索引及查询别名会失效，包括应用重启前的索引。坐标操作仍可使用本次观察的窗口位置；元素操作要先重新读取 AX。窗口标题相同不代表旧索引仍然有效。
 
-不传参数的调用保持原行为。只取 AX 后可继续操作元素，但截图坐标点击 / 拖拽要先重新获取截图；只取截图后则要重新读取 AX 才能使用元素索引。macOS 的 query 索引也会随纯截图观察失效。
+原生 `get_app_state`、截图 getter 和 combined getter 不传参数时保持原行为。AX getter 默认不采集图片；只取 AX 后可继续操作元素，但截图坐标点击 / 拖拽要先重新获取截图；只取截图后则要重新读取 AX 才能使用元素索引。macOS 的 query 索引也会随纯截图观察失效。
 
 ## CLI 和 MCP
 
@@ -33,7 +33,7 @@ ocu snapshot --include-ax false TextEdit
 
 ## 和重复截图的关系
 
-macOS / Linux 下的 JS 动作已默认关闭自动回读；`getAXState()` 本身也不向模型输出图片，但默认仍会在 native 层采集图片后丢弃。`includeScreenshot: false` 可以在三个平台连这部分采集和编码一起省掉。直接使用 native MCP 时，它也会省去返回的 image block。
+macOS / Linux 下的 JS 动作已默认关闭自动回读；`getAXState()` 默认不采集或编码图片；需要时显式传 `includeScreenshot: true`，或使用 `getAXStateAndScreenshot()`。AX getter 只移除已知的独立截图省略提示，保留完整控件文本和其他警告。直接使用 native MCP 时，它也会省去返回的 image block。
 
 这里不做截图比较：请求了截图，即使画面相同也照常返回。“画面未变则省略图片”需要单独实现，通常仍要先截图再比较，主要减少传输和模型输入。后续可按会话、应用和窗口保存精确图像指纹，首次观察及状态重置时返回图片，并提供强制返回方式；不能仅凭 AX 没变化就认定画面没变化。
 

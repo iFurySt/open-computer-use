@@ -44,7 +44,7 @@ The runtime exposes an asynchronous app-bound API:
 - \`app.getAXState({ diff: true })\` opts into JSON ax-full / ax-diff packets. Full text remains the default; disableDiffing: true forces full text. Diffs carry revisions, added/changed/removed element lines and layout changes. After a missed packet, call getAXState once without diff; the next diff call starts again with ax-full.
 - \`await app.getScreenshot({ emit? })\`
 - \`await app.getAXStateAndScreenshot(options?)\`
-- Optional observation on macOS, Windows and Linux: \`app.getScreenshot({ includeAX: false })\` skips AX/focus/selection and invalidates prior element indexes; refresh AX before element actions. \`app.getAXState({ includeScreenshot: false })\` skips capture; screenshot-coordinate actions require a fresh screenshot. Omitted options retain full native observation.
+- Optional observation on macOS, Windows and Linux: \`app.getScreenshot({ includeAX: false })\` skips AX/focus/selection and invalidates prior element indexes; refresh AX before element actions. \`app.getAXState({ includeScreenshot: false })\` skips capture; screenshot-coordinate actions require a fresh screenshot. getAXState defaults to full-text AX without capture (includeScreenshot: false, textLimit: "max"). Use getAXStateAndScreenshot or includeScreenshot: true before screenshot-coordinate actions. Native get_app_state and the other getters retain full observation.
 - \`await app.click(elementIndexOrPoint, { mouseButton?, clickCount?, clickMethod? })\`
 - \`await app.scroll(elementIndex, direction, pages?)\`
 - \`await app.drag([fromX, fromY], [toX, toY])\`
@@ -356,8 +356,16 @@ export function createCuaApi(native, activeOutput) {
         }
         try {
           const args = { app, ...optionsToSnapshotArgs(options) };
+          // This getter never returns an image. Skip the unused capture and return full
+          // text unless the caller asks otherwise; the native combined tool is unchanged.
+          if (args.include_ax !== false) {
+            if (args.include_screenshot === undefined) args.include_screenshot = false;
+            if (args.text_limit === undefined) args.text_limit = "max";
+          }
           const result = await call("get_app_state", args);
-          const text = toolResultText(result);
+          const text = toolResultText(args.include_screenshot === false ? {
+            ...result, content: result.content?.filter(item => !(item.type === "text" && item.text === "Screenshot omitted by include_screenshot=false")),
+          } : result);
           let output = text;
           if (options.diff === true && options.disableDiffing !== true) output = diff.observe(text, JSON.stringify(args));
           else diff.reset();

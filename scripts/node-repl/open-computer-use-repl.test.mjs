@@ -103,7 +103,7 @@ test("app-bound API composes actions and state in one js call", async () => {
 });
 
 for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
-  test(`${Session.name}: selective observation is explicit and legacy calls keep their arguments`, async t => {
+  test(`${Session.name}: AX getter skips capture by default while screenshot/combined getters keep their arguments`, async t => {
     const native = mockNative();
     const session = new Session({ native });
     t.after(() => session.close?.());
@@ -117,9 +117,9 @@ for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
     assert.equal(result.isError, false);
     assert.deepEqual(native.calls.map(call => call.arguments), [
       { app: "Text", include_ax: false, text_limit: 1 },
-      { app: "Text", include_screenshot: false },
+      { app: "Text", include_screenshot: false, text_limit: "max" },
       { app: "Text", text_limit: 1 },
-      { app: "Text" },
+      { app: "Text", include_screenshot: false, text_limit: "max" },
     ]);
     const count = native.calls.length;
     for (const code of [
@@ -167,6 +167,7 @@ test("app-bound API forwards explicitly enabled background-operation options", a
       max_tree_nodes: 42,
       max_tree_depth: 7,
       window_placement: "agent_display",
+      include_screenshot: false,
     },
   });
   assert.deepEqual(native.calls[2], {
@@ -473,4 +474,25 @@ test("disabled virtual displays reject stale JS options before native dispatch",
   const restored = await session.run('await app.getAXState({ windowPlacement: "restore", emit: false });');
   assert.equal(restored.isError, false);
   assert.equal(native.calls.at(-1).arguments.window_placement, "restore");
+});
+
+
+test("AX-only defaults preserve data and warnings while explicit capture remains available", async () => {
+  const calls = [];
+  const native = { async request(_method, params) {
+    calls.push(params.arguments);
+    return { content: [
+      { type: "text", text: "App=Example\n0 window\n 1 text Screenshot omitted by include_screenshot=false" },
+      { type: "text", text: "Screenshot omitted by include_screenshot=false" },
+      { type: "text", text: "Note: partial tree" },
+    ] };
+  } };
+  const session = new PersistentJavaScriptSession({ native });
+  const result = await session.run(`var ax = await cua.getApp("Example", { initialState: false });
+    var value = await ax.getAXState({ emit: false }); nodeRepl.write(value);
+    await ax.getAXState({ includeScreenshot: true, textLimit: 500, emit: false });`);
+  assert.equal(result.isError, false);
+  assert.equal(result.content.at(-1).text, "App=Example\n0 window\n 1 text Screenshot omitted by include_screenshot=false\nNote: partial tree");
+  assert.deepEqual(calls[0], { app: "Example", include_screenshot: false, text_limit: "max" });
+  assert.deepEqual(calls[1], { app: "Example", include_screenshot: true, text_limit: 500 });
 });

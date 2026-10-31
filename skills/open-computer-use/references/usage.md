@@ -63,20 +63,21 @@ booleans:
 var editor = await cua.getApp("gedit", { initialState: false });
 await editor.getScreenshot({ includeAX: false }); // no AX, focus or selection walk
 await editor.click([100, 100]);                   // window-relative coordinates
-await editor.getAXState({ includeScreenshot: false }); // no capture or PNG encoding
+await editor.getAXState(); // full-text AX; no capture or PNG encoding
 // Use newly observed element indexes only after inspecting the AX result.
 ```
 
 Screenshot-only observation invalidates prior element indexes and cached query
 aliases for that app, even if the window title is unchanged. Its result explicitly
 reports this. Coordinate actions use the newly observed window bounds; element
-actions require a fresh AX observation. Existing calls without these options keep
-their full native observation behavior. These flags are implemented on all three native platforms; action read-back is unchanged.
+actions require a fresh AX observation. Native calls and the screenshot/combined
+JS getters keep their full observation behavior without these options. These flags are implemented on all three native platforms; action read-back is unchanged.
 
 These options select collection, not image deduplication. An unchanged screenshot
 is still returned when requested. macOS/Linux JS actions already disable automatic
-read-back, and getAXState does not emit images; includeScreenshot:false additionally skips
-native capture on all three platforms. See `docs/selective-observation.md` for real GTK
+read-back, and getAXState does not emit images or capture them by default (it sends
+includeScreenshot:false and textLimit:"max"); pass includeScreenshot:true or use
+getAXStateAndScreenshot when screenshot coordinates are needed. See `docs/selective-observation.md` for real GTK
 and Worker JS validation.
 
 The code-first surface also forwards macOS background-operation options:

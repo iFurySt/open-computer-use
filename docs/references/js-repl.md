@@ -55,8 +55,10 @@ performSecondaryAction(elementIndex, action)
 ```
 
 On macOS, Windows and Linux, observation methods also accept optional `includeAX` and
-`includeScreenshot` booleans, both defaulting to true. Use
-`app.getAXState({includeScreenshot:false})` to skip native capture, or
+`includeScreenshot` booleans. `getAXState()` defaults to `includeScreenshot: false`
+and `textLimit: "max"`, because it never returns the image; pass
+`includeScreenshot: true` or use `getAXStateAndScreenshot()` before
+screenshot-coordinate actions. The other getters default both to true. Use
 `app.getScreenshot({includeAX:false})` to skip the AX/focus walk. The latter
 invalidates previous element indexes; read AX again before element actions.
 Disabling both channels is rejected before a native call. These options do not
