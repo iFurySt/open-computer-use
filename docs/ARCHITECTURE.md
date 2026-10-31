@@ -173,7 +173,7 @@
 - cursor lab 构建：`swift build --product CursorMotion`
 - 端到端 smoke：`./scripts/run-tool-smoke-tests.sh`（标准 9-tool smoke + visual cursor idle smoke；脚本默认以 headless 模式启动内部 fixture，避免在用户桌面弹出测试窗口）
 - app 打包：`./scripts/build-open-computer-use-app.sh debug`
-- release 优化的开发身份 app：`OPEN_COMPUTER_USE_APP_VARIANT=dev ./scripts/build-open-computer-use-app.sh release`。保留 `com.ifuryst.opencomputeruse.dev` 与 `(Dev)` 名称，签名身份相同时可复用开发 app 已有的系统权限来测 release 性能；不删除同一输出目录中的正式 / legacy bundle，自动模式下不打包 Locked Use，显式 `OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE=1` 会被拒绝；只接受 `dev`。
+- release 优化的开发身份 app：`OPEN_COMPUTER_USE_APP_VARIANT=dev ./scripts/build-open-computer-use-app.sh release`。保留 `com.ifuryst.opencomputeruse.dev` 与 `(Dev)` 名称，已有开发身份权限且签名身份相同时，可用来测 release 性能；不会继承正式 app 的权限；不删除同一输出目录中的正式 / legacy bundle，自动模式下不打包 Locked Use，显式 `OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE=1` 会被拒绝；只接受 `dev`。该变量仅用于直接 app 构建；npm / release 打包与插件安装入口会拒绝它，运行这些命令前需 unset，避免误选旁边的旧正式包。真实构建回归：`python3 scripts/tests/macos-app-variant-smoke.py --signed`。
 - 权限 onboarding 端到端回归：`./scripts/run-permission-onboarding-e2e.sh`（需要当前 macOS 对被测 `open-computer-use` 已授予 Accessibility 与 Screen Recording；默认禁用 app-agent proxy 来测试当前 CLI 运行态，可用 `OPEN_COMPUTER_USE_E2E_CLI=/path/to/open-computer-use` 指定被测 CLI，或用 `OPEN_COMPUTER_USE_E2E_DISABLE_APP_AGENT_PROXY=0` 显式覆盖默认代理行为）
 - npm staging：`node ./scripts/npm/build-packages.mjs`
 - release tgz：`./scripts/release-package.sh`

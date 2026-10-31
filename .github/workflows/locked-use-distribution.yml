@@ -19,6 +19,7 @@ on:
       - 'skills/open-computer-use/**'
       - '.agents/plugins/marketplace.json'
       - 'scripts/tests/locked-use-*'
+      - 'scripts/tests/app-variant.test.mjs'
   push:
     branches: [main]
     paths:
@@ -38,6 +39,7 @@ on:
       - 'skills/open-computer-use/**'
       - '.agents/plugins/marketplace.json'
       - 'scripts/tests/locked-use-*'
+      - 'scripts/tests/app-variant.test.mjs'
   workflow_dispatch:
 
 permissions:
@@ -54,7 +56,9 @@ jobs:
         with:
           node-version: '24'
       - name: Check shell syntax
-        run: bash -n scripts/notarize-open-computer-use.sh scripts/release-package.sh
+        run: bash -n scripts/notarize-open-computer-use.sh scripts/release-package.sh scripts/build-open-computer-use-app.sh scripts/install-codex-plugin.sh
+      - name: Test dev variant isolation from distribution
+        run: node --test scripts/tests/app-variant.test.mjs
       - name: Test non-locking diagnostic contracts
         run: python3 scripts/tests/locked-use-auth-latency.test.py -v
       - name: Test notarization ordering and failure handling

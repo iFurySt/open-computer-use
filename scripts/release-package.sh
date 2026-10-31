@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+# These entry points select the release/dev payload by configuration, not variant.
+# An inherited dev override could leave an old release bundle selected for delivery.
+if [[ -n "${OPEN_COMPUTER_USE_APP_VARIANT:-}" ]]; then
+  echo 'OPEN_COMPUTER_USE_APP_VARIANT is only supported by build-open-computer-use-app.sh; unset it before packaging or installing.' >&2
+  exit 1
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dist_dir="${repo_root}/dist"
 release_dir="${dist_dir}/release"
