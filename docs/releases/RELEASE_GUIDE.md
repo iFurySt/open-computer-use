@@ -209,7 +209,7 @@ gh run view -R iFurySt/open-computer-use <run-id> --log-failed
 ## 当前已知边界
 
 - `Open Computer Use` 的正式 npm / 直接下载制品需要配置 `OPEN_COMPUTER_USE_CODESIGN_P12_BASE64` / `OPEN_COMPUTER_USE_CODESIGN_P12_PASSWORD`；导入 Developer ID 身份后按同一 team 签名主 App 与 Locked Use 组件。缺少签名时正式发布失败；日常无签名构建可显式关闭 Locked Use 嵌入。
-- 如果 Open Computer Use 已使用 Developer ID 签名且 `APPLE_NOTARY_*` secrets 齐全，workflow 会 notarize 并 staple direct-download `.app` 后重新生成 app zip、checksums 和 manifest；缺少任一条件时跳过 notarization。
+- 如果 Open Computer Use 已使用 Developer ID 签名且 `APPLE_NOTARY_*` secrets 齐全，workflow 会先公证 Locked Use payload，并为授权 bundle / Guardian 附票据，再重签、公证并 staple 外层 `.app`，最后无重编译地刷新 npm 包、app zip、checksums 和 manifest；缺少任一条件时跳过 notarization。嵌套组件位于外层资源封印中，不能只在现有外层签名后 staple 子组件。发布前应核对 npm 解包后的授权 bundle 也通过 `stapler validate`，并完成安装后的冷 / 热解锁对比，详见 [冷加载诊断](../references/macos-locked-use-cold-auth-latency.md)。
 - `Cursor Motion` 当前 release 资产会优先复用 `OPEN_COMPUTER_USE_CODESIGN_*` 对 app 做 `Developer ID Application` 签名；如果同时配置 `APPLE_NOTARY_API_KEY_P8_BASE64`、`APPLE_NOTARY_KEY_ID`、`APPLE_NOTARY_ISSUER_ID`、`APPLE_DEVELOPER_TEAM_ID`，workflow 会继续对 `.dmg` 执行 notarization 和 staple。
 - Open Computer Use 的正式发布必须包含 Locked Use 签名组件，缺少 Apple 签名身份时构建失败，不能静默发布不完整的 App；公证凭据缺失仍可跳过 notarization。
 - 签名 release App 默认自动构建并内嵌与主 App 同架构的 Locked Use 组件；支持 native / arm64 / x86_64 / universal。CI 显式设置 OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE=1，制品检查覆盖四个组件的架构和严格嵌套签名。

@@ -1,0 +1,65 @@
+name: locked-use-distribution-tests
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/locked-use-distribution.yml'
+      - '.github/workflows/release.yml'
+      - 'experiments/LockedUse/Sources/RemoteVerificationProbe.swift'
+      - 'scripts/*locked-use*'
+      - 'scripts/notarize-open-computer-use.sh'
+      - 'scripts/release-package.sh'
+      - 'scripts/npm/**'
+      - 'scripts/package-github-release-assets.sh'
+      - 'scripts/package-skill.sh'
+      - 'scripts/build-open-computer-use-app.sh'
+      - 'scripts/node-repl/**'
+      - 'scripts/install-*'
+      - 'plugins/open-computer-use/**'
+      - 'skills/open-computer-use/**'
+      - '.agents/plugins/marketplace.json'
+      - 'scripts/tests/locked-use-*'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/locked-use-distribution.yml'
+      - '.github/workflows/release.yml'
+      - 'experiments/LockedUse/Sources/RemoteVerificationProbe.swift'
+      - 'scripts/*locked-use*'
+      - 'scripts/notarize-open-computer-use.sh'
+      - 'scripts/release-package.sh'
+      - 'scripts/npm/**'
+      - 'scripts/package-github-release-assets.sh'
+      - 'scripts/package-skill.sh'
+      - 'scripts/build-open-computer-use-app.sh'
+      - 'scripts/node-repl/**'
+      - 'scripts/install-*'
+      - 'plugins/open-computer-use/**'
+      - 'skills/open-computer-use/**'
+      - '.agents/plugins/marketplace.json'
+      - 'scripts/tests/locked-use-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  distribution-regression:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: '24'
+      - name: Check shell syntax
+        run: bash -n scripts/notarize-open-computer-use.sh scripts/release-package.sh
+      - name: Test non-locking diagnostic contracts
+        run: python3 scripts/tests/locked-use-auth-latency.test.py -v
+      - name: Test notarization ordering and failure handling
+        run: python3 scripts/tests/locked-use-notarization.test.py -v
+      - name: Test real staging and ticket preservation in release archives
+        run: python3 scripts/tests/locked-use-release-packaging.test.py -v
+      - name: Test signing keychain restoration
+        run: bash scripts/tests/locked-use-signing.test.sh

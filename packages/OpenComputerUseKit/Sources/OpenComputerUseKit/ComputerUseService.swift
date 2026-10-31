@@ -348,6 +348,22 @@ func screenshotPixelToWindowPoint(
     )
 }
 
+/// AX ranges use UTF-16. Reject unavailable, out-of-bounds or split-surrogate ranges.
+func typedTextReplacement(value: String, selection: CFRange, text: String) -> (value: String, caret: Int)? {
+    let units = Array(value.utf16)
+    guard selection.location >= 0, selection.location <= units.count,
+          selection.length >= 0, selection.length <= units.count - selection.location
+    else { return nil }
+    let end = selection.location + selection.length
+    func splitsSurrogate(_ offset: Int) -> Bool {
+        offset > 0 && offset < units.count
+            && (0xD800...0xDBFF).contains(units[offset - 1]) && (0xDC00...0xDFFF).contains(units[offset])
+    }
+    guard !splitsSurrogate(selection.location), !splitsSurrogate(end) else { return nil }
+    let range = NSRange(location: selection.location, length: selection.length)
+    return ((value as NSString).replacingCharacters(in: range, with: text), selection.location + text.utf16.count)
+}
+
 let nonSettableSetValueErrorMessage = "Cannot set a value for an element that is not settable"
 
 func setValueAttributeIsSettable(result: AXError, settable: Bool, attribute: String) throws -> Bool {
@@ -446,6 +462,24 @@ func shouldScanDescendantsOfHitRecord(originalFrame: CGRect?, hitFrame: CGRect?)
     return true
 }
 
+/// A descendant found by scanning below a click target may be pressed only where the click was aimed:
+/// for a coordinate click its frame must contain the click point, for an element click it must overlap
+/// the element's click frame. Without this, a coordinate click on a blank spot, whose best record is
+/// the window, pressed the window's smallest button wherever it was, such as its close button.
+func isDescendantClickCandidateAtTarget(candidateFrame: CGRect?, clickPoint: CGPoint?, targetFrame: CGRect?) -> Bool {
+    guard let candidateFrame, !candidateFrame.isEmpty, !candidateFrame.isInfinite,
+          candidateFrame.minX.isFinite, candidateFrame.minY.isFinite,
+          candidateFrame.width.isFinite, candidateFrame.height.isFinite else {
+        return false
+    }
+
+    if let clickPoint {
+        return candidateFrame.contains(clickPoint)
+    }
+
+    return targetFrame.map(candidateFrame.intersects) ?? false
+}
+
 func isLikelyContainingRowActionFrame(
     targetFrame: CGRect,
     candidateFrame: CGRect?,
@@ -471,7 +505,7 @@ func canUseActivationOnlyClickFallback(role: String?) -> Bool {
         return false
     }
 
-    return role == kAXWindowRole as String
+    return isSnapshotRootRole(role)
 }
 
 func canUseKeyboardTextFallback(role: String?, roleDescription: String?, isValueSettable: Bool) -> Bool {
@@ -610,8 +644,19 @@ public final class ComputerUseService {
         }
         switch windowPlacement {
         case .agentDisplay:
-            guard let windowID = snapshot.targetWindowID, let windowElement = snapshot.windowElement else {
+            guard var windowID = snapshot.targetWindowID, var windowElement = snapshot.windowElement else {
                 throw ComputerUseError.stateUnavailable("window_placement 'agent_display' requires a current target window. Run get_app_state again.")
+            }
+            // A sheet cannot move on its own; park its window and the sheet goes along.
+            if stringValue(of: windowElement, attribute: kAXRoleAttribute) == kAXSheetRole as String {
+                guard let parent = copyParent(of: windowElement),
+                      stringValue(of: parent, attribute: kAXRoleAttribute) == kAXWindowRole as String,
+                      let parentID = SkyLightSPI.shared.windowID(for: parent), parentID != windowID
+                else {
+                    throw ComputerUseError.stateUnavailable("window_placement 'agent_display' requires the sheet's parent window. Run get_app_state again.")
+                }
+                windowElement = parent
+                windowID = parentID
             }
             try AgentDisplay.shared.park(windowID: windowID, pid: snapshot.app.pid, window: windowElement)
         case .restore:
@@ -767,7 +812,8 @@ public final class ComputerUseService {
                             button: button,
                             clickCount: clickCount,
                             includeNearbyHitTesting: false,
-                            allowActivationFallback: false
+                            allowActivationFallback: false,
+                            clickPoint: point
                         ) {
                             handled = true
                             break
@@ -917,6 +963,8 @@ public final class ComputerUseService {
             return try actionResult(for: query)
         }
 
+        if text.isEmpty { return try actionResult(for: query) }
+
         if keyMethod == .skyKey {
             let target = try skyKeyTarget(for: snapshot)
             try InputSimulation.typeTextWithSkyLight(text, windowID: target.windowID, pid: target.pid)
@@ -926,17 +974,32 @@ public final class ComputerUseService {
             )
         }
 
-        if try typeTextBySettingFocusedValueIfAvailable(text, in: snapshot) {
+        // The focus now, not at the snapshot's read: a key since then (⌘S opening a save sheet,
+        // ⌘L) moves it, and text meant for the sheet went into the document under it.
+        guard let focused = Self.focusedElement(pid: snapshot.app.pid) else {
+            throw ComputerUseError.stateUnavailable("type_text could not read the app's current focused element. Focus a text entry area and try again.")
+        }
+        if try typeTextUsingAccessibility(text, on: focused, pid: snapshot.app.pid) {
             pauseBeforeReadBack(0.1)
             return try actionResult(for: query)
         }
 
-        guard try canTypeTextUsingKeyboardFallback(in: snapshot) else {
+        guard canTypeTextUsingKeyboardFallback(on: focused) else {
             throw ComputerUseError.stateUnavailable("type_text requires a focused editable text element. Click a text entry area first, or use set_value on a settable text element.")
         }
 
+        try requireCurrentTextFocus(focused, pid: snapshot.app.pid)
         try InputSimulation.typeText(text, pid: snapshot.app.pid)
         return try actionResult(for: query)
+    }
+
+    private static func focusedElement(pid: pid_t) -> AXUIElement? {
+        var focused: CFTypeRef?
+        let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, 0.2)
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
+              let focused, CFGetTypeID(focused) == AXUIElementGetTypeID() else { return nil }
+        return (focused as! AXUIElement)
     }
 
     public func pressKey(app query: String, key: String, keyMethod: KeyMethod = .auto) throws -> ToolCallResult {
@@ -1398,8 +1461,13 @@ public final class ComputerUseService {
         button: MouseButtonKind,
         clickCount: Int,
         includeNearbyHitTesting: Bool,
-        allowActivationFallback: Bool
+        allowActivationFallback: Bool,
+        clickPoint: CGPoint? = nil
     ) throws -> Bool {
+        let targetFrame = clickFrame(for: record, snapshot: snapshot)
+        let isAtTarget = { (candidate: ElementRecord) in
+            isDescendantClickCandidateAtTarget(candidateFrame: candidate.localFrame, clickPoint: clickPoint, targetFrame: targetFrame)
+        }
         let preferContainingWebRowAXClick = shouldPreferContainingWebRowAXClick(record, in: snapshot)
         debugClickDecision("record=\(clickDebugDescription(record)) preferContainingWebRowAXClick=\(preferContainingWebRowAXClick)")
 
@@ -1410,14 +1478,19 @@ public final class ComputerUseService {
             return true
         }
 
-        if !preferContainingWebRowAXClick {
+        // Selecting a window or sheet index means the root itself, not a button inside it.
+        // Skip both descendant and nearby-point searches and use the existing raise path.
+        let windowIndexClick = clickPoint == nil && record.element.map {
+            canUseActivationOnlyClickFallback(role: stringValue(of: $0, attribute: kAXRoleAttribute))
+        } == true
+        if !preferContainingWebRowAXClick && !windowIndexClick {
             if try performPreferredClick(on: record, button: button, clickCount: clickCount) {
                 debugClickDecision("handled by preferred target \(clickDebugDescription(record))")
                 pauseBeforeReadBack(0.15)
                 return true
             }
 
-            for candidate in descendantClickCandidates(for: record, snapshot: snapshot) {
+            for candidate in descendantClickCandidates(for: record, snapshot: snapshot) where isAtTarget(candidate) {
                 if try performPreferredClick(on: candidate, button: button, clickCount: clickCount) {
                     debugClickDecision("handled by descendant \(clickDebugDescription(candidate))")
                     pauseBeforeReadBack(0.15)
@@ -1440,14 +1513,14 @@ public final class ComputerUseService {
                     }
 
                     if shouldScanDescendantsOfHitRecord(
-                        originalFrame: clickFrame(for: record, snapshot: snapshot),
+                        originalFrame: targetFrame,
                         hitFrame: hitRecord.localFrame
                     ) {
                         for candidate in descendantClickCandidates(
                             for: hitRecord,
                             snapshot: snapshot,
                             sideActionScope: record
-                        ) {
+                        ) where isAtTarget(candidate) {
                             if try performPreferredClick(on: candidate, button: button, clickCount: clickCount) {
                                 debugClickDecision("handled by hit descendant \(clickDebugDescription(candidate))")
                                 pauseBeforeReadBack(0.15)
@@ -1566,11 +1639,13 @@ public final class ComputerUseService {
             .first
     }
 
+    /// `point` is a window point (the space of `ElementRecord.localFrame`), not a screenshot pixel.
     private func hitTestElement(at point: CGPoint, in snapshot: AppSnapshot) throws -> ElementRecord? {
         let appElement = AXUIElementCreateApplication(snapshot.app.pid)
-        let globalPoint = try screenshotToGlobalPoint(snapshot: snapshot, x: Double(point.x), y: Double(point.y))
+        let globalPoint = try windowPointToGlobalPoint(snapshot: snapshot, point: point)
         var hitElement: AXUIElement?
         let result = AXUIElementCopyElementAtPosition(appElement, Float(globalPoint.x), Float(globalPoint.y), &hitElement)
+        debugClickDecision("hit test window=\(point) screen=\(globalPoint) result=\(result.rawValue)")
         guard result == .success, let hitElement else {
             return nil
         }
@@ -1803,33 +1878,76 @@ public final class ComputerUseService {
         }
     }
 
-    private func typeTextBySettingFocusedValueIfAvailable(_ text: String, in snapshot: AppSnapshot) throws -> Bool {
-        guard let element = snapshot.focusedElement else {
-            return false
-        }
-
-        guard try isSettableForSetValue(element: element, attribute: kAXValueAttribute) else {
-            return false
-        }
-
-        let baseValue = editableBaseValue(for: element)
+    private func requireCurrentTextFocus(_ element: AXUIElement, pid: pid_t) throws {
         try requireUsableComputerUseSession()
-        let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, (baseValue + text) as CFString)
-        switch result {
-        case .success:
-            return true
-        case .failure, .attributeUnsupported, .actionUnsupported, .cannotComplete, .noValue, .invalidUIElement, .illegalArgument:
-            return false
-        default:
-            throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
+        guard let current = Self.focusedElement(pid: pid), CFEqual(element, current) else {
+            throw ComputerUseError.stateUnavailable("type_text focus changed before input. Read the app state and try again.")
         }
     }
 
-    private func canTypeTextUsingKeyboardFallback(in snapshot: AppSnapshot) throws -> Bool {
-        guard let element = snapshot.focusedElement else {
-            return false
+    private func selectedRange(of element: AXUIElement) -> CFRange? {
+        var raw: CFTypeRef?
+        var range = CFRange()
+        guard AXUIElementCopyAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, &raw) == .success,
+              let raw, CFGetTypeID(raw) == AXValueGetTypeID(),
+              AXValueGetType(raw as! AXValue) == .cfRange,
+              AXValueGetValue(raw as! AXValue, .cfRange, &range) else { return nil }
+        return range
+    }
+
+    private func typeTextUsingAccessibility(_ text: String, on element: AXUIElement, pid: pid_t) throws -> Bool {
+        let attribute: String
+        let value: String
+        var caret: Int?
+        // SelectedText preserves the selection/caret and rich text. It can be
+        // writable even when replacing the entire AXValue is not supported.
+        if isSettable(element: element, attribute: kAXSelectedTextAttribute) {
+            attribute = kAXSelectedTextAttribute
+            value = text
+        } else {
+            let valueWritable = isSettable(element: element, attribute: kAXValueAttribute)
+            let rangeWritable = isSettable(element: element, attribute: kAXSelectedTextRangeAttribute)
+            let originalValue = stringValue(of: element, attribute: kAXValueAttribute)
+            let currentSelection = selectedRange(of: element)
+            if inputFallbackDebugEnabled(environment: ProcessInfo.processInfo.environment) {
+                fputs("[open-computer-use] type_text value_writable=\(valueWritable) range_writable=\(rangeWritable) value_readable=\(originalValue != nil) selection_readable=\(currentSelection != nil)\n", stderr)
+            }
+            guard valueWritable, rangeWritable, let original = originalValue, let selection = currentSelection else { return false }
+            // Retain placeholder handling, but never splice a range into a
+            // synthesized descendant string that differs from the reported value.
+            let editable = editableBaseValue(for: element)
+            let base = editable.isEmpty && !normalizeEditablePlaceholderText(original).isEmpty ? editable : original
+            guard let replacement = typedTextReplacement(value: base, selection: selection, text: text) else { return false }
+            guard stringValue(of: element, attribute: kAXValueAttribute) == original,
+                  let current = selectedRange(of: element), current.location == selection.location, current.length == selection.length
+            else { throw ComputerUseError.stateUnavailable("type_text text or selection changed before input. Read the app state and try again.") }
+            attribute = kAXValueAttribute
+            value = replacement.value
+            caret = replacement.caret
         }
 
+        try requireCurrentTextFocus(element, pid: pid)
+        let result = AXUIElementSetAttributeValue(element, attribute as CFString, value as CFString)
+        guard result == .success else {
+            // A failed/timed-out write may already have changed the control.
+            // Never append or resend the same input through another path.
+            throw ComputerUseError.message("type_text AXUIElementSetAttributeValue(\(attribute)) failed with \(result.rawValue). Read the current text before retrying.")
+        }
+        if let caret {
+            try requireCurrentTextFocus(element, pid: pid)
+            guard stringValue(of: element, attribute: kAXValueAttribute) == value else {
+                throw ComputerUseError.stateUnavailable("type_text value changed after writing; caret was not moved. Read the current text before retrying.")
+            }
+            var range = CFRange(location: caret, length: 0)
+            guard let axRange = AXValueCreate(.cfRange, &range),
+                  AXUIElementSetAttributeValue(element, kAXSelectedTextRangeAttribute as CFString, axRange) == .success,
+                  let applied = selectedRange(of: element), applied.location == caret, applied.length == 0
+            else { throw ComputerUseError.stateUnavailable("type_text wrote the text but could not restore the caret. Read the current text before retrying.") }
+        }
+        return true
+    }
+
+    private func canTypeTextUsingKeyboardFallback(on element: AXUIElement) -> Bool {
         let role = stringValue(of: element, attribute: kAXRoleAttribute)
         let roleDescription = role.flatMap {
             stringValue(of: element, attribute: kAXRoleDescriptionAttribute) ?? humanizedRoleDescription(for: $0)
@@ -1837,7 +1955,7 @@ public final class ComputerUseService {
         return canUseKeyboardTextFallback(
             role: role,
             roleDescription: roleDescription,
-            isValueSettable: try isSettableForSetValue(element: element, attribute: kAXValueAttribute)
+            isValueSettable: isSettable(element: element, attribute: kAXValueAttribute)
         )
     }
 

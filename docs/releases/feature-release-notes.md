@@ -4,10 +4,15 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
-| 2026-10-31 | macOS AX 读取速度 | 大型 Electron / 浏览器窗口的完整 AX tree 读取明显变快：本地测试中聊天应用窗口约从 2.4 s 降到 0.5 s，浏览器窗口约从 452 ms 降到 104 ms。 | 每次 tree walk 内按元素批量读取常用 AX 属性并仅在该次读取内缓存，transient 错误不缓存；已有名称、值或摘要的紧凑 action target 不再重复输出 `Frame`，element record 仍保留几何；`OPEN_COMPUTER_USE_DISABLE_AX_READ_CACHE=1` 可关闭缓存做对比。 |
+| 2026-10-31 | macOS AX 读取速度 | 大型窗口的完整 AX tree 读取减少跨进程往返。 | 每次 tree walk 内批量读取常用 AX 属性并缓存，瞬时错误可重试；输出格式和 Frame 保持不变。`OPEN_COMPUTER_USE_DISABLE_AX_READ_CACHE=1` 可关闭缓存做对比。 |
+| 2026-10-31 | macOS 文本输入 | 焦点切到另一个输入框或 sheet 后，文字写入当前目标；输入替换选区并跟随光标，不再总是追加到末尾。 | 优先 AXSelectedText；不可用时按有效 UTF-16 选区替换可写 AXValue 并恢复光标。读不到焦点或写入失败时不回退到旧目标、不重复发送。补真实 AppKit、CLI 与 JS 回归。 |
+| 2026-10-31 | Locked Use 公证票据与诊断 | 安装组件随包携带公证票据，并可在不锁屏的情况下复现首次认证加载延迟。 | 修复仅给外层 App 附票据和 npm 提前打包的缺口：先公证并 staple 安装组件，再重签、公证外层 App，刷新全部制品；新增冷 / 热调用诊断和分发回归。安装后的解锁改善仍需正式构建实测。 |
 | 2026-10-30 | 虚拟显示器显式启用 | 默认不向模型提供虚拟显示器参数，避免意外改变显示器布局。 | 新增 `virtualDisplay.enabled=false` 与环境覆盖；关闭时隐藏 schema/JS/遮挡提示，在运行入口和底层阻止创建，保留恢复与结束清理。 |
 | 2026-10-29 | macOS 权限引导定位 | 已有辅助功能权限时，拖拽引导紧贴目标权限列表，更容易看清拖放方向；首次未授权时继续跟随设置窗口底边。 | 优先使用上方列表的增删控件容器定位，读不到时自动退回窗口锚点；后台有界读取 AX，跳过应用行。 |
 | 2026-10-29 | macOS 权限引导 | 切换回系统设置后，权限引导浮窗的返回按钮与拖拽卡片完整显示。 | 修复入场动画中断后保留中间尺寸与透明度的问题，并固定动画结束尺寸。 |
+| 2026-10-23 | macOS 点击命中测试 | 截图与窗口比例不是 1:1 时（如 Retina），`auto` 点击不再按下目标旁边的控件；只取 AX 的 element_index 点击也不再误报需要截图。 | `hitTestElement` 的入参本就是窗口点，改用窗口点换算，不再按截图像素再除一次缩放比例；修复前点击表格行会命中并按下上方列表头。 |
+| 2026-10-23 | macOS 坐标点击 | 坐标点击点到空白处时，不再按下窗口里别处的按钮（例如关闭窗口）。 | 点击候选的子孙扫描只按下落在目标上的元素：坐标点击要求包含点击点，element_index 点击要求与目标重叠；空白处落到定向鼠标事件；窗口索引走 Raise，不扫描内部按钮，无效尺寸的子孙被过滤。修复前点空白处会按下窗口的关闭按钮。 |
+| 2026-10-23 | macOS sheet 与文件选择器 | 网页上传、保存等以 sheet 弹出的面板（含 Firefox 文件选择器）出现在 tree 和截图里，元素点击与坐标点击落在面板上。 | app 的 focused window 是 sheet 时，`get_app_state` / `query` 以 sheet 为 root，tree、截图和输入目标都绑定到 sheet 的窗口，`agent_display` 仍停靠 sheet 所在的窗口；sheet 根索引不误按内部按钮，query 通过父链确认控件归属；此前 sheet 被跳过，Firefox 只返回底下的网页。 |
 | 2026-10-13 | Windows 滚动与坐标 | Windows 上 `scroll` 不再在默认配置下直接失败；150% 缩放且窗口位于屏幕右侧时，`get_app_state` 也能返回截图和窗口 bounds。 | 修复 `scroll` 请求漏传 `windowBounds` 导致坐标回退必然报 `No usable screenshot coordinates`；滚轮消息保留屏幕坐标并修正横向方向，PowerShell bridge 启动时对齐 DPI 物理坐标；`ScrollPattern` 在当前状态不可滚动时回退到坐标路径而不是让整个 tool call 失败。 |
 | 2026-10-13 | Windows 全局输入兜底 | 需要真实指针或键盘的 Windows 动作（`click_method=global`、WinUI 键盘输入、子控件点击）在显式授权后可用，默认路径完全不变。 | Windows 实现 `click_method=global` 真实指针点击；`drag` / `scroll` 的坐标回退在 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` 时使用真实指针，按键另需显式 `key_method=global`，`app_post` 仍保持 HWND 消息语义；未授权时在任何物理输入前拒绝，核对目标前台 / 命中 / 几何并在异常时释放输入。 |
 | 2026-10-17 | 1.1.2 修复发布 | 软件光标持续跟随移动窗口，Linux 批量动作可减少回读开销，安装链接统一到新仓库。 | 同步所有版本源至 1.1.2；发布窗口锚点跟踪、Linux 动作回读配置与仓库改名后的 npm / 插件元信息，沿用既有命令和 App 签名身份。 |
