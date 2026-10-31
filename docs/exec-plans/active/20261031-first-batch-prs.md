@@ -19,8 +19,8 @@
 
 ## 进度
 
-- [x] #129 autorelease pool 与空闲唤醒：审查、修复和真实对照测试通过，进入合并。
-- [ ] #119 CLI 相对 JSON 文件路径。
+- [x] #129 autorelease pool 与空闲唤醒：已 squash 合并；真实截图内存、唤醒和断连回归通过。
+- [x] #119 CLI 相对 JSON 文件路径：真实 app-agent 与负对照通过，进入合并。
 - [ ] #134 AX 属性批读。
 - [ ] #138 Dev 身份 release 优化构建。
 
