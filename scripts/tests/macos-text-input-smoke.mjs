@@ -41,7 +41,13 @@ async function reset(args = {}) {
   await configure({reset:true,target:'view',selection:[0,5],...args});
   await observe();
 }
-async function expectView(value) { await waitFor(() => state().view === value); }
+async function expectView(value, selection) {
+  // The fixture publishes on a timer; one sample can precede the final caret write.
+  await waitFor(() => {
+    const snapshot = state();
+    return snapshot.view === value && (!selection || snapshot.selection.every((v,i) => v === selection[i]));
+  });
+}
 try {
   const build = spawnSync('swiftc', [fileURLToPath(new URL('./fixtures/MacOSTextInputFixture.swift', import.meta.url)), '-o',fixturePath], {encoding:'utf8'});
   assert.equal(build.status,0,build.stderr);
@@ -102,7 +108,7 @@ try {
 
   await reset({selectedWritable:false});
   await call('type_text',{text:'K'});
-  await expectView('K world');
+  await expectView('K world', [1,0]);
   assert.equal(state().valueWrites,1);
   assert.deepEqual(state().selection,[1,0]);
   await reset({selectedWritable:false,selection:[11,0]});
@@ -112,7 +118,7 @@ try {
   await expectView('hello world12');
   await reset({selectedWritable:false,text:'中🙂文e\u0301尾',selection:[1,2]});
   await call('type_text',{text:'新🚀'});
-  await expectView('中新🚀文e\u0301尾');
+  await expectView('中新🚀文e\u0301尾', [4,0]);
   assert.deepEqual(state().selection,[4,0]);
   await call('type_text',{text:'!'});
   await expectView('中新🚀!文e\u0301尾');

@@ -48,11 +48,41 @@ final class AXSnapshotReadCacheTests: XCTestCase {
         })
         XCTAssertTrue(AXSnapshotReadCache.current === outer)
     }
-    func testOnlyAnonymousActionTargetsNeedRenderedFrames() {
-        XCTAssertTrue(shouldRenderActionTargetFrame(title: nil, label: nil, value: nil, summary: nil, placeholder: nil))
-        XCTAssertFalse(shouldRenderActionTargetFrame(title: "Play", label: nil, value: nil, summary: nil, placeholder: nil))
-        XCTAssertFalse(shouldRenderActionTargetFrame(title: nil, label: nil, value: nil, summary: "Open details", placeholder: nil))
-        XCTAssertFalse(shouldRenderActionTargetFrame(title: nil, label: nil, value: "off", summary: nil, placeholder: nil))
+    func testBatchErrorsNullsAndMalformedResponsesFallBackSafely() {
+        func errorValue(_ error: AXError) -> AXValue {
+            var value = error
+            return AXValueCreate(.axError, &value)!
+        }
+        let decoded = AXSnapshotReadCache.decodeBatch([
+            "AXButton" as CFString, errorValue(.attributeUnsupported), errorValue(.noValue),
+            errorValue(.cannotComplete), NSNull(),
+        ], names: ["role", "unsupported", "empty", "retry", "null"])
+        XCTAssertEqual(decoded["role"]?.value as? String, "AXButton")
+        XCTAssertNotNil(decoded["unsupported"])
+        XCTAssertNil(decoded["unsupported"]?.value)
+        XCTAssertNotNil(decoded["empty"])
+        XCTAssertNil(decoded["retry"])
+        XCTAssertNil(decoded["null"])
+        XCTAssertTrue(AXSnapshotReadCache.decodeBatch([], names: ["role"]).isEmpty)
     }
 
+    func testActionsAndSettableFailuresRetryButSuccessIsCached() {
+        var actions = 0, settable = 0
+        let cache = AXSnapshotReadCache(actions: { _ in
+            actions += 1
+            return actions == 1 ? (.cannotComplete, nil) : (.success, ["AXPress"])
+        }, settable: { _, _ in
+            settable += 1
+            return settable == 1 ? (.cannotComplete, false) : (.success, true)
+        })
+        let element = AXUIElementCreateApplication(123)
+        XCTAssertNil(cache.actionNames(element))
+        XCTAssertEqual(cache.actionNames(element), ["AXPress"])
+        XCTAssertEqual(cache.actionNames(element), ["AXPress"])
+        XCTAssertFalse(cache.isSettable(element, "AXValue"))
+        XCTAssertTrue(cache.isSettable(element, "AXValue"))
+        XCTAssertTrue(cache.isSettable(element, "AXValue"))
+        XCTAssertEqual(actions, 2)
+        XCTAssertEqual(settable, 2)
+    }
 }

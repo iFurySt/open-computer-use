@@ -16,10 +16,9 @@ node, name, value, state or action index.
   rewalk and the menu bar. Action tools, focus and window queries read live values.
   `OPEN_COMPUTER_USE_DISABLE_AX_READ_CACHE=1` turns the cache off for output
   comparison.
-- Compact generic action targets that already have a title, label, value, summary
-  or placeholder no longer repeat their `Frame` in the text. Anonymous targets keep
-  it. Every `ElementRecord` keeps its frame, so coordinate and element actions are
-  unchanged.
+- Maintainer review retained the existing `Frame` text for compact action targets,
+  including named targets. This change only optimizes reads; output and action
+  geometry keep their existing semantics.
 - Added semantic AX fixtures that drive the production `TreeRenderer` through an
   injected attribute source, with logical IDs as an independent oracle for roles,
   names, values, raw actions, frames, repeated names and fresh values across reads.
@@ -41,3 +40,14 @@ Validation: `swift build` passed. `AXSnapshotReadCacheTests` (4) and
 desktop session, executed 408 tests with 8 skipped and 0 failures. `make check-docs`
 passed. `scripts/check-repo-hygiene.sh` reports files that are already absent on the
 base branch.
+
+## Maintainer review on current main
+
+- Resolved architecture/release-note conflicts against current main and retained sheet support and existing Frame output.
+- Added batch-result decoding tests for absent, transient-error, null and malformed results, action/settable retry tests, and a named-target Frame regression.
+- Added `scripts/tests/macos-ax-batch-smoke.mjs` with 300 real AppKit buttons. Signed release output matches both cache-disabled mode and the pre-change main executable byte for byte. Indexed AXPress reaches the receiver, and the next snapshot reflects its changed title.
+- Five interleaved measured reads per mode: uncached median 210 ms, cached 88 ms on this machine. These are fixture results, not a universal speedup guarantee.
+- The text-input smoke exposed a pre-existing timer-publication race: main also reports the new text before the fixture JSON includes the final caret. Wait for the complete expected text/selection pair; no runtime behavior was changed. Updated native/CLI/Worker JS smoke passes.
+- `swift test`: 419 tests, 9 skipped, 0 failures. Documentation and diff checks pass.
+- Large system-temporary-directory NSOpenPanel now returns within the request budget in the local probe, but still exhausts the existing 1200-node budget before Cancel. The traversal-budget debt remains separate; this PR does not claim to fix it.
+- The existing real NSOpenPanel matrix also passes all 12 sheet/modal × snapshot/query/coordinate cases, including scaled screenshots and stale query rejection.

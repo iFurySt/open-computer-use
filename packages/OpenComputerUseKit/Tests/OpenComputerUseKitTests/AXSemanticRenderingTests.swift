@@ -149,6 +149,19 @@ final class AXSemanticRenderingTests: XCTestCase {
         }
     }
 
+    func testNamedCompactActionTargetKeepsItsFrameText() {
+        let fixture = Fixture()
+        let node = fixture.nodes[2]!
+        node.attributes["AXTitle"] = "Named action" as CFString
+        var size = CGSize(width: 80, height: 30)
+        node.attributes["AXSize"] = AXValueCreate(.cgSize, &size)
+        node.children = []
+        node.actions = ["AXPress"]
+        let output = fixture.render()
+        let row = output.lines.first { $0.contains("Named action") }
+        XCTAssertTrue(row?.contains("Frame:") == true, row ?? "Missing named action")
+    }
+
     func testRetainedElementHandlesDoNotRetainOldValuesAcrossReads() {
         let fixture = Fixture()
         let before = fixture.render()

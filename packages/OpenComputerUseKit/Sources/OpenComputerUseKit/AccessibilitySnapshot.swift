@@ -1008,9 +1008,7 @@ private struct TreeRenderer {
             value: value,
             precedingSegments: [labelSegment, helpSegment, urlSegment, identifierSegment, valueSegment]
         )
-        let frameSegment = rendersCompactGenericActionTarget && shouldRenderActionTargetFrame(
-            title: displayTitle, label: label, value: value, summary: rowSummary, placeholder: placeholder
-        )
+        let frameSegment = rendersCompactGenericActionTarget
             ? localFrame.map { " Frame: \($0.renderedLocalFrame)" } ?? ""
             : ""
         let actionsPrefix = shouldCommaSeparateActions(
@@ -1729,12 +1727,6 @@ func hasPrimaryClickAction(_ actions: [String]) -> Bool {
     return actions.contains { action in
         primaryActions.contains { $0.caseInsensitiveCompare(action) == .orderedSame }
     }
-}
-
-/// Named targets already have an element index. Keep geometry for anonymous
-/// targets, and keep every frame in ElementRecord for action lookup.
-func shouldRenderActionTargetFrame(title: String?, label: String?, value: String?, summary: String?, placeholder: String?) -> Bool {
-    [title, label, value, summary, placeholder].allSatisfy { $0?.isEmpty != false }
 }
 
 func shouldRenderCompactGenericActionTarget(

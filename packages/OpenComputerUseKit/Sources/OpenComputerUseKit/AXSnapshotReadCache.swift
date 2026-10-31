@@ -106,7 +106,12 @@ final class AXSnapshotReadCache: NSObject {
     private static func readBatch(_ element: AXUIElement) -> [String: Attribute] {
         var values: CFArray?
         let error = AXUIElementCopyMultipleAttributeValues(element, names as CFArray, AXCopyMultipleAttributeOptions(), &values)
-        guard error == .success, let raw = values as? [AnyObject], raw.count == names.count else { return [:] }
+        guard error == .success, let raw = values as? [AnyObject] else { return [:] }
+        return decodeBatch(raw, names: names)
+    }
+
+    static func decodeBatch(_ raw: [AnyObject], names: [String]) -> [String: Attribute] {
+        guard raw.count == names.count else { return [:] }
         var result: [String: Attribute] = [:]
         for (name, value) in zip(names, raw) {
             if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
