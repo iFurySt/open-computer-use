@@ -41,7 +41,7 @@ await app.getAXState();
 runtime and emits the initial accessibility state. The returned binding exposes:
 
 ```text
-getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement? })
+getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement?, diff?, disableDiffing? })
 getScreenshot({ emit?, windowPlacement? })
 getAXStateAndScreenshot({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement? })
 click(elementIndexOrPoint, options?)
@@ -62,6 +62,22 @@ invalidates previous element indexes; read AX again before element actions.
 Disabling both channels is rejected before a native call. These options do not
 deduplicate unchanged images. See [selective observation](../selective-observation.md)
 for collection semantics and real GTK/Worker validation.
+
+`app.getAXState({ diff: true })` is opt-in and returns a JSON string instead of
+the tree text. The first packet is `{"type":"ax-full","revision":n,"text":...}`
+with the complete text. Later packets are
+`{"type":"ax-diff","baseRevision":m,"revision":n,"added":[...],"changed":[...],"removed":[...]}`:
+`added` and `changed` hold `{index, text}` with the full line of each element,
+`removed` holds element indexes, and an optional `layout` array gives the new
+order of element indexes and non-element lines when it changed. Indentation,
+focus, selection and notes are kept exactly; `applyAXStateDiff` in
+`scripts/node-repl/ax-state-diff.mjs` rebuilds the full text byte for byte and
+rejects a packet whose `baseRevision` does not match. Each app binding keeps its
+own baseline. A changed App/Window header, changed observation options, a native
+error, duplicate element indexes, a screenshot read or any call without `diff`
+(or with `disableDiffing: true`) resets it, so the next diff call returns
+`ax-full`. Diffs only shorten the returned text; the native tree is still read
+in full.
 
 On Windows, explicit `app.pressKey("ctrl+a", {keyMethod:"global"})` uses
 physical SendInput keys and requires `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`.
