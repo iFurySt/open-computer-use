@@ -296,7 +296,7 @@ enum SnapshotBuilder {
         )
 
         var renderer = TreeRenderer(context: context)
-        TimingLog.measure("snapshot.tree_walk") { renderer.render(rootElement) }
+        TimingLog.measure("snapshot.tree_walk") { AXSnapshotReadCache.withSnapshot { renderer.render(rootElement) } }
 
         // Pin the window's visible state (WindowServer occlusion notifications
         // off) so covering it or moving it to another Space later does not hide
@@ -312,7 +312,7 @@ enum SnapshotBuilder {
                 for _ in 0..<webAreaRewalkAttempts {
                     Thread.sleep(forTimeInterval: webAreaRewalkInterval)
                     renderer = TreeRenderer(context: context)
-                    renderer.render(rootElement)
+                    AXSnapshotReadCache.withSnapshot { renderer.render(rootElement) }
                     if renderer.hasWebArea {
                         break
                     }
@@ -329,7 +329,7 @@ enum SnapshotBuilder {
         if let menuBar = copyElement(appElement, attribute: kAXMenuBarAttribute),
            !CFEqual(menuBar, rootElement)
         {
-            renderer.render(menuBar)
+            AXSnapshotReadCache.withSnapshot { renderer.render(menuBar) }
         }
 
         var treeLines = renderer.lines
@@ -841,6 +841,15 @@ private struct RenderContext {
     let treeLimits: AccessibilityTreeLimits
 }
 
+// Runs the real renderer against a scoped, injected AX provider. The returned
+// records let semantic fixtures verify the actual numeric action lookup targets.
+func renderAXSemanticFixture(root: AXUIElement, focused: AXUIElement? = nil) -> (lines: [String], records: [Int: ElementRecord]) {
+    var renderer = TreeRenderer(context: RenderContext(windowBounds: .zero, focusedElement: focused,
+        textLimit: .max, treeLimits: .defaults))
+    renderer.render(root)
+    return (renderer.lines, renderer.records)
+}
+
 private struct TreeRenderer {
     let context: RenderContext
     var hasWebArea = false
@@ -1262,26 +1271,17 @@ private func valueTypeTrait(of element: AXUIElement) -> String? {
 }
 
 private func copyElement(_ element: AXUIElement, attribute: String) -> AXUIElement? {
-    var value: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-    guard error == .success, let value else {
-        return nil
-    }
-
+    guard let value = attributeValue(of: element, attribute: attribute),
+          CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
     return (value as! AXUIElement)
 }
 
 private func copyArray(_ element: AXUIElement, attribute: String) -> [AXUIElement]? {
-    var value: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-    guard error == .success, let value else {
-        return nil
-    }
-
-    return value as? [AXUIElement]
+    attributeValue(of: element, attribute: attribute) as? [AXUIElement]
 }
 
 private func copyActions(_ element: AXUIElement) -> [String]? {
+    if let cache = AXSnapshotReadCache.current { return cache.actionNames(element) }
     var actions: CFArray?
     let error = AXUIElementCopyActionNames(element, &actions)
     guard error == .success else {
@@ -1292,6 +1292,7 @@ private func copyActions(_ element: AXUIElement) -> [String]? {
 }
 
 private func attributeValue(of element: AXUIElement, attribute: String) -> CFTypeRef? {
+    if let cache = AXSnapshotReadCache.current { return cache.value(element, attribute) }
     var value: CFTypeRef?
     let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
     guard error == .success else {
@@ -1341,6 +1342,7 @@ private func pid(of element: AXUIElement) -> pid_t {
 }
 
 private func isSettable(of element: AXUIElement, attribute: String) -> Bool {
+    if let cache = AXSnapshotReadCache.current { return cache.isSettable(element, attribute) }
     var settable = DarwinBoolean(false)
     let error = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
     return error == .success && settable.boolValue
@@ -1632,18 +1634,10 @@ private func displayIdentifierSegment(for element: AXUIElement, role: String, id
 }
 
 private func resolveLocalFrame(of element: AXUIElement, windowBounds: CGRect?) -> CGRect? {
-    var positionValue: CFTypeRef?
-    var sizeValue: CFTypeRef?
-    let positionError = AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue)
-    let sizeError = AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue)
-    guard
-        positionError == .success,
-        sizeError == .success,
-        let positionValue,
-        let sizeValue
-    else {
-        return nil
-    }
+    guard let positionValue = attributeValue(of: element, attribute: kAXPositionAttribute),
+          let sizeValue = attributeValue(of: element, attribute: kAXSizeAttribute),
+          CFGetTypeID(positionValue) == AXValueGetTypeID(),
+          CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
 
     let positionAXValue = positionValue as! AXValue
     let sizeAXValue = sizeValue as! AXValue
