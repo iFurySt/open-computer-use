@@ -149,6 +149,9 @@ public struct AppSnapshot {
     let elements: [Int: ElementRecord]
     var screenshotNote: String? = nil
     var observation: SnapshotObservationOptions = .defaults
+    /// Explains when the window frame is outside every active display. Nil when
+    /// the window is visible, or when the display list is unavailable.
+    var displayNote: String? = nil
 
     public var renderedText: String {
         renderedText(style: .fullState)
@@ -161,6 +164,11 @@ public struct AppSnapshot {
 
         lines.append("App=\(appReference) (pid \(app.pid))")
         lines.append("Window: \(quoted(displayTitle)), App: \(app.name).")
+        if let displayNote {
+            lines.append("")
+            lines.append(displayNote)
+            lines.append("")
+        }
         lines.append(contentsOf: treeLines)
         if !observation.includeAX {
             lines.append(SnapshotObservationOptions.accessibilityOmittedNote)
@@ -246,6 +254,14 @@ enum SnapshotBuilder {
             throw ComputerUseError.stateUnavailable(computerUseNoWindowFoundMessage)
         }
 
+        // A window that sits outside every active display often exposes only its
+        // window chrome through AX. Say so instead of letting the caller mistake
+        // the sparse tree for the app's real content.
+        let displayNote = windowDisplayNote(
+            windowBounds: windowCapture.bounds,
+            activeDisplayBounds: displayNoteAllowedDisplayBounds()
+        )
+
         return buildAccessibilitySnapshot(
             app: app,
             appElement: appElement,
@@ -257,7 +273,8 @@ enum SnapshotBuilder {
             textLimit: textLimit,
             treeLimits: treeLimits,
             lazyWebAccessibility: lazyWebAccessibility,
-            observation: observation
+            observation: observation,
+            displayNote: displayNote
         )
     }
 
@@ -272,7 +289,8 @@ enum SnapshotBuilder {
         textLimit: SnapshotTextLimit,
         treeLimits: AccessibilityTreeLimits,
         lazyWebAccessibility: Bool,
-        observation: SnapshotObservationOptions
+        observation: SnapshotObservationOptions,
+        displayNote: String?
     ) -> AppSnapshot {
         let windowBounds = windowCapture.bounds
         let screenshot = observation.includeScreenshot ? windowCapture.screenshotResult()
@@ -284,7 +302,7 @@ enum SnapshotBuilder {
                                screenshotData: screenshotData, mode: .accessibility, treeLines: [],
                                focusedSummary: nil, focusedElement: nil, selectedText: nil,
                                windowElement: rootElement, elements: [:], screenshotNote: screenshot.note,
-                               observation: observation)
+                               observation: observation, displayNote: displayNote)
         }
         let focusedElement = preferredFocusedElement(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
         let selectedText = focusedElement.flatMap { copySelectedText($0, textLimit: textLimit) }
@@ -352,7 +370,8 @@ enum SnapshotBuilder {
             windowElement: rootElement,
             elements: renderer.records,
             screenshotNote: screenshot.note,
-            observation: observation
+            observation: observation,
+            displayNote: displayNote
         )
     }
 

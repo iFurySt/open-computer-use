@@ -253,6 +253,8 @@ turn/connection cleanup remain available when disabled.
 
 `agent_display` moves the window's frame onto a virtual display the user never sees (macOS only): the app renders it, exposes its full tree and accepts `sky_click` / `sky_key`, while the user's Space, focus and pointer stay untouched. The window is gone from the user's desktop until `restore`, the assistant turn ends, the MCP/REPL connection closes, or the runtime exits, so treat it as a deliberate, temporary step. `restore` restores every window parked by the runtime for that app. Keep park/action/restore calls in one `js`, REPL, MCP, or `call --calls` session; a one-shot CLI connection restores its background state when it closes. `sky_click` and `sky_key` accept covered and other-Space windows.
 
+If the target window sits outside every active display (for example at the old coordinates of a disconnected monitor), `get_app_state` inserts a `--- display note ---` block after the `Window:` line with the window frame. Off-display windows often expose only their window chrome in the accessibility tree, so move the window back onto a display or use `window_placement=agent_display` before trusting element frames. A window parked on the agent's virtual display is not treated as off-display, so the note does not reappear while it is parked there.
+
 `sky_key` types into whatever element the target window has focused, so click or AX-focus the field first. It fails closed for hidden apps (`cmd+h`), stale window ids, and missing private symbols; Windows and Linux return an unsupported error.
 
 ## Drag Delivery
