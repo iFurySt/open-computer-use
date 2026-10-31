@@ -9,7 +9,9 @@
 - `scripts/build-cursor-motion-dmg.sh`：本地构建 `Cursor Motion.app` 并封装 `dist/release/cursor-motion/CursorMotion-<version>.dmg`，支持 `native` / `arm64` / `x86_64` / `universal`。
 - `scripts/build-open-computer-use-linux.sh`：本地构建实验性 Linux `open-computer-use` binary，支持 `arm64` / `amd64`；release package 会把这两个产物内置进既有 npm 包的 `dist/linux/`。
 - `scripts/build-open-computer-use-windows.sh`：本地构建实验性 Windows `open-computer-use.exe`，支持 `arm64` / `amd64`；release package 会把这两个产物内置进既有 npm 包的 `dist/windows/`。
-- `.github/workflows/release.yml`：支持 push semver tag 自动发布，也支持手动触发；tag push 时会并行构建 npm/direct-download artifacts 与 `Cursor Motion` DMG，只有两个构建 job 都成功后，单一汇总 job 才会创建或更新 GitHub Release 并上传全套 assets。`Open Computer Use` 的 npm 与 app 正式制品需要 `OPEN_COMPUTER_USE_CODESIGN_*` secrets；workflow 导入 `Developer ID Application` 证书，以同一 identity 对主 App 与四个 Locked Use 组件签名并检查，缺少身份时构建失败。若同时配置 `APPLE_NOTARY_*` secrets，direct-download app zip 会在 notarization 与 staple 后重新封装；`Cursor Motion` DMG 也会走 notarization 和 staple。
+- `.github/workflows/release.yml`：支持 push semver tag 自动发布，也支持手动触发；tag push 时会并行构建 npm/direct-download artifacts 与 `Cursor Motion` DMG，只有两个构建 job 都成功后，单一汇总 job 才会创建或更新 GitHub Release 并上传全套 assets。`Open Computer Use` 的 npm 与 app 正式制品需要 `OPEN_COMPUTER_USE_CODESIGN_*` secrets；workflow 导入 `Developer ID Application` 证书，以同一 identity 对主 App 与四个 Locked Use 组件签名并检查，缺少身份时构建失败。若同时配置 `APPLE_NOTARY_*` secrets，先通过 `scripts/notarize-open-computer-use.sh` 公证 Locked Use 安装组件、为授权 bundle 和 Guardian 附票据，再重签、公证并 staple 主 App。最后用 `scripts/release-package.sh --skip-build` 刷新 npm staging、tarballs 和直接下载制品，避免分发公证前的副本；`Cursor Motion` DMG 也会走 notarization 和 staple。
+
+公证流程的离线编排回归：`python3 scripts/tests/locked-use-notarization.test.py`。票据经实际 npm 打包的回归：`python3 scripts/tests/locked-use-release-packaging.test.py`。这两项已接入 `scripts/ci.sh`，也由 `.github/workflows/locked-use-distribution.yml` 在相关 PR 和 main 变更上独立运行；不会向 Apple 提交软件或修改本机认证配置。签名、资源封印和真实认证加载仍须另外验证，见 [Locked Use 冷加载诊断](references/macos-locked-use-cold-auth-latency.md)。
 
 ## 设计原则
 

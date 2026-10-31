@@ -116,10 +116,9 @@ jobs:
           OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE: "1"
         run: npm run npm:pack
 
-      - name: Notarize direct-download Open Computer Use app
+      - name: Notarize installable payload and Open Computer Use app
         if: ${{ github.event_name == 'push' }}
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
           APPLE_NOTARY_API_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_API_KEY_P8_BASE64 }}
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
@@ -134,21 +133,18 @@ jobs:
             exit 0
           fi
 
-          version="${RELEASE_TAG#v}"
-          app_archive="dist/release/github/Open-Computer-Use-${version}-macOS-universal.app.zip"
           api_key_path="${RUNNER_TEMP}/AuthKey_${APPLE_NOTARY_KEY_ID}.p8"
 
           CERT_PATH="${api_key_path}" python3 -c 'import base64, os, pathlib; pathlib.Path(os.environ["CERT_PATH"]).write_bytes(base64.b64decode(os.environ["APPLE_NOTARY_API_KEY_P8_BASE64"]))'
 
-          xcrun notarytool submit "${app_archive}" \
+          bash ./scripts/notarize-open-computer-use.sh "dist/Open Computer Use.app" \
             --key "${api_key_path}" \
             --key-id "${APPLE_NOTARY_KEY_ID}" \
             --issuer "${APPLE_NOTARY_ISSUER_ID}" \
-            --team-id "${APPLE_DEVELOPER_TEAM_ID}" \
-            --wait
+            --team-id "${APPLE_DEVELOPER_TEAM_ID}"
 
-          xcrun stapler staple "dist/Open Computer Use.app"
-          ./scripts/package-github-release-assets.sh --version "${version}"
+          # Restage and repack npm too: its previous copy predates notarization.
+          ./scripts/release-package.sh --skip-build
 
       - name: Upload npm release artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a

@@ -8,13 +8,18 @@ release_dir="${dist_dir}/release"
 staging_dir="${release_dir}/npm-staging"
 tarball_dir="${release_dir}/npm"
 
+build_args=(--configuration release --arch universal --out-dir "${staging_dir}")
+if [[ $# -eq 1 && "$1" == --skip-build ]]; then
+  build_args+=(--skip-build)
+elif [[ $# -ne 0 ]]; then
+  echo 'Usage: scripts/release-package.sh [--skip-build]' >&2
+  exit 64
+fi
+
 rm -rf "${release_dir}"
 mkdir -p "${tarball_dir}"
 
-node "${repo_root}/scripts/npm/build-packages.mjs" \
-  --configuration release \
-  --arch universal \
-  --out-dir "${staging_dir}"
+node "${repo_root}/scripts/npm/build-packages.mjs" "${build_args[@]}"
 
 "${repo_root}/scripts/package-github-release-assets.sh"
 
