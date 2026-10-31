@@ -196,7 +196,7 @@ fi
 if [[ ! -f "${repl_source_root}/open-computer-use-repl.mjs" ]]; then
   repl_source_root="${plugin_source_root}/scripts"
 fi
-for repl_file in open-computer-use-repl.mjs open-computer-use-kernel.mjs ocu-config.mjs; do
+for repl_file in open-computer-use-repl.mjs open-computer-use-kernel.mjs ocu-config.mjs ax-state-diff.mjs; do
   if [[ ! -f "${repl_source_root}/${repl_file}" ]]; then
     echo "Missing JS REPL runtime at ${repl_source_root}/${repl_file}" >&2
     exit 1
@@ -222,6 +222,7 @@ node "${config_helper}" copy-into-dir "${plugin_install_root}" "${payload_path}"
 cp "${repl_source_root}/open-computer-use-repl.mjs" "${plugin_install_root}/scripts/open-computer-use-repl.mjs"
 cp "${repl_source_root}/open-computer-use-kernel.mjs" "${plugin_install_root}/scripts/open-computer-use-kernel.mjs"
 cp "${repl_source_root}/ocu-config.mjs" "${plugin_install_root}/scripts/ocu-config.mjs"
+cp "${repl_source_root}/ax-state-diff.mjs" "${plugin_install_root}/scripts/ax-state-diff.mjs"
 
 node "${config_helper}" codex-plugin-config "${config_path}" "${repo_root}" "${marketplace_name}" "${plugin_name}"
 

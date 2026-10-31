@@ -10,6 +10,7 @@ import process from "node:process";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 import { inspectConfig } from "./ocu-config.mjs";
+import { AXStateDiff } from "./ax-state-diff.mjs";
 
 const require = createRequire(import.meta.url);
 // The js call whose code is running. Timers and promises carry it, so a callback
@@ -39,10 +40,11 @@ The runtime exposes an asynchronous app-bound API:
 - \`await cua.listApps({ emit? })\`: list current apps.
 - \`await cua.getApp(nameOrBundleID, { initialState? })\`: bind an app; initialState defaults to true. Use false for a lightweight binding before query.
 - \`await app.query({ text?, role?, exact?, limit?, maxNodes?, windowId? })\`: macOS-only AX lookup; returns matches and truncation metadata, with indexes usable in this native session.
-- \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement? })\`
+- \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement?, diff?, disableDiffing? })\`
+- \`app.getAXState({ diff: true })\` opts into JSON ax-full / ax-diff packets. Full text remains the default; disableDiffing: true forces full text. Diffs carry revisions, added/changed/removed element lines and layout changes. After a missed packet, call getAXState once without diff; the next diff call starts again with ax-full.
 - \`await app.getScreenshot({ emit? })\`
 - \`await app.getAXStateAndScreenshot(options?)\`
-- Optional observation on macOS, Windows and Linux: \`app.getScreenshot({ includeAX: false })\` skips AX/focus/selection and invalidates prior element indexes; refresh AX before element actions. \`app.getAXState({ includeScreenshot: false })\` skips capture; screenshot-coordinate actions require a fresh screenshot. Omitted options retain full native observation.
+- Optional observation on macOS, Windows and Linux: \`app.getScreenshot({ includeAX: false })\` skips AX/focus/selection and invalidates prior element indexes; refresh AX before element actions. \`app.getAXState({ includeScreenshot: false })\` skips capture; screenshot-coordinate actions require a fresh screenshot. getAXState defaults to full-text AX without capture (includeScreenshot: false, textLimit: "max"). Use getAXStateAndScreenshot or includeScreenshot: true before screenshot-coordinate actions. Native get_app_state and the other getters retain full observation.
 - \`await app.click(elementIndexOrPoint, { mouseButton?, clickCount?, clickMethod? })\`
 - \`await app.scroll(elementIndex, direction, pages?)\`
 - \`await app.drag([fromX, fromY], [toX, toY])\`
@@ -326,6 +328,7 @@ export function createCuaApi(native, activeOutput) {
     docsEmitted = true;
   }
   function appBinding(app) {
+    const diff = new AXStateDiff();
     return Object.freeze({
       async query(options = {}) {
         if (!isPlainObject(options)) throw new Error("app.query expects an options object");
@@ -347,12 +350,34 @@ export function createCuaApi(native, activeOutput) {
         return response;
       },
       async getAXState(options = {}) {
-        const result = await call("get_app_state", { app, ...optionsToSnapshotArgs(options) });
-        const text = toolResultText(result);
-        await emitText(text, options);
-        return text;
+        if (!isPlainObject(options)) throw new Error("getAXState expects an options object");
+        for (const option of ["diff", "disableDiffing"]) {
+          if (options[option] !== undefined && typeof options[option] !== "boolean") throw new Error(`${option} must be a boolean`);
+        }
+        try {
+          const args = { app, ...optionsToSnapshotArgs(options) };
+          // This getter never returns an image. Skip the unused capture and return full
+          // text unless the caller asks otherwise; the native combined tool is unchanged.
+          if (args.include_ax !== false) {
+            if (args.include_screenshot === undefined) args.include_screenshot = false;
+            if (args.text_limit === undefined) args.text_limit = "max";
+          }
+          const result = await call("get_app_state", args);
+          const text = toolResultText(args.include_screenshot === false ? {
+            ...result, content: result.content?.filter(item => !(item.type === "text" && item.text === "Screenshot omitted by include_screenshot=false")),
+          } : result);
+          let output = text;
+          if (options.diff === true && options.disableDiffing !== true) output = diff.observe(text, JSON.stringify(args));
+          else diff.reset();
+          await emitText(output, options);
+          return output;
+        } catch (error) {
+          diff.reset();
+          throw error;
+        }
       },
       async getScreenshot(options = {}) {
+        diff.reset();
         const result = await call("get_app_state", { app, ...optionsToSnapshotArgs(options), text_limit: 1 });
         const image = toolResultImages(result)[0];
         if (!image) throw new Error(`Screenshot unavailable for ${app}`);
@@ -361,6 +386,7 @@ export function createCuaApi(native, activeOutput) {
         return bytes;
       },
       async getAXStateAndScreenshot(options = {}) {
+        diff.reset();
         const result = await call("get_app_state", { app, ...optionsToSnapshotArgs(options) });
         const state = toolResultText(result);
         const images = toolResultImages(result);
