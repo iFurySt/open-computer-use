@@ -38,5 +38,8 @@ content differs slightly): with one tab per level the chat-app window was 44,801
 characters against 46,029 before this change (about -3%), and the browser window
 11,345 against 12,606 (about -10%). `tab4` gave 37,712 and 10,475 (about -18%).
 
-Validation: see the pull request for the exact `swift build`, focused test and full
-test counts. `make check-docs` passed.
+Validation: `swift build` passed. `AXSemanticRenderingTests` (10) and
+`AXSnapshotReadCacheTests` (4) passed. The full Swift suite, run in a logged-in
+desktop session, executed 413 tests with 8 skipped and 0 failures. All 48 Node tests
+in `scripts/node-repl/` passed. `make check-docs` passed. `scripts/check-repo-hygiene.sh`
+reports files that are already absent on the base branch.
