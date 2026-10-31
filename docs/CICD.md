@@ -17,6 +17,8 @@ workflow 显示名为 `locked-use-distribution-tests`，只是测试入口，不
 
 测试使用微型预构建文件，运行仓库真实 staging / 归档脚本，仅替代 macOS 的 `codesign`、`lipo` 和 `ditto`，检查三个包中的主 App / 授权插件 / Guardian 票据字节、旧 staging 清理及制品 manifest；缺失预构建 runtime 时必须停止。不会向 Apple 提交软件或修改本机认证配置。签名、资源封印和真实认证加载仍须另外验证，见 [Locked Use 冷加载诊断](references/macos-locked-use-cold-auth-latency.md)。
 
+`OPEN_COMPUTER_USE_APP_VARIANT=dev` 仅供直接构建优化后的开发身份 App。release / npm 打包和插件安装会在构建、清理或复制前拒绝此变量，需先 unset；避免 Dev 构建保留了旧正式包后误分发旧包。隔离回归：`node --test scripts/tests/app-variant.test.mjs`，已接入分发 workflow。
+
 ## 设计原则
 
 这套默认流水线的目标，是在项目真正成形前先把交付链路搭起来，而不是假装已经知道未来项目该怎么 build 和 deploy。
