@@ -43,6 +43,7 @@ export function runtimePaths({ packageRoot, platformPackages, platform, arch }) 
     nativePath: target ? path.join(packageRoot, ...target.executablePath) : undefined,
     adapterPath: path.join(packageRoot, "scripts", "node-repl", "open-computer-use-repl.mjs"),
     kernelPath: path.join(packageRoot, "scripts", "node-repl", "open-computer-use-kernel.mjs"),
+    adapterDependencyPaths: ["ocu-config.mjs", "ax-state-diff.mjs"].map(name => path.join(packageRoot, "scripts", "node-repl", name)),
   };
 }
 
@@ -64,7 +65,8 @@ export function inspectCapabilities({
     source: "launcher",
     bootstrapNote: "The npm launcher itself requires Node.js 18 or newer; a shell with no node on PATH cannot start this command.",
   };
-  const adapter = { available: existsSync(paths.adapterPath), path: paths.adapterPath };
+  const missingDependencies = paths.adapterDependencyPaths.filter(file => !existsSync(file));
+  const adapter = { available: existsSync(paths.adapterPath) && missingDependencies.length === 0, path: paths.adapterPath, missingDependencies };
   const kernel = { available: existsSync(paths.kernelPath), path: paths.kernelPath };
   const native = {
     available: Boolean(paths.nativePath && canExecute(paths.nativePath, platform)),
@@ -74,7 +76,8 @@ export function inspectCapabilities({
   };
   const unavailableReasons = [];
   if (!node.available) unavailableReasons.push(`Node.js >= ${node.minimumVersion} is unavailable`);
-  if (!adapter.available) unavailableReasons.push(`REPL adapter is missing at ${adapter.path}`);
+  if (!existsSync(adapter.path)) unavailableReasons.push(`REPL adapter is missing at ${adapter.path}`);
+  for (const dependency of missingDependencies) unavailableReasons.push(`REPL adapter dependency is missing at ${dependency}`);
   if (!kernel.available) unavailableReasons.push(`JavaScript kernel is missing at ${kernel.path}`);
   if (!native.supported) unavailableReasons.push(`platform ${paths.platformKey} is unsupported`);
   else if (!native.available) unavailableReasons.push(`native runtime is missing or not executable at ${native.path}`);

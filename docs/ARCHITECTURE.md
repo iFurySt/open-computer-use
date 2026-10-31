@@ -63,6 +63,7 @@
 
 - `ComputerUseService` 负责把 Computer Use tool 请求映射到本地能力，`ComputerUseToolDispatcher` 则把 native tool 的参数解析与 service 方法分发收敛成 MCP server 和 `open-computer-use call` 共用的一层。
 - Codex plugin 的 `.mcp.json` 默认不再把 native tools 直接暴露给模型，而是启动 `scripts/node-repl/open-computer-use-repl.mjs`。adapter 以 child MCP client 连接同一个 native runtime，并只对外列出 `js` / `js_reset`；JavaScript 通过异步 app-bound API（`cua.getApp(...)`、`app.click(...)`、`app.getAXState()` 等）调用 native tools。
+- JS `app.getAXState({ diff: true })` 可选返回带 revision 的 JSON 增量（`ax-full` / `ax-diff`）；默认仍返回完整文本，`disableDiffing: true` 或不带 `diff` 的调用会重置基线。增量保留元素编号、行顺序、缩进、焦点、选区和提示，`scripts/node-repl/ax-state-diff.mjs` 的 `applyAXStateDiff` 可逐字节还原完整文本并拒绝 revision 缺口；窗口 header 或观察参数变化、native 错误、重复编号和截图读取都会回到完整快照。native AX 仍完整读取，增量只减少返回给模型的文本。见 [JS REPL](references/js-repl.md)。
 - REPL 使用 Node.js 自带的 evaluator，因此保留 top-level `await` 和跨调用 lexical bindings；真正执行代码的 kernel 位于 Worker 中，超时会终止 Worker 并重建干净 session，避免 `while (true)` 挂死 MCP transport。
 - npm launcher 还直接提供 `ocu js` 和 `ocu repl`：前者为一次性 Worker/native MCP session，后者在当前终端内保留同一个 session 和 binding；两者退出后都会关闭 Worker 与 native MCP child。`ocu capabilities [--json]` 在不启动 native MCP 的情况下报告 Node、adapter、kernel 和当前平台 native artifact 是否齐全。help 始终显示 code-first 命令并标记 availability，不按环境动态隐藏接口。
 - npm bin 当前本身通过 `#!/usr/bin/env node` 启动，因此完全没有 Node 的 shell 无法进入 help/capability 检测；launcher 启动后会复用 `process.execPath`，不会再次从 PATH 解析 Node。若未来要求零 Node 前置，应把最外层入口替换成 native bootstrap 或随包分发 Node。

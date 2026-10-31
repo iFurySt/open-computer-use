@@ -29,7 +29,7 @@ function makePackage() {
   const nativePath = path.join(packageRoot, "dist", "fake-native");
   mkdirSync(scripts, { recursive: true });
   mkdirSync(path.dirname(nativePath), { recursive: true });
-  for (const name of ["open-computer-use-repl.mjs", "open-computer-use-kernel.mjs", "ocu-config.mjs"]) {
+  for (const name of ["open-computer-use-repl.mjs", "open-computer-use-kernel.mjs", "ocu-config.mjs", "ax-state-diff.mjs"]) {
     cpSync(path.join(HERE, name), path.join(scripts, name));
   }
   writeFileSync(nativePath, `#!${process.execPath}
@@ -190,4 +190,15 @@ test("ocu repl preserves bindings and reset discards them", async t => {
   });
   assert.equal(code, 0, errorOutput.value());
   assert.equal(output.value(), "40\n42\n42\nOpen Computer Use JavaScript session reset\nundefined\n");
+});
+
+test("capabilities fail closed when an adapter dependency is missing", () => {
+  const fixture = makePackage();
+  try {
+    rmSync(path.join(fixture.packageRoot, "scripts", "node-repl", "ax-state-diff.mjs"));
+    const report = inspectCapabilities({ packageRoot: fixture.packageRoot, platformPackages: fixture.platformPackages });
+    assert.equal(report.capabilities.js.available, false);
+    assert.equal(report.capabilities.repl.available, false);
+    assert.match(report.capabilities.js.unavailableReasons.join("\n"), /adapter dependency.*ax-state-diff/);
+  } finally { fixture.cleanup(); }
 });
