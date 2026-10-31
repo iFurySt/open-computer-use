@@ -36,5 +36,8 @@ from a 2393 ms baseline median (3116 ms in a first run) to 500 ms, against 479 m
 for the reference engine; a browser window went from 452 ms to 104 ms, against
 121 ms. Timings depend on the machine and window content.
 
-Validation: see the pull request for the exact `swift build`, focused test and full
-test counts. `make check-docs` passed.
+Validation: `swift build` passed. `AXSnapshotReadCacheTests` (4) and
+`AXSemanticRenderingTests` (5) passed. The full Swift suite, run in a logged-in
+desktop session, executed 408 tests with 8 skipped and 0 failures. `make check-docs`
+passed. `scripts/check-repo-hygiene.sh` reports files that are already absent on the
+base branch.
