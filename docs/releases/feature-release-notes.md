@@ -4,6 +4,8 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-10-31 | macOS AX 文本格式 | 完整 AX tree 文本更短，同时保留全部节点、名称、值和动作编号；默认每层一个 tab，模型在测试中读取层级最准确。 | 实际 AX tree 使用 `group`、`w` / `w:str` / `w:bool` / `w:float` 和 `=` 拼写，并在 App/Window 行后加 legend；`OPEN_COMPUTER_USE_AX_INDENTATION=tab4` 可改用更省字符的四列 tab stop 缩进；fixture 合成快照和 native tool descriptions 不变。 |
+| 2026-10-31 | macOS AX 读取速度 | 大型 Electron / 浏览器窗口的完整 AX tree 读取明显变快：本地测试中聊天应用窗口约从 2.4 s 降到 0.5 s，浏览器窗口约从 452 ms 降到 104 ms。 | 每次 tree walk 内按元素批量读取常用 AX 属性并仅在该次读取内缓存，transient 错误不缓存；已有名称、值或摘要的紧凑 action target 不再重复输出 `Frame`，element record 仍保留几何；`OPEN_COMPUTER_USE_DISABLE_AX_READ_CACHE=1` 可关闭缓存做对比。 |
 | 2026-10-30 | 虚拟显示器显式启用 | 默认不向模型提供虚拟显示器参数，避免意外改变显示器布局。 | 新增 `virtualDisplay.enabled=false` 与环境覆盖；关闭时隐藏 schema/JS/遮挡提示，在运行入口和底层阻止创建，保留恢复与结束清理。 |
 | 2026-10-29 | macOS 权限引导定位 | 已有辅助功能权限时，拖拽引导紧贴目标权限列表，更容易看清拖放方向；首次未授权时继续跟随设置窗口底边。 | 优先使用上方列表的增删控件容器定位，读不到时自动退回窗口锚点；后台有界读取 AX，跳过应用行。 |
 | 2026-10-29 | macOS 权限引导 | 切换回系统设置后，权限引导浮窗的返回按钮与拖拽卡片完整显示。 | 修复入场动画中断后保留中间尺寸与透明度的问题，并固定动画结束尺寸。 |

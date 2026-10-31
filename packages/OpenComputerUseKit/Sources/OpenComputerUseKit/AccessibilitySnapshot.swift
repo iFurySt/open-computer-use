@@ -149,6 +149,7 @@ public struct AppSnapshot {
     let elements: [Int: ElementRecord]
     var screenshotNote: String? = nil
     var observation: SnapshotObservationOptions = .defaults
+    var treeIndentationStyle: AXTreeIndentationStyle = .current
 
     public var renderedText: String {
         renderedText(style: .fullState)
@@ -161,6 +162,7 @@ public struct AppSnapshot {
 
         lines.append("App=\(appReference) (pid \(app.pid))")
         lines.append("Window: \(quoted(displayTitle)), App: \(app.name).")
+        if observation.includeAX && mode == .accessibility { lines.append(AXTreeTextFormatting.legend(for: treeIndentationStyle)) }
         lines.append(contentsOf: treeLines)
         if !observation.includeAX {
             lines.append(SnapshotObservationOptions.accessibilityOmittedNote)
@@ -296,7 +298,7 @@ enum SnapshotBuilder {
         )
 
         var renderer = TreeRenderer(context: context)
-        TimingLog.measure("snapshot.tree_walk") { renderer.render(rootElement) }
+        TimingLog.measure("snapshot.tree_walk") { AXSnapshotReadCache.withSnapshot { renderer.render(rootElement) } }
 
         // Pin the window's visible state (WindowServer occlusion notifications
         // off) so covering it or moving it to another Space later does not hide
@@ -312,7 +314,7 @@ enum SnapshotBuilder {
                 for _ in 0..<webAreaRewalkAttempts {
                     Thread.sleep(forTimeInterval: webAreaRewalkInterval)
                     renderer = TreeRenderer(context: context)
-                    renderer.render(rootElement)
+                    AXSnapshotReadCache.withSnapshot { renderer.render(rootElement) }
                     if renderer.hasWebArea {
                         break
                     }
@@ -329,7 +331,7 @@ enum SnapshotBuilder {
         if let menuBar = copyElement(appElement, attribute: kAXMenuBarAttribute),
            !CFEqual(menuBar, rootElement)
         {
-            renderer.render(menuBar)
+            AXSnapshotReadCache.withSnapshot { renderer.render(menuBar) }
         }
 
         var treeLines = renderer.lines
@@ -831,6 +833,18 @@ private struct RenderContext {
     let focusedElement: AXUIElement?
     let textLimit: SnapshotTextLimit
     let treeLimits: AccessibilityTreeLimits
+    var compactText = true
+    var indentationStyle: AXTreeIndentationStyle = .current
+}
+
+// Runs the real renderer against a scoped, injected AX provider. The returned
+// records let semantic fixtures verify the actual numeric action lookup targets.
+func renderAXSemanticFixture(root: AXUIElement, focused: AXUIElement? = nil,
+                             compactText: Bool = false, indentationStyle: AXTreeIndentationStyle = .tab4) -> (lines: [String], records: [Int: ElementRecord]) {
+    var renderer = TreeRenderer(context: RenderContext(windowBounds: .zero, focusedElement: focused,
+        textLimit: .max, treeLimits: .defaults, compactText: compactText, indentationStyle: indentationStyle))
+    renderer.render(root)
+    return (renderer.lines, renderer.records)
 }
 
 private struct TreeRenderer {
@@ -963,7 +977,8 @@ private struct TreeRenderer {
 
         nextIndex += 1
 
-        let traitsSegment = traits.isEmpty ? "" : " (\(traits.joined(separator: ", ")))"
+        let displayedTraits = AXTreeTextFormatting.traitTokens(traits, compact: context.compactText)
+        let traitsSegment = displayedTraits.isEmpty ? "" : " (\(displayedTraits.joined(separator: ", ")))"
         let titleSegment = displayTitle.map { " \($0)" } ?? ""
         let rowSummary = inlineRowSummary ?? (rendersSummaryAsChildren ? nil : genericTextSummary)
         let rowSummarySegment = rowSummary.map { " \($0)" } ?? ""
@@ -979,7 +994,8 @@ private struct TreeRenderer {
         }()
         let urlSegment = formattedURLSegment(for: root, title: displayTitle, label: label, textLimit: context.textLimit)
         let identifierSegment = displayIdentifierSegment(for: root, role: role, identifier: axIdentifier, title: displayTitle)
-        let rawValueSegment = formattedValueSegment(for: root, roleText: roleText, title: displayTitle, value: value)
+        let rawValueSegment = AXTreeTextFormatting.valueSegment(
+            formattedValueSegment(for: root, roleText: roleText, title: displayTitle, value: value), compact: context.compactText)
         let valueSegment = formattedValueSegmentWithSeparator(
             rawValueSegment,
             precedingSegments: [labelSegment, helpSegment, urlSegment, identifierSegment]
@@ -991,7 +1007,9 @@ private struct TreeRenderer {
             value: value,
             precedingSegments: [labelSegment, helpSegment, urlSegment, identifierSegment, valueSegment]
         )
-        let frameSegment = rendersCompactGenericActionTarget
+        let frameSegment = rendersCompactGenericActionTarget && shouldRenderActionTargetFrame(
+            title: displayTitle, label: label, value: value, summary: rowSummary, placeholder: placeholder
+        )
             ? localFrame.map { " Frame: \($0.renderedLocalFrame)" } ?? ""
             : ""
         let actionsPrefix = shouldCommaSeparateActions(
@@ -1001,11 +1019,11 @@ private struct TreeRenderer {
             segments: [labelSegment, helpSegment, urlSegment, identifierSegment, valueSegment, placeholderSegment]
         ) ? ", Secondary Actions: " : " Secondary Actions: "
         let actionsSegment = prettyActions.isEmpty ? "" : "\(actionsPrefix)\(prettyActions.joined(separator: ", "))"
-        let renderedRoleText = rendersCompactGenericActionTarget ? "button" : roleText
+        let renderedRoleText = rendersCompactGenericActionTarget ? "button" : AXTreeTextFormatting.role(roleText, compact: context.compactText)
         let linePrefix = renderedRoleText.isEmpty ? "\(index)" : "\(index) \(renderedRoleText)"
 
         let lineBody = "\(linePrefix)\(traitsSegment)\(titleSegment)\(rowSummarySegment)\(labelSegment)\(helpSegment)\(urlSegment)\(identifierSegment)\(valueSegment)\(placeholderSegment)\(frameSegment)"
-        lines.append("\(String(repeating: "\t", count: depth))\(lineBody)\(actionsSegment)")
+        lines.append("\(AXTreeTextFormatting.indentation(depth, compact: context.compactText, style: context.indentationStyle))\(lineBody)\(actionsSegment)")
 
         let record = ElementRecord(
             index: index,
@@ -1057,7 +1075,7 @@ private struct TreeRenderer {
 
         let index = nextIndex
         nextIndex += 1
-        lines.append("\(String(repeating: "\t", count: depth))\(index) text \(text)")
+        lines.append("\(AXTreeTextFormatting.indentation(depth, compact: context.compactText, style: context.indentationStyle))\(index) text \(text)")
 
         records[index] = ElementRecord(
             index: index,
@@ -1254,26 +1272,17 @@ private func valueTypeTrait(of element: AXUIElement) -> String? {
 }
 
 private func copyElement(_ element: AXUIElement, attribute: String) -> AXUIElement? {
-    var value: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-    guard error == .success, let value else {
-        return nil
-    }
-
+    guard let value = attributeValue(of: element, attribute: attribute),
+          CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
     return (value as! AXUIElement)
 }
 
 private func copyArray(_ element: AXUIElement, attribute: String) -> [AXUIElement]? {
-    var value: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-    guard error == .success, let value else {
-        return nil
-    }
-
-    return value as? [AXUIElement]
+    attributeValue(of: element, attribute: attribute) as? [AXUIElement]
 }
 
 private func copyActions(_ element: AXUIElement) -> [String]? {
+    if let cache = AXSnapshotReadCache.current { return cache.actionNames(element) }
     var actions: CFArray?
     let error = AXUIElementCopyActionNames(element, &actions)
     guard error == .success else {
@@ -1284,6 +1293,7 @@ private func copyActions(_ element: AXUIElement) -> [String]? {
 }
 
 private func attributeValue(of element: AXUIElement, attribute: String) -> CFTypeRef? {
+    if let cache = AXSnapshotReadCache.current { return cache.value(element, attribute) }
     var value: CFTypeRef?
     let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
     guard error == .success else {
@@ -1333,6 +1343,7 @@ private func pid(of element: AXUIElement) -> pid_t {
 }
 
 private func isSettable(of element: AXUIElement, attribute: String) -> Bool {
+    if let cache = AXSnapshotReadCache.current { return cache.isSettable(element, attribute) }
     var settable = DarwinBoolean(false)
     let error = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
     return error == .success && settable.boolValue
@@ -1624,18 +1635,10 @@ private func displayIdentifierSegment(for element: AXUIElement, role: String, id
 }
 
 private func resolveLocalFrame(of element: AXUIElement, windowBounds: CGRect?) -> CGRect? {
-    var positionValue: CFTypeRef?
-    var sizeValue: CFTypeRef?
-    let positionError = AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue)
-    let sizeError = AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue)
-    guard
-        positionError == .success,
-        sizeError == .success,
-        let positionValue,
-        let sizeValue
-    else {
-        return nil
-    }
+    guard let positionValue = attributeValue(of: element, attribute: kAXPositionAttribute),
+          let sizeValue = attributeValue(of: element, attribute: kAXSizeAttribute),
+          CFGetTypeID(positionValue) == AXValueGetTypeID(),
+          CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
 
     let positionAXValue = positionValue as! AXValue
     let sizeAXValue = sizeValue as! AXValue
@@ -1725,6 +1728,12 @@ func hasPrimaryClickAction(_ actions: [String]) -> Bool {
     return actions.contains { action in
         primaryActions.contains { $0.caseInsensitiveCompare(action) == .orderedSame }
     }
+}
+
+/// Named targets already have an element index. Keep geometry for anonymous
+/// targets, and keep every frame in ElementRecord for action lookup.
+func shouldRenderActionTargetFrame(title: String?, label: String?, value: String?, summary: String?, placeholder: String?) -> Bool {
+    [title, label, value, summary, placeholder].allSatisfy { $0?.isEmpty != false }
 }
 
 func shouldRenderCompactGenericActionTarget(
