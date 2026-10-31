@@ -13,6 +13,9 @@
 
 ## 当前目录
 
+- `macos-locked-use-cold-auth-latency.md`
+  - 手动解锁首次加载延迟、不锁屏复现工具、公证票据分发与外层签名修正，以及安装后待验证边界。
+
 - `macos-locked-use-auth-transaction-timing-review.md`
   - 认证时序、build 1001365 空字符串 / 合成点击证据、诊断采集边界和隔离测试要求。
 

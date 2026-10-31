@@ -296,7 +296,7 @@ enum SnapshotBuilder {
         )
 
         var renderer = TreeRenderer(context: context)
-        TimingLog.measure("snapshot.tree_walk") { renderer.render(rootElement) }
+        TimingLog.measure("snapshot.tree_walk") { AXSnapshotReadCache.withSnapshot { renderer.render(rootElement) } }
 
         // Pin the window's visible state (WindowServer occlusion notifications
         // off) so covering it or moving it to another Space later does not hide
@@ -312,7 +312,7 @@ enum SnapshotBuilder {
                 for _ in 0..<webAreaRewalkAttempts {
                     Thread.sleep(forTimeInterval: webAreaRewalkInterval)
                     renderer = TreeRenderer(context: context)
-                    renderer.render(rootElement)
+                    AXSnapshotReadCache.withSnapshot { renderer.render(rootElement) }
                     if renderer.hasWebArea {
                         break
                     }
@@ -329,7 +329,7 @@ enum SnapshotBuilder {
         if let menuBar = copyElement(appElement, attribute: kAXMenuBarAttribute),
            !CFEqual(menuBar, rootElement)
         {
-            renderer.render(menuBar)
+            AXSnapshotReadCache.withSnapshot { renderer.render(menuBar) }
         }
 
         var treeLines = renderer.lines
@@ -452,7 +452,7 @@ enum SnapshotBuilder {
     }
 
     private static func isUsableWindowElement(_ element: AXUIElement) -> Bool {
-        stringValue(of: element, attribute: kAXRoleAttribute) == kAXWindowRole as String
+        isSnapshotRootRole(stringValue(of: element, attribute: kAXRoleAttribute))
             && boolValue(of: element, attribute: kAXMinimizedAttribute) != true
     }
 
@@ -515,6 +515,14 @@ enum SnapshotBuilder {
             observation: observation
         )
     }
+}
+
+/// A sheet (an open/save panel, a "Leave site?" prompt) is the app's focused
+/// window while it blocks the window under it, so it roots the snapshot itself:
+/// the tree, the screenshot and the input target then all come from the sheet,
+/// also in apps whose own window tree leaves the sheet out (Firefox).
+func isSnapshotRootRole(_ role: String?) -> Bool {
+    role == kAXWindowRole as String || role == kAXSheetRole as String
 }
 
 /// Returns `true` when the app accepts `AXManualAccessibility`, i.e. it builds
@@ -831,6 +839,15 @@ private struct RenderContext {
     let focusedElement: AXUIElement?
     let textLimit: SnapshotTextLimit
     let treeLimits: AccessibilityTreeLimits
+}
+
+// Runs the real renderer against a scoped, injected AX provider. The returned
+// records let semantic fixtures verify the actual numeric action lookup targets.
+func renderAXSemanticFixture(root: AXUIElement, focused: AXUIElement? = nil) -> (lines: [String], records: [Int: ElementRecord]) {
+    var renderer = TreeRenderer(context: RenderContext(windowBounds: .zero, focusedElement: focused,
+        textLimit: .max, treeLimits: .defaults))
+    renderer.render(root)
+    return (renderer.lines, renderer.records)
 }
 
 private struct TreeRenderer {
@@ -1254,26 +1271,17 @@ private func valueTypeTrait(of element: AXUIElement) -> String? {
 }
 
 private func copyElement(_ element: AXUIElement, attribute: String) -> AXUIElement? {
-    var value: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-    guard error == .success, let value else {
-        return nil
-    }
-
+    guard let value = attributeValue(of: element, attribute: attribute),
+          CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
     return (value as! AXUIElement)
 }
 
 private func copyArray(_ element: AXUIElement, attribute: String) -> [AXUIElement]? {
-    var value: CFTypeRef?
-    let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
-    guard error == .success, let value else {
-        return nil
-    }
-
-    return value as? [AXUIElement]
+    attributeValue(of: element, attribute: attribute) as? [AXUIElement]
 }
 
 private func copyActions(_ element: AXUIElement) -> [String]? {
+    if let cache = AXSnapshotReadCache.current { return cache.actionNames(element) }
     var actions: CFArray?
     let error = AXUIElementCopyActionNames(element, &actions)
     guard error == .success else {
@@ -1284,6 +1292,7 @@ private func copyActions(_ element: AXUIElement) -> [String]? {
 }
 
 private func attributeValue(of element: AXUIElement, attribute: String) -> CFTypeRef? {
+    if let cache = AXSnapshotReadCache.current { return cache.value(element, attribute) }
     var value: CFTypeRef?
     let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
     guard error == .success else {
@@ -1333,6 +1342,7 @@ private func pid(of element: AXUIElement) -> pid_t {
 }
 
 private func isSettable(of element: AXUIElement, attribute: String) -> Bool {
+    if let cache = AXSnapshotReadCache.current { return cache.isSettable(element, attribute) }
     var settable = DarwinBoolean(false)
     let error = AXUIElementIsAttributeSettable(element, attribute as CFString, &settable)
     return error == .success && settable.boolValue
@@ -1624,18 +1634,10 @@ private func displayIdentifierSegment(for element: AXUIElement, role: String, id
 }
 
 private func resolveLocalFrame(of element: AXUIElement, windowBounds: CGRect?) -> CGRect? {
-    var positionValue: CFTypeRef?
-    var sizeValue: CFTypeRef?
-    let positionError = AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &positionValue)
-    let sizeError = AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &sizeValue)
-    guard
-        positionError == .success,
-        sizeError == .success,
-        let positionValue,
-        let sizeValue
-    else {
-        return nil
-    }
+    guard let positionValue = attributeValue(of: element, attribute: kAXPositionAttribute),
+          let sizeValue = attributeValue(of: element, attribute: kAXSizeAttribute),
+          CFGetTypeID(positionValue) == AXValueGetTypeID(),
+          CFGetTypeID(sizeValue) == AXValueGetTypeID() else { return nil }
 
     let positionAXValue = positionValue as! AXValue
     let sizeAXValue = sizeValue as! AXValue
@@ -2357,6 +2359,8 @@ extension SnapshotBuilder {
         _ = enableBestEffortAccessibilityModes(appElement)
         let systemWide = AXUIElementCreateSystemWide()
         AXUIElementSetMessagingTimeout(systemWide, 0.1)
+        // This object changes the process-wide timeout, not just one AX reference.
+        defer { AXUIElementSetMessagingTimeout(systemWide, 0) }
         let focusedApplication = copyElement(systemWide, attribute: kAXFocusedApplicationAttribute)
 
         let rootWindow: AXUIElement
@@ -2397,6 +2401,9 @@ extension SnapshotBuilder {
         }
         let freshContext = try resolveTargetWindow(for: context.app, windowID: context.windowID)
         AXUIElementSetMessagingTimeout(element, 0.1)
+        // Read budgets must not leak into the subsequent action: closing a sheet
+        // can take longer than 50–100 ms even though AXPress succeeds.
+        defer { AXUIElementSetMessagingTimeout(element, 0) }
         guard belongsToWindow(element, window: freshContext.windowElement),
               let bounds = freshContext.windowBounds else {
             throw ComputerUseError.stateUnavailable("Query target no longer belongs to its window; run query again")
@@ -2414,7 +2421,9 @@ extension SnapshotBuilder {
 
     private static func belongsToWindow(_ element: AXUIElement, window: AXUIElement) -> Bool {
         if CFEqual(element, window) { return true }
-        if let owner = copyElement(element, attribute: kAXWindowAttribute) { return CFEqual(owner, window) }
+        // AppKit sheet controls can report the enclosing document as AXWindow.
+        // A different AXWindow is not decisive: verify the bounded parent chain.
+        if let owner = copyElement(element, attribute: kAXWindowAttribute), CFEqual(owner, window) { return true }
         var current = element
         let deadline = ProcessInfo.processInfo.systemUptime + 1
         for _ in 0..<64 {
@@ -2428,9 +2437,10 @@ extension SnapshotBuilder {
     }
 
     private static func windowElement(for windowID: CGWindowID, appElement: AXUIElement) -> AXUIElement? {
-        copyArray(appElement, attribute: kAXWindowsAttribute)?.first {
-            SkyLightSPI.shared.windowID(for: $0) == windowID
-        }
+        let isWindow = { SkyLightSPI.shared.windowID(for: $0) == windowID }
+        // AXWindows leaves sheets out; a sheet is found as the focused window.
+        return copyArray(appElement, attribute: kAXWindowsAttribute)?.first(where: isWindow)
+            ?? copyElement(appElement, attribute: kAXFocusedWindowAttribute).flatMap { isWindow($0) ? $0 : nil }
     }
 
     // Attributes read for every visited node, in one batched IPC call. Position

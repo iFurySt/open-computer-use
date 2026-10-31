@@ -403,6 +403,48 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testProxiedCallFilePathsOnlyRewriteFileOptionValues() {
+        let cwd = "/tmp/ocu path/中文"
+        for arguments in [
+            ["snapshot", "--args-file", "--text-limit", "50"],
+            ["call", "list_apps", "--args", "--calls-file", "--sleep", "0"],
+            ["call", "list_apps", "--args-file"],
+            [],
+        ] {
+            XCTAssertEqual(resolvingOpenComputerUseCallFilePaths(arguments, currentDirectory: cwd), arguments)
+        }
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "args 中文.json"], currentDirectory: cwd),
+            ["call", "list_apps", "--args-file", cwd + "/args 中文.json"]
+        )
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "--calls-file"], currentDirectory: cwd),
+            ["call", "list_apps", "--args-file", cwd + "/--calls-file"]
+        )
+    }
+
+    func testProxiedCallFilePathsResolveAgainstCallerDirectory() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try #"[{"tool":"list_apps"}]"#.write(to: directory.appendingPathComponent("calls.json"), atomically: true, encoding: .utf8)
+
+        let arguments = resolvingOpenComputerUseCallFilePaths(
+            ["call", "--calls-file", "calls.json", "--sleep", "0"],
+            currentDirectory: directory.path
+        )
+        XCTAssertEqual(arguments, ["call", "--calls-file", directory.appendingPathComponent("calls.json").path, "--sleep", "0"])
+        guard case let .call(.sequence(_, callsFile, _)) = try parseOpenComputerUseCLI(arguments: arguments) else {
+            return XCTFail("expected a call sequence")
+        }
+        XCTAssertEqual(try readOpenComputerUseCallSequence(json: nil, file: callsFile).map(\.tool), ["list_apps"])
+
+        XCTAssertEqual(
+            resolvingOpenComputerUseCallFilePaths(["call", "list_apps", "--args-file", "/tmp/args.json"], currentDirectory: directory.path),
+            ["call", "list_apps", "--args-file", "/tmp/args.json"]
+        )
+    }
+
     func testAppNameResolutionPrefersRegularAppsAndDisplayNames() {
         let ranked = [
             AppDiscovery.ResolutionCandidate(name: "Safari", executableName: nil, isRegularApp: true),
@@ -909,6 +951,41 @@ final class OpenComputerUseKitTests: XCTestCase {
         )
     }
 
+    func testCoordinateClickDescendantMustContainThePoint() {
+        // A blank spot in a 560x372 window: the window is the best record, so its descendants get scanned.
+        let blankSpot = CGPoint(x: 400, y: 250)
+        let window = CGRect(x: 0, y: 0, width: 560, height: 372)
+        let closeButton = CGRect(x: 8, y: 8, width: 16, height: 16)
+        let zeroSizeButton = CGRect(x: 400, y: 250, width: 0, height: 0)
+        let buttonUnderPoint = CGRect(x: 380, y: 236, width: 80, height: 28)
+
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: closeButton, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: zeroSizeButton, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: blankSpot, targetFrame: window))
+        XCTAssertTrue(isDescendantClickCandidateAtTarget(candidateFrame: buttonUnderPoint, clickPoint: blankSpot, targetFrame: window))
+    }
+
+    func testDescendantClickRejectsDegenerateFrames() {
+        let target = CGRect(x: 0, y: 0, width: 500, height: 500)
+        for frame in [CGRect(x: 10, y: 10, width: 0, height: 20),
+                      CGRect(x: 10, y: 10, width: 20, height: 0), CGRect.infinite, CGRect.null] {
+            XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: frame, clickPoint: nil, targetFrame: target))
+            XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: frame, clickPoint: CGPoint(x: 10, y: 10), targetFrame: target))
+        }
+    }
+
+    func testElementClickDescendantMustOverlapTheElement() {
+        let card = CGRect(x: 40, y: 120, width: 300, height: 120)
+
+        XCTAssertTrue(
+            isDescendantClickCandidateAtTarget(candidateFrame: CGRect(x: 52, y: 128, width: 120, height: 20), clickPoint: nil, targetFrame: card)
+        )
+        XCTAssertFalse(
+            isDescendantClickCandidateAtTarget(candidateFrame: CGRect(x: 8, y: 8, width: 16, height: 16), clickPoint: nil, targetFrame: card)
+        )
+        XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: nil, targetFrame: card))
+    }
+
     func testContainingRowActionAcceptsTightClickableAncestor() {
         XCTAssertTrue(
             isLikelyContainingRowActionFrame(
@@ -993,6 +1070,39 @@ final class OpenComputerUseKitTests: XCTestCase {
 
     func testActivationOnlyClickFallbackKeepsWindowRaisePath() {
         XCTAssertTrue(canUseActivationOnlyClickFallback(role: kAXWindowRole as String))
+    }
+
+    func testActivationOnlyClickFallbackKeepsSheetRaisePath() {
+        XCTAssertTrue(canUseActivationOnlyClickFallback(role: kAXSheetRole as String))
+        XCTAssertFalse(canUseActivationOnlyClickFallback(role: kAXGroupRole as String))
+        XCTAssertFalse(canUseActivationOnlyClickFallback(role: nil))
+    }
+
+    func testSnapshotRootsAtFocusedSheet() {
+        XCTAssertTrue(isSnapshotRootRole(kAXWindowRole as String))
+        XCTAssertTrue(isSnapshotRootRole(kAXSheetRole as String))
+        XCTAssertFalse(isSnapshotRootRole(kAXGroupRole as String))
+        XCTAssertFalse(isSnapshotRootRole(nil))
+    }
+
+    func testTypeTextReplacementPreservesUTF16SelectionAndCaret() throws {
+        let replaced = try XCTUnwrap(typedTextReplacement(value: "中🙂文e\u{301}", selection: CFRange(location: 1, length: 2), text: "新🚀"))
+        XCTAssertEqual(replaced.value, "中新🚀文e\u{301}")
+        XCTAssertEqual(replaced.caret, 4)
+        XCTAssertEqual(typedTextReplacement(value: "e\u{301}", selection: CFRange(location: 1, length: 1), text: "X")?.value, "eX")
+        XCTAssertEqual(typedTextReplacement(value: "  ", selection: CFRange(location: 0, length: 0), text: "X")?.value, "X  ")
+        XCTAssertEqual(typedTextReplacement(value: "abc", selection: CFRange(location: 1, length: 0), text: "X")?.value, "aXbc")
+        XCTAssertEqual(typedTextReplacement(value: "abc", selection: CFRange(location: 3, length: 0), text: "X")?.caret, 4)
+        XCTAssertEqual(typedTextReplacement(value: "abc", selection: CFRange(location: 0, length: 3), text: "X")?.value, "X")
+        XCTAssertEqual(typedTextReplacement(value: "", selection: CFRange(location: 0, length: 0), text: "X")?.value, "X")
+    }
+
+    func testTypeTextReplacementRejectsInvalidSelection() {
+        for range in [CFRange(location: -1, length: 0), CFRange(location: 4, length: 0),
+                      CFRange(location: 2, length: 2), CFRange(location: 0, length: -1),
+                      CFRange(location: 1, length: Int.max), CFRange(location: 1, length: 1)] {
+            XCTAssertNil(typedTextReplacement(value: "🙂x", selection: range, text: "X"))
+        }
     }
 
     func testKeyboardTextFallbackRejectsPlainWebArea() {

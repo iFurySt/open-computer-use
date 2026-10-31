@@ -38,8 +38,12 @@ public final class StdioMCPServer {
                 continue
             }
 
-            if let response = handle(line: line) {
-                FileHandle.standardOutput.write((response + "\n").data(using: .utf8)!)
+            // This thread's autorelease pool never drains on its own: each response's encoded
+            // bytes (a screenshot's base64 among them) stayed alive for the whole session.
+            autoreleasepool {
+                if let response = handle(line: line) {
+                    FileHandle.standardOutput.write((response + "\n").data(using: .utf8)!)
+                }
             }
         }
     }
