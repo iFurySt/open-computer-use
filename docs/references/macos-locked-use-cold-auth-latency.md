@@ -56,3 +56,45 @@ log show --last 2m --style compact --info \
 This repairs the observed ticket-distribution gaps. It does **not** prove every future cold load will avoid all network checks, nor that the manual-unlock delay is fixed end to end. Security revocation and other trust checks can still use the network. The installed components and screensaver policy were not changed. A full signed/notarized build, installer round trip, and cold/warm manual-unlock comparison remain required before claiming a user-visible fix. The installed 1.1.1 versus bundled 1.1.2 version difference alone was not established as the cause.
 
 Apple's [custom notarization workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow) specifies notarizing and stapling custom-installer payloads before notarizing their container, and explains offline ticket availability. See also [authorization plug-ins](https://developer.apple.com/documentation/security/extending-authorization-services-with-plug-ins) and [Gatekeeper diagnostics](https://developer.apple.com/forums/thread/706379).
+
+## Release acceptance still required
+
+The `locked-use-distribution-tests` workflow is an offline regression suite, not
+another distribution channel. Its packaging test runs the repository's actual
+staging, npm pack, direct-download packaging and manifest generation against tiny
+prebuilt files. It checks all three npm aliases and the App ZIP for the outer App,
+authorization bundle and Guardian ticket bytes. Apple-only tools are simulated;
+passing this test does not establish that a ticket or signature is valid.
+
+Before claiming the unlock latency is fixed, record these checks against the same
+candidate commit and version:
+
+1. Produce a real Developer ID build and complete both Apple notarization
+   submissions. Confirm both statuses are Accepted. A manual release workflow or
+   a build that skipped notarization is not evidence for this check; the current
+   workflow only runs the notarization step on tag pushes with credentials.
+2. Unpack each npm tarball and the direct-download App ZIP into separate temporary
+   directories. For each extracted App, run `codesign --verify --deep --strict`
+   and `xcrun stapler validate`. Also run `xcrun stapler validate` on both
+   `Contents/Resources/LockedUse/OCULockAuth.bundle` and
+   `Contents/Resources/LockedUse/OCU Guardian.app`. Verify the published manifest
+   hashes refer to these final archives.
+3. On a test Mac, capture the existing four-sample diagnostic before updating.
+   Install the candidate using the documented disable / enable procedure; merely
+   updating npm does not replace the system components. Confirm the installed
+   version and validate the ticket on the installed authorization bundle at
+   `/Library/Security/SecurityAgentPlugins/OCULockAuth.bundle`.
+4. Repeat several four-sample runs under comparable network conditions. Correlate
+   the normalized times with `mechanismInvoked` / `resultDelivered` and host-loading
+   evidence. An idle gap alone does not prove a cold load, and an expected Deny
+   alone does not prove that the mechanism ran.
+5. Have the operator compare manual unlocks after an unlocked idle interval of
+   30–60 seconds and immediate repeats; record wake-from-sleep trials separately.
+   Compare time before mechanism entry, time inside the mechanism, native fallback,
+   and total unlock time. Keep raw logs and machine identifiers out of the repository.
+
+Do not clear OS trust caches, delete staged plug-ins, or change authentication
+policy outside the documented installer to force a cold sample. If the candidate
+still stalls before mechanism entry with validated installed tickets, investigate
+remaining trust / revocation / network evaluation; reducing the in-plugin IPC
+timeout cannot bound this earlier interval.

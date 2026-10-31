@@ -44,3 +44,12 @@ The plugin's internal timeout begins after OS loading, so changing it cannot bou
 - `scripts/tests/locked-use-notarization.test.py`
 - `scripts/tests/locked-use-release-packaging.test.py`
 - `docs/references/macos-locked-use-cold-auth-latency.md` and linked release / diagnostic guides
+
+### PR review follow-up
+
+- Cross-checked the original unlock investigation: the delay precedes mechanism entry, and the installed-version difference alone is not causal evidence. Keep real installation and latency verification pending.
+- Replaced the miniature staging substitute with the repository's real staging, npm packaging, direct-download and manifest scripts. Tiny prebuilt fixtures and simulated Apple tools keep the suite portable without a signing identity.
+- Assert fresh outer-App, authorization-bundle and Guardian ticket bytes in all three npm aliases and the App ZIP, manifest sizes/hashes, stale staging removal, and failure before packaging when a native runtime is missing. Rebuild entry points fail deliberately to guard `--skip-build`.
+- Rename the workflow display to `locked-use-distribution-tests` and include staging, archive and input paths in its PR/main triggers. The workflow remains test-only; existing release channels are unchanged.
+- Document concrete candidate-artifact, installed-ticket, repeated probe and manual-unlock acceptance checks. No installed system component or policy was changed.
+- Validation: both real-packaging fixture tests, the six diagnostic/notarization tests, signing-keychain regression, document checks, workflow action pinning and diff whitespace checks.

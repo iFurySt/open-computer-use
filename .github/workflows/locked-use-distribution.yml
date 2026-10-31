@@ -1,4 +1,4 @@
-name: locked-use-distribution
+name: locked-use-distribution-tests
 
 on:
   pull_request:
@@ -9,6 +9,15 @@ on:
       - 'scripts/*locked-use*'
       - 'scripts/notarize-open-computer-use.sh'
       - 'scripts/release-package.sh'
+      - 'scripts/npm/**'
+      - 'scripts/package-github-release-assets.sh'
+      - 'scripts/package-skill.sh'
+      - 'scripts/build-open-computer-use-app.sh'
+      - 'scripts/node-repl/**'
+      - 'scripts/install-*'
+      - 'plugins/open-computer-use/**'
+      - 'skills/open-computer-use/**'
+      - '.agents/plugins/marketplace.json'
       - 'scripts/tests/locked-use-*'
   push:
     branches: [main]
@@ -19,6 +28,15 @@ on:
       - 'scripts/*locked-use*'
       - 'scripts/notarize-open-computer-use.sh'
       - 'scripts/release-package.sh'
+      - 'scripts/npm/**'
+      - 'scripts/package-github-release-assets.sh'
+      - 'scripts/package-skill.sh'
+      - 'scripts/build-open-computer-use-app.sh'
+      - 'scripts/node-repl/**'
+      - 'scripts/install-*'
+      - 'plugins/open-computer-use/**'
+      - 'skills/open-computer-use/**'
+      - '.agents/plugins/marketplace.json'
       - 'scripts/tests/locked-use-*'
   workflow_dispatch:
 
@@ -41,7 +59,7 @@ jobs:
         run: python3 scripts/tests/locked-use-auth-latency.test.py -v
       - name: Test notarization ordering and failure handling
         run: python3 scripts/tests/locked-use-notarization.test.py -v
-      - name: Test refreshed tickets in npm tarballs
+      - name: Test real staging and ticket preservation in release archives
         run: python3 scripts/tests/locked-use-release-packaging.test.py -v
       - name: Test signing keychain restoration
         run: bash scripts/tests/locked-use-signing.test.sh

@@ -20,6 +20,8 @@ Reproduce intermittent manual-unlock latency without locking the desktop, identi
 - [x] Add repeatable diagnostics and focused regression coverage.
 - [x] Prepare payload-first notarization, outer-App resealing, and complete artifact restaging. Scratch-copy tests verify child stapling changes the resource seal, which re-signing repairs.
 - [x] Document established findings and verification limits in the cold-authorization reference.
+- [x] Review follow-up: exercise real staging and direct-download scripts, assert all three ticket paths across every npm alias and App ZIP, and reject missing prebuilt runtimes. Expand workflow triggers and clarify its test-only role.
+- [x] Turn the remaining real-build / installation / manual-unlock comparison into an explicit acceptance procedure in the cold-authorization reference.
 - [ ] Run a real Developer ID / Apple notarization build and installer round trip, then compare cold/warm manual unlocks. Source correction is not yet a demonstrated end-to-end latency fix.
 
 ## Rollback
