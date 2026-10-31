@@ -2047,6 +2047,92 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testSetValueReadBackComparesStringsNumbersBooleansAndNoOps() {
+        // A plain string write that lands reads back as verified.
+        XCTAssertEqual(
+            setValueReadBackResult(requested: "Draft", before: "", after: "Draft"),
+            .verified
+        )
+        // Numeric normalization: 15 and 15.0 are the same value.
+        XCTAssertEqual(
+            setValueReadBackResult(requested: "15", before: "0", after: "15.0"),
+            .verified
+        )
+        // CFBoolean reads back as "1"; a requested "true" still matches.
+        XCTAssertEqual(
+            setValueReadBackResult(requested: "true", before: "false", after: "1"),
+            .verified
+        )
+        // Whitespace around the read-back value is ignored.
+        XCTAssertEqual(
+            setValueReadBackResult(requested: " padded ", before: nil, after: "padded"),
+            .verified
+        )
+        // No-op: requesting the value the element already reports is a success.
+        XCTAssertEqual(
+            setValueReadBackResult(requested: "same", before: "same", after: "same"),
+            .verified
+        )
+        // A write a control silently ignored must be reported, not swallowed.
+        XCTAssertEqual(
+            setValueReadBackResult(requested: "Draft", before: "Old", after: "Old"),
+            .unchanged(actual: "Old")
+        )
+        // A control that normalizes the value to something else is a mismatch.
+        XCTAssertEqual(
+            setValueReadBackResult(requested: "Draft", before: "Old", after: "DRAFT"),
+            .mismatched(actual: "DRAFT")
+        )
+        // An element that exposes no readable value cannot be verified.
+        XCTAssertEqual(
+            setValueReadBackResult(requested: "Draft", before: "Old", after: nil),
+            .unchanged(actual: nil)
+        )
+    }
+
+    func testSetValueReadBackConvertsAXValueTypes() {
+        XCTAssertEqual(setValueReadBackString(from: "hello" as CFString), "hello")
+        XCTAssertEqual(setValueReadBackString(from: NSNumber(value: 15)), "15")
+        XCTAssertEqual(setValueReadBackString(from: NSNumber(value: 15.5)), "15.5")
+        XCTAssertEqual(setValueReadBackString(from: kCFBooleanTrue!), "true")
+        XCTAssertEqual(setValueReadBackString(from: kCFBooleanFalse!), "false")
+    }
+
+    func testSetValueReadBackErrorNamesElementAndActualValue() {
+        let unchanged = setValueReadBackErrorMessage(
+            elementIndex: "42",
+            requested: "15",
+            result: .unchanged(actual: "0")
+        )
+        XCTAssertTrue(unchanged?.contains("element 42") == true)
+        XCTAssertTrue(unchanged?.contains("\"0\"") == true)
+        XCTAssertTrue(unchanged?.contains("\"15\"") == true)
+
+        let mismatched = setValueReadBackErrorMessage(
+            elementIndex: "7",
+            requested: "Türkiye",
+            result: .mismatched(actual: "Seçiniz")
+        )
+        XCTAssertTrue(mismatched?.contains("element 7") == true)
+        XCTAssertTrue(mismatched?.contains("\"Seçiniz\"") == true)
+
+        XCTAssertNil(setValueReadBackErrorMessage(elementIndex: "1", requested: "x", result: .verified))
+    }
+
+    /// Fixture regression: `OpenComputerUseFixture` is the headless harness used
+    /// by `scripts/tests/*-smoke.mjs`, and its `setValue` path bypasses AX
+    /// read-back by design. The comparison layer must still accept the exact
+    /// unicode values those smoke tests write, so the new verification cannot
+    /// regress the fixture harness.
+    func testFixtureSetValueValuesVerifyWithoutAXReadBack() {
+        for value in ["worker-live-中文🙂", "a👍中文|中文"] {
+            XCTAssertEqual(
+                setValueReadBackResult(requested: value, before: "", after: value),
+                .verified
+            )
+        }
+    }
+
     func testMakeVisualCursorTargetUsesWindowRelativeElementCenter() {
         let screenMappings = [
             VisualCursorScreenMapping(
