@@ -331,9 +331,7 @@ func TestWindowsRuntimeTreeBudgetDefaultsMatchMacOS(t *testing.T) {
 	if !strings.Contains(windowsRuntimeScript, "$AccessibilityTreeMaxDepth = 64") {
 		t.Fatal("Windows runtime should default to the shared 64 level tree depth")
 	}
-	if !strings.Contains(windowsRuntimeScript, "$script:nextIndex -ge $script:MaxTreeNodes -or $depth -gt $script:MaxTreeDepth") {
-		t.Fatal("Windows runtime should use shared tree budget constants while rendering")
-	}
+	// Traversal bounds are exercised by windows-tree-budget.test.ps1 against production functions.
 }
 
 func TestWindowsScreenshotValidationRejectsDegenerateImages(t *testing.T) {

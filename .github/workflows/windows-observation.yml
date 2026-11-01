@@ -6,6 +6,8 @@ on:
       - 'apps/OpenComputerUseWindows/**'
       - 'scripts/tests/windows-observation*'
       - 'scripts/tests/windows-input*'
+      - 'scripts/tests/windows-tree-budget*'
+      - 'scripts/tests/fixtures/WindowsTreeBudgetFixture.ps1'
       - 'scripts/tests/windows-fixture-state.ps1'
       - 'scripts/tests/fixtures/WindowsInputFixture.ps1'
       - 'scripts/tests/fixtures/WindowsObservationFixture.ps1'
@@ -54,3 +56,7 @@ jobs:
         run: ./scripts/tests/windows-observation-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
       - name: Real Windows scroll, DPI and physical input
         run: ./scripts/tests/windows-input-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
+      - name: Production tree budget regression
+        run: ./scripts/tests/windows-tree-budget.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+      - name: Real WPF tree budget and visibility
+        run: ./scripts/tests/windows-tree-budget-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"

@@ -2330,7 +2330,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(selected?.windowID, main.windowID)
     }
 
-    func testListTraversalPrefersVisibleChildrenAndReadsContents() {
+    func testListTraversalDoesNotReintroduceFullContentsAlongsideVisibleChildren() {
         let attributes = childTraversalAttributes(
             role: kAXListRole as String,
             hasRows: false,
@@ -2338,7 +2338,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         )
 
         XCTAssertFalse(attributes.contains(kAXChildrenAttribute))
-        XCTAssertTrue(attributes.contains("AXContents"))
+        XCTAssertFalse(attributes.contains("AXContents"))
         XCTAssertTrue(attributes.contains("AXVisibleChildren"))
     }
 

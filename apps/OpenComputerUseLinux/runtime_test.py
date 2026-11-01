@@ -469,5 +469,65 @@ class RuntimeActionReadBackTests(unittest.TestCase):
         self.snapshot.assert_not_called()
 
 
+
+
+class TreeBudgetTests(unittest.TestCase):
+    class Node:
+        def __init__(self, role, name, children=(), showing=True):
+            self.role, self.name, self.children, self.showing = role, name, list(children), showing
+            self.child_reads = 0
+        def get_role_name(self): return self.role
+        def get_name(self): return self.name
+        def get_child_count(self): return len(self.children)
+        def get_child_at_index(self, index):
+            self.child_reads += 1
+            return self.children[index]
+        def get_state_set(self): return self
+        def contains(self, state):
+            if self.showing is None: raise RuntimeError("unknown")
+            return self.showing
+        def get_interfaces(self): return []
+
+    def test_later_nested_buttons_survive_large_collection_with_original_paths(self):
+        runtime = load_runtime()
+        runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)
+        rows = [self.Node("table cell", str(i)) for i in range(2000)]
+        collection = self.Node("table", "Files", rows)
+        cancel = self.Node("push button", "Cancel")
+        root = self.Node("dialog", "Open", [collection, self.Node("panel", "footer", [cancel])])
+        selected, truncated = runtime.prioritized_tree_nodes(root, [4, 2], 20, 64)
+        self.assertTrue(truncated)
+        self.assertLessEqual(len(selected), 20)
+        self.assertIn(((4, 2, 1, 0), cancel, 2), selected)
+        self.assertLessEqual(collection.child_reads, 80)
+        self.assertEqual([path for path, _, _ in selected], sorted(path for path, _, _ in selected))
+
+    def test_hidden_unknown_visibility_depth_and_cycles(self):
+        runtime = load_runtime()
+        runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)
+        hidden = self.Node("push button", "Hidden", showing=False)
+        unknown = self.Node("push button", "Unknown", showing=None)
+        root = self.Node("dialog", "Root", [hidden, unknown])
+        root.children.append(root)
+        selected, truncated = runtime.prioritized_tree_nodes(root, [0], 2, 64)
+        self.assertEqual([node for _, node, _ in selected], [root, unknown])
+        self.assertTrue(truncated)
+        selected, truncated = runtime.prioritized_tree_nodes(root, [0], 20, 0)
+        self.assertEqual(len(selected), 1)
+        self.assertTrue(truncated)
+
+    def test_gtk_showing_flag_does_not_override_offscreen_cell_geometry(self):
+        runtime = load_runtime()
+        runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)
+        hidden = self.Node("table cell", "Old first", showing=True)
+        visible = self.Node("table cell", "Visible last", showing=True)
+        root = self.Node("table", "Files", [hidden, visible])
+        bounds = dict(x=0, y=0, width=600, height=300)
+        def geometry(node):
+            return dict(x=-2147483648, y=-2147483648, width=600, height=20) if node is hidden else bounds
+        with mock.patch.object(runtime, "extents", side_effect=geometry):
+            selected, _ = runtime.prioritized_tree_nodes(root, [0], 2, 64, bounds)
+        self.assertEqual([node for _, node, _ in selected], [root, visible])
+
 if __name__ == "__main__":
     unittest.main()
