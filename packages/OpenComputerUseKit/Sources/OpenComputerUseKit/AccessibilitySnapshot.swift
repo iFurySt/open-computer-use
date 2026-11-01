@@ -895,9 +895,9 @@ private struct TreeRenderer {
         var offsets = Array(repeating: 0, count: 5)
         var discovered: Set<TraversalElementKey> = []
         func enqueue(_ work: Work) {
-            guard discovered.insert(.init(element: work.node)).inserted else { return }
             guard work.depth < context.treeLimits.maxDepth, scanned < scanLimit else { truncated = true; return }
             scanned += 1
+            guard discovered.insert(.init(element: work.node)).inserted else { return }
             let role = stringValue(of: work.node, attribute: kAXRoleAttribute) ?? ""
             let frame = resolveLocalFrame(of: work.node, windowBounds: nil)
             let hidden = frame.map { frame in
@@ -921,9 +921,12 @@ private struct TreeRenderer {
             if role == "AXScrollArea", let frame = resolveLocalFrame(of: work.node, windowBounds: nil), frame.width > 0, frame.height > 0 {
                 viewport = viewport.map { $0.intersection(frame) } ?? frame
             }
-            let raw = rawChildren(of: work.node, limit: max(0, scanLimit - scanned), truncated: &truncated)
-            plannedChildren[key] = raw
-            for child in raw { enqueue(.init(node: child, depth: work.depth + 1, inCollection: collection, viewport: viewport)) }
+            let remaining = work.depth + 1 >= context.treeLimits.maxDepth ? 0 : max(0, scanLimit - scanned)
+            let raw = rawChildren(of: work.node, limit: remaining, truncated: &truncated)
+            // Duplicate and skipped entries still cost provider traversal work.
+            scanned += raw.inspected - raw.children.count
+            plannedChildren[key] = raw.children
+            for child in raw.children { enqueue(.init(node: child, depth: work.depth + 1, inCollection: collection, viewport: viewport)) }
         }
         return truncated || queues.indices.contains { offsets[$0] < queues[$0].count }
     }
@@ -1175,22 +1178,24 @@ private struct TreeRenderer {
         (plannedChildren[.init(element: element)] ?? []).filter { selected.contains(.init(element: $0)) }
     }
 
-    private func rawChildren(of element: AXUIElement, limit: Int, truncated: inout Bool) -> [AXUIElement] {
+    private func rawChildren(of element: AXUIElement, limit: Int, truncated: inout Bool) -> (children: [AXUIElement], inspected: Int) {
         let role = stringValue(of: element, attribute: kAXRoleAttribute)
         let rows = copyArray(element, attribute: kAXRowsAttribute) ?? []
         let visible = copyArray(element, attribute: axVisibleChildrenAttribute) ?? []
         let attributes = childTraversalAttributes(role: role, hasRows: !rows.isEmpty, hasVisibleChildren: !visible.isEmpty)
         var children: [AXUIElement] = []
+        var inspected = 0
         var seen: Set<TraversalElementKey> = []
         for attribute in attributes {
             let source = attribute == kAXRowsAttribute ? rows : attribute == axVisibleChildrenAttribute ? visible : copyArray(element, attribute: attribute) ?? []
             for child in source {
+                guard inspected < limit else { truncated = true; return (children, inspected) }
+                inspected += 1
                 guard seen.insert(.init(element: child)).inserted else { continue }
-                guard children.count < limit else { truncated = true; return children }
                 if !shouldSkipChild(child, of: element) { children.append(child) }
             }
         }
-        return children
+        return (children, inspected)
     }
 
     private func containsActionableLinkDescendant(

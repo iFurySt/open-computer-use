@@ -39,3 +39,17 @@ Assert ($result.nodes.Count -eq 2 -and $result.nodes[1].node.name -eq 'Unknown')
 $result = Get-PrioritizedTree $root 20 0
 Assert ($result.nodes.Count -eq 1 -and $result.truncated) 'Depth/cycle handling failed'
 Write-Output 'Production Windows traversal: nested controls, visibility, original paths, candidate/node/depth bounds and cycles passed.'
+
+foreach ($invalid in @($false, $true)) {
+    $root = Node 'ControlType.Window' 'Repeated'
+    $entry = if ($invalid) { $null } else { $root }
+    $root.children = @($entry) * 10000
+    $script:reads = 0
+    $result = Get-PrioritizedTree $root 20 64
+    Assert ($result.nodes.Count -eq 1 -and $result.truncated) 'Repeated/invalid child truncation failed'
+    Assert ($script:reads -le 79) 'Repeated/invalid children bypassed discovery budget'
+    $script:reads = 0
+    $result = Get-PrioritizedTree $root 20 0
+    Assert ($script:reads -eq 0) 'Children read beyond depth limit'
+}
+Write-Output 'Repeated and invalid child candidates remain bounded.'

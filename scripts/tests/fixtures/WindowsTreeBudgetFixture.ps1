@@ -27,6 +27,6 @@ $encoding=New-Object Text.UTF8Encoding($false)
 $timer.Add_Tick({
   $temp=$StatePath+'.tmp'
   [IO.File]::WriteAllText($temp,($state|ConvertTo-Json -Compress),$encoding)
-  if(Test-Path $StatePath){[IO.File]::Replace($temp,$StatePath,$null)}else{[IO.File]::Move($temp,$StatePath)}
+  if(Test-Path $StatePath){[IO.File]::Replace($temp,$StatePath,($StatePath+'.bak'));[IO.File]::Delete($StatePath+'.bak')}else{[IO.File]::Move($temp,$StatePath)}
 })
 $timer.Start();[void]$window.ShowDialog();$timer.Stop()

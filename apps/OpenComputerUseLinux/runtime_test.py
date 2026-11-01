@@ -516,6 +516,20 @@ class TreeBudgetTests(unittest.TestCase):
         self.assertEqual(len(selected), 1)
         self.assertTrue(truncated)
 
+    def test_duplicate_and_invalid_children_still_consume_discovery_budget(self):
+        runtime = load_runtime()
+        runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)
+        for invalid in (False, True):
+            root = self.Node("dialog", "Root")
+            root.children = [None if invalid else root] * 10000
+            selected, truncated = runtime.prioritized_tree_nodes(root, [0], 20, 64)
+            self.assertEqual(len(selected), 1)
+            self.assertTrue(truncated)
+            self.assertLessEqual(root.child_reads, 79)
+            root.child_reads = 0
+            runtime.prioritized_tree_nodes(root, [0], 20, 0)
+            self.assertEqual(root.child_reads, 0)
+
     def test_gtk_showing_flag_does_not_override_offscreen_cell_geometry(self):
         runtime = load_runtime()
         runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)

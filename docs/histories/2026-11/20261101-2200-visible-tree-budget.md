@@ -11,5 +11,7 @@
 ## 验证进度
 
 - macOS 2000 文件 NSOpenPanel：1200/40 节点下保留操作按钮，索引 Cancel 确实关闭面板；旧 main 在 40 节点下缺 Cancel。普通 300 控件完整 AX 输出与 main 一致，真实点击及下一轮状态通过。
-- Linux 私有容器 Xvfb/D-Bus + GTK/AT-SPI：2000 行、1200/40 预算、真实底部点击及滚动末行通过。Python 38 项通过；Go 在 Linux 环境通过。
+- Linux 私有容器 Xvfb/D-Bus + GTK/AT-SPI：2000 行、1200/40 预算、真实底部点击及滚动末行通过。Python 39 项通过；Go 在 Linux 环境通过。
 - Windows PowerShell 生产遍历行为测试和 Go 单测通过；真实 WPF/UIA 由 PR CI 验证后补结果。
+
+- 补重复/无效候选的预算计数和深度边界回归；Windows WPF 状态文件改用明确的备份路径，兼容 Windows PowerShell 5.1 的 File.Replace 参数转换。

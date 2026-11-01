@@ -232,4 +232,14 @@ final class AXSemanticRenderingTests: XCTestCase {
         XCTAssertNotNil(fixture.index(12, in: output.records))
         XCTAssertEqual(output.records.values.filter { $0.element.map { CFEqual($0, fixture.nodes[13]!.element) } == true }.count, 1)
     }
+    func testDuplicateChildEntriesStillConsumeDiscoveryBudget() {
+        let fixture = Fixture()
+        fixture.add(10, role: "AXButton", title: "Beyond discovery limit")
+        fixture.nodes[0]!.children = Array(repeating: 0, count: 10000) + [10]
+        let output = fixture.render(limits: .init(maxNodeCount: 20, maxDepth: 64))
+        XCTAssertEqual(output.records.count, 1)
+        XCTAssertNil(fixture.index(10, in: output.records))
+        XCTAssertTrue(output.lines.contains { $0.contains("tree truncated") })
+    }
+
 }

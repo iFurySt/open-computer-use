@@ -303,13 +303,13 @@ def prioritized_tree_nodes(root, root_path, max_nodes, max_depth, window_bounds=
 
     def enqueue(node, depth, path, in_collection, viewport):
         nonlocal scanned, sequence, truncated
-        if node is None or node in seen:
-            return
-        seen.add(node)
         if depth > max_depth or scanned >= scan_limit:
             truncated = True
             return
         scanned += 1
+        if node is None or node in seen:
+            return
+        seen.add(node)
         role = node_role(node).lower()
         collection = in_collection or role in collections
         showing = safe(lambda: node.get_state_set().contains(Atspi.StateType.SHOWING))
@@ -337,6 +337,9 @@ def prioritized_tree_nodes(root, root_path, max_nodes, max_depth, window_bounds=
         _, _, node, depth, path, collection, viewport = heapq.heappop(pending)
         selected.append((path, node, depth))
         count = child_count(node)
+        if depth >= max_depth:
+            truncated = truncated or count > 0
+            continue
         for index in range(count):
             if scanned >= scan_limit:
                 truncated = True

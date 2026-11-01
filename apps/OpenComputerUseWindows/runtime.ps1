@@ -804,6 +804,9 @@ function Get-ElementTitle($record) {
 }
 
 function Get-TreeChildren($node, [int]$limit) {
+    if ($limit -le 0) {
+        return [pscustomobject]@{ children = @(); truncated = ($null -ne [Windows.Automation.TreeWalker]::RawViewWalker.GetFirstChild($node)) }
+    }
     $children = $node.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
     $result = New-Object System.Collections.Generic.List[object]
     for ($i = 0; $i -lt [math]::Min($children.Count, $limit); $i++) { $result.Add($children.Item($i)) }
@@ -817,12 +820,12 @@ function Get-PrioritizedTree($root, [int]$MaxNodes, [int]$MaxDepth) {
     $selected = New-Object System.Collections.Generic.List[object]
     $state = @{ scanned = 0; truncated = $false; limit = [math]::Max(64, [math]::Min($MaxNodes, 2500) * 4) }
     function Enqueue($node, [int]$depth, [string]$path, [bool]$inCollection) {
+        if ($depth -gt $MaxDepth -or $state.scanned -ge $state.limit) { $state.truncated = $true; return }
+        $state.scanned++
         if ($null -eq $node) { return }
         try { $runtime = (@($node.GetRuntimeId()) -join '.') } catch { $runtime = $path }
         if ([string]::IsNullOrWhiteSpace($runtime)) { $runtime = $path }
         if (-not $seen.Add($runtime)) { return }
-        if ($depth -gt $MaxDepth -or $state.scanned -ge $state.limit) { $state.truncated = $true; return }
-        $state.scanned++
         $role = Get-ElementControlTypeName $node
         $collection = $inCollection -or $role -in @('ControlType.List', 'ControlType.DataGrid', 'ControlType.Tree', 'ControlType.Table')
         $hidden = $false
@@ -839,7 +842,8 @@ function Get-PrioritizedTree($root, [int]$MaxNodes, [int]$MaxDepth) {
         $work = $queues[$rank][$offsets[$rank]]; $offsets[$rank]++
         $selected.Add($work)
         try {
-            $result = Get-TreeChildren $work.node ([math]::Max(0, $state.limit - $state.scanned))
+            $remaining = if ($work.depth -ge $MaxDepth) { 0 } else { [math]::Max(0, $state.limit - $state.scanned) }
+            $result = Get-TreeChildren $work.node $remaining
             if ($result.truncated) { $state.truncated = $true }
             for ($i = 0; $i -lt $result.children.Count; $i++) {
                 Enqueue $result.children[$i] ($work.depth + 1) ($work.path + '/' + $i.ToString('D10')) $work.collection
