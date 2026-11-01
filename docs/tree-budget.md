@@ -10,9 +10,13 @@
 | Windows | UIA IsOffscreen；列表、树和表格分支延后 |
 | Linux | AT-SPI SHOWING 和滚动区域几何；GTK 表格离屏坐标可以纠正不准确的 SHOWING |
 
+Windows 在单次快照内批量缓存 UIA 属性，下一次观察重新获取；动作仍重新定位真实元素。实现使用 [UIA CacheRequest](https://learn.microsoft.com/en-us/dotnet/framework/ui-automation/caching-in-ui-automation-clients)。
+
 未知或失败的可见性信息不会直接删除控件；也不按其他应用是否遮挡目标窗口判定隐藏。
 
-输出节点仍受 `max_tree_nodes` 限制。为了优先级排序，候选发现另有上限：`max(64, min(max_tree_nodes, 2500) × 4)`，默认 4800，最多 10000。范围不足时输出 `[Accessibility tree truncated: ...]`。深度预算也保持有效；极小预算和超大 provider 不保证包含所有控件。macOS 集合摘要显示实际纳入的项目数量，不再把截取的子集说成从第 0 行开始的连续区间。
+输出节点仍受 `max_tree_nodes` 限制。为了优先级排序，候选发现另有上限：`max(64, min(max_tree_nodes, 2500) × 4)`，默认 4800，最多 10000。范围不足时输出 `[Accessibility tree truncated: ...]`。重复和无效引用也计入候选预算。深度预算保持有效；极小预算和超大 provider 不保证包含所有控件。macOS 集合摘要显示实际纳入的项目数量，不再把截取的子集说成从第 0 行开始的连续区间。
+
+候选上限约束本轮逐项检查，不等于系统无障碍 API 的硬超时：macOS / Windows 的子项数组仍由应用提供，单次调用的耗时取决于目标应用。
 
 ## 真实回归
 

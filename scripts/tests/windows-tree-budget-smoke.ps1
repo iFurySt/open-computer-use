@@ -9,7 +9,6 @@ $stateFile = Join-Path $directory "state.json"
 $fixture = $null
 $native = $null
 $requestId = 0
-$sequence = 0
 
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function Wait-For($test, $description) {
@@ -38,19 +37,7 @@ function Call-Tool($tool, $arguments) {
     Send-Request "tools/call" @{ name = $tool; arguments = $arguments }
 }
 function Text($result) { ($result.content | Where-Object type -eq "text" | ForEach-Object text) -join "`n" }
-function Images($result) { @($result.content | Where-Object type -eq "image") }
-function Input-Index($result) {
-    $matches = [regex]::Matches((Text $result), '(?m)^\s*(\d+)\s+edit Observation input(?:\s|$)')
-    Assert ($matches.Count -eq 1) (Text $result)
-    $matches[0].Groups[1].Value
-}
-function Change-Window($kind) {
-    $script:sequence += 1
-    $message = @{ sequence = $script:sequence; kind = $kind } | ConvertTo-Json -Compress
-    [System.IO.File]::WriteAllText(($stateFile + ".command"), $message, [System.Text.Encoding]::UTF8)
-    Wait-For { (Read-State).sequence -eq $script:sequence } "fixture window command"
-    Start-Sleep -Milliseconds 200
-}
+
 try {
     $fixtureSource = Join-Path $PSScriptRoot "fixtures/WindowsTreeBudgetFixture.ps1"
     $fixture = Start-Process powershell.exe -ArgumentList @("-NoProfile", "-STA", "-File", "`"$fixtureSource`"", "-StatePath", "`"$stateFile`"") -PassThru -RedirectStandardOutput (Join-Path $directory "fixture.out") -RedirectStandardError (Join-Path $directory "fixture.err")
@@ -67,16 +54,18 @@ try {
     $native = New-Object System.Diagnostics.Process
     $native.StartInfo = $start
     [void]$native.Start()
-    $null = Send-Request "initialize" @{ protocolVersion = "2025-03-26"; capabilities = @{}; clientInfo = @{ name = "windows-observation-smoke"; version = "1" } }
+    $null = Send-Request "initialize" @{ protocolVersion = "2025-03-26"; capabilities = @{}; clientInfo = @{ name = "windows-tree-budget-smoke"; version = "1" } }
     function Index($result, $name) {
         $matches = [regex]::Matches((Text $result), ('(?m)^\s*(\d+)\s+button ' + [regex]::Escape($name) + '(?:\s|$)'))
         Assert ($matches.Count -eq 1) ("Missing " + $name + ": " + (Text $result))
         $matches[0].Groups[1].Value
     }
     foreach ($budget in @(1200,40)) {
+        $watch = [Diagnostics.Stopwatch]::StartNew()
         $tree=Call-Tool 'get_app_state' @{include_screenshot=$false;max_tree_nodes=$budget}
         Assert (-not $tree.isError) (Text $tree)
         Assert ([regex]::Matches((Text $tree),'(?m)^\s*\d+ ').Count -le $budget) 'Node budget exceeded'
+        Write-Output "Budget $budget snapshot returned in $($watch.ElapsedMilliseconds) ms."
         $before=(Read-State).clicks
         $action=Call-Tool 'click' @{element_index=(Index $tree 'Budget open');click_method='accessibility'}
         Assert (-not $action.isError) (Text $action)

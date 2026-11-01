@@ -15,3 +15,5 @@
 - Windows PowerShell 生产遍历行为测试和 Go 单测通过；真实 WPF/UIA 由 PR CI 验证后补结果。
 
 - 补重复/无效候选的预算计数和深度边界回归；Windows WPF 状态文件改用明确的备份路径，兼容 Windows PowerShell 5.1 的 File.Replace 参数转换。
+
+- Windows 真实 2000 项 WPF 测试发现逐项 UIA 读取仍超出既有 30 秒超时，补本轮 snapshot 的 CacheRequest 属性批读，动作仍重新解析目标；等待真实 CI 验证。

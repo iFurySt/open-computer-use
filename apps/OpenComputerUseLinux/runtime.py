@@ -387,7 +387,7 @@ def render_tree(root, window_bounds, root_path, text_limit=DEFAULT_TEXT_LIMIT, m
         )
 
     if truncated:
-        lines.append("[Accessibility tree truncated: prioritized visible controls; some list or hidden content was omitted.]")
+        lines.append("[Accessibility tree truncated: prioritized visible controls; some nodes were omitted.]")
     return records, lines
 
 

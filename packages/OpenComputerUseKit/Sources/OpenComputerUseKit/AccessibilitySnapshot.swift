@@ -875,7 +875,7 @@ private struct TreeRenderer {
     mutating func render(_ root: AXUIElement) {
         let truncated = plan(root)
         renderSelected(root)
-        if truncated { lines.append("[Accessibility tree truncated: prioritized visible controls; some list or hidden content was omitted.]") }
+        if truncated { lines.append("[Accessibility tree truncated: prioritized visible controls; some nodes were omitted.]") }
     }
 
     // Discover before rendering: a large early list cannot consume the output budget
