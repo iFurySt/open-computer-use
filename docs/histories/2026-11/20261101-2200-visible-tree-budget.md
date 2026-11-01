@@ -12,8 +12,11 @@
 
 - macOS 2000 文件 NSOpenPanel：1200/40 节点下保留操作按钮，索引 Cancel 确实关闭面板；旧 main 在 40 节点下缺 Cancel。普通 300 控件完整 AX 输出与 main 一致，真实点击及下一轮状态通过。
 - Linux 私有容器 Xvfb/D-Bus + GTK/AT-SPI：2000 行、1200/40 预算、真实底部点击及滚动末行通过。Python 39 项通过；Go 在 Linux 环境通过。
-- Windows PowerShell 生产遍历行为测试和 Go 单测通过；真实 WPF/UIA 由 PR CI 验证后补结果。
+- Windows 真实 WPF/UIA 2000 项、1200/40 预算、索引点击和滚动末行通过；现有观察、滚轮、DPI 和物理输入回归通过。快照分别约 9.3 秒 / 5.4 秒（CI 样本，非稳定基准）。[CI 结果](https://github.com/iFurySt/open-computer-use/actions/runs/41317675590)。
 
 - 补重复/无效候选的预算计数和深度边界回归；Windows WPF 状态文件改用明确的备份路径，兼容 Windows PowerShell 5.1 的 File.Replace 参数转换。
 
-- Windows 真实 2000 项 WPF 测试发现逐项 UIA 读取仍超出既有 30 秒超时，补本轮 snapshot 的 CacheRequest 属性批读，动作仍重新解析目标；等待真实 CI 验证。
+- Windows 真实 2000 项 WPF 测试发现逐项 UIA 读取仍超出既有 30 秒超时，补本轮 snapshot 的 CacheRequest 属性批读，动作仍重新解析目标。保持原有超时，上述真实 CI 已通过。
+
+- Node 54 项、Swift 排除需解锁的 TextSelectionOperationTests 后 414 项（11 跳过）、新 AX 语义回归 10 项通过。完整 Swift 锁屏运行中，文本选择的会话校验和真实窗口用例失败；需正常解锁后复测，不修改安全策略绕过。
+- macOS 早期已解锁实测通过；最终候选边界修订后的签名程序已构建，但真实 NSOpenPanel / 12 组面板回归被锁屏保护拒绝。PR #145 暂为草稿，待解锁后补完最终实测，再评论和 squash 合并。

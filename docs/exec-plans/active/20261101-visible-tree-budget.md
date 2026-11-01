@@ -15,7 +15,7 @@
 ## 验证
 
 - 三平台单测覆盖早出现的大列表、后出现的按钮、可见/隐藏/未知节点、深度、循环、候选上限和索引有效性。
-- macOS 签名 native MCP + 真实大目录 NSOpenPanel，操作按钮及滚动后新状态；原 main 负对照。
+- macOS 签名 native MCP + 真实大目录 NSOpenPanel，操作按钮和点击后的状态；原 main 负对照。
 - Linux 私有容器 Xvfb/D-Bus + GTK/AT-SPI，真实大列表及按钮。
 - Windows GitHub Actions WPF/UIA/native MCP；等待实际检查结果后合并。
 - 运行适用回归、同步架构/使用说明/history，完成 PR 审查。
@@ -27,4 +27,8 @@
 - [ ] 真实三平台测试及负对照。
 - [ ] 文档、提交、PR、CI、合并。
 
-- macOS 大目录 1200/40 节点测试和普通 300 控件输出一致性通过；旧 main 在 40 节点下漏 Cancel。Linux 2000 行 GTK 实测及滚动末行通过，Go 测试需在 Linux 容器执行（macOS 宿主平台检查会拒绝）。Windows 生产 PowerShell 遍历测试通过，待真实 WPF CI。
+- macOS 大目录 1200/40 节点测试和普通 300 控件输出一致性通过；旧 main 在 40 节点下漏 Cancel。Linux 2000 行 GTK 实测及滚动末行通过，Go 测试需在 Linux 容器执行（macOS 宿主平台检查会拒绝）。Windows 生产 PowerShell 遍历及真实 WPF CI 均通过。
+
+- Windows 大列表初次出现 30 秒超时，增加单次快照 UIA CacheRequest 批读后在原超时内通过；1200 / 40 预算的 CI 快照约 9.3 / 5.4 秒，按钮真实接收点击，滚动后末行返回。现有观察/输入回归也通过。
+- Linux 最终大列表、隐藏详情、动作回读、JS 和截图开关实测通过，临时容器已清理。Node 54 项及 Swift 非锁屏依赖测试通过。
+- 剩余：本机正常解锁后，使用已签名最终程序重跑 macOS 大目录、12 组 sheet 场景及完整 Swift；当前锁屏拒绝 GUI，PR #145 保持草稿。通过后归档计划、更新 PR、评论 `LGTM. Thanks!` 并 squash 合并。
