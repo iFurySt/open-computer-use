@@ -130,6 +130,8 @@ test "$(find dist/release/github -maxdepth 1 -type f -name 'open-computer-use-cl
 
 如果这里打印的不是目标版本，或者 DMG 没按目标版本名产出，不要打 tag。
 
+本地 macOS 默认的 Bash 3.2 在 `set -u` 下展开空数组时可能报 `args[@]: unbound variable`，尤其是未显式设置签名 keychain 的 Locked Use 构建。遇到此错误时，将已安装的 Bash 5 所在目录置于该次构建的 PATH 首位，再运行原命令；不要关闭签名或删掉 Locked Use 组件来绕过。CI 使用显式 signing keychain，因此不一定复现本机这条空数组路径。
+
 如果当前 checkout 里已经有和目标版本一致的 `dist/Open Computer Use.app`，也可以临时加 `--skip-build` 跳过重复构建；但在干净 checkout 里不要默认加这个参数，否则 staging 脚本会因为缺少 `dist/Open Computer Use.app` 而失败。
 
 ### 4. 提交版本 bump
