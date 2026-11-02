@@ -70,9 +70,9 @@ Before claiming the unlock latency is fixed, record these checks against the sam
 candidate commit and version:
 
 1. Produce a real Developer ID build and complete both Apple notarization
-   submissions. Confirm both statuses are Accepted. A manual release workflow or
-   a build that skipped notarization is not evidence for this check; the current
-   workflow only runs the notarization step on tag pushes with credentials.
+   submissions. Confirm both statuses are Accepted. The release workflow requires
+   notarization for tag pushes and manual npm publishing. A manual build-only run
+   can skip notarization and is not evidence for this check.
 2. Unpack each npm tarball and the direct-download App ZIP into separate temporary
    directories. For each extracted App, run `codesign --verify --deep --strict`
    and `xcrun stapler validate`. Also run `xcrun stapler validate` on both
