@@ -8,7 +8,7 @@
 - Linux 使用 SHOWING 加滚动区域几何。真实 GTK 测试发现离屏单元仍返回 SHOWING=true，但提供离屏哨兵坐标；补回归后滚动末行可以优先返回。
 - 默认 1200 节点不变，无新配置；新增三平台真实 fixture/smoke、边界单测和 Windows CI 步骤。说明见 docs/tree-budget.md。
 
-## 验证进度
+## 验证结果
 
 - macOS 2000 文件 NSOpenPanel：1200/40 节点下保留操作按钮，索引 Cancel 确实关闭面板；旧 main 在 40 节点下缺 Cancel。普通 300 控件完整 AX 输出与 main 一致，真实点击及下一轮状态通过。
 - Linux 私有容器 Xvfb/D-Bus + GTK/AT-SPI：2000 行、1200/40 预算、真实底部点击及滚动末行通过。Python 39 项通过；Go 在 Linux 环境通过。
@@ -18,5 +18,6 @@
 
 - Windows 真实 2000 项 WPF 测试发现逐项 UIA 读取仍超出既有 30 秒超时，补本轮 snapshot 的 CacheRequest 属性批读，动作仍重新解析目标。保持原有超时，上述真实 CI 已通过。
 
-- Node 54 项、Swift 排除需解锁的 TextSelectionOperationTests 后 414 项（11 跳过）、新 AX 语义回归 10 项通过。完整 Swift 锁屏运行中，文本选择的会话校验和真实窗口用例失败；需正常解锁后复测，不修改安全策略绕过。
-- macOS 早期已解锁实测通过；最终候选边界修订后的签名程序已构建，但真实 NSOpenPanel / 12 组面板回归被锁屏保护拒绝。PR #145 暂为草稿，待解锁后补完最终实测，再评论和 squash 合并。
+- Node 54 项、Linux Python 39 项和两平台 Go 单测通过。2026-11-02 正常解锁后完整 Swift 423 项通过（9 项跳过，0 失败），包括此前锁屏影响的文本选择测试。
+- 最终签名 macOS 程序的 2000 文件大目录实测通过：1200 / 40 预算下保留按钮，索引 Cancel 确实关闭面板；12 组 sheet / panel 场景均通过，覆盖快照、query、坐标点击和截图缩放。此前锁屏阻塞已解除。
+- 实现与验证记录交付于 PR #145；执行计划归档到 completed。
