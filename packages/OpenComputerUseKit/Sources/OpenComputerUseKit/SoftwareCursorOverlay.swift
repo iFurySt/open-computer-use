@@ -200,6 +200,7 @@ enum SoftwareCursorOverlay {
     private static var idleTimer: Timer?
     private static var hideTimer: Timer?
     private static var idlePhase: CGFloat = 0
+    private static var idleTicks = 0
     private static var observationPhase = "hidden"
 
     static func moveCursor(
@@ -680,13 +681,20 @@ enum SoftwareCursorOverlay {
 
         observationPhase = "idle"
         idlePhase = 0
+        idleTicks = 0
         let timer = Timer(timeInterval: 1 / 60, repeats: true) { _ in
             MainActor.assumeIsolated {
                 guard panel != nil, cursorView != nil else {
                     return
                 }
 
-                refreshActiveOrderingIfNeeded()
+                // A refresh is three window-server round trips; every frame they were most of
+                // the sway's cost. At 10 Hz the cursor is back above a raised target window
+                // within 0.1 s.
+                idleTicks += 1
+                if idleTicks % 6 == 0 {
+                    refreshActiveOrderingIfNeeded()
+                }
                 _ = reanchorIfWindowMoved()
                 guard let currentTipPosition = self.restingTipPosition else { return }
 
@@ -840,7 +848,9 @@ enum SoftwareCursorOverlay {
     }
 
     private static func writeObservationSnapshot(tipPosition: CGPoint?, rotation: CGFloat?) {
+        // Every frame: copying the whole environment only to find the variable unset was not free.
         guard
+            getenv("OPEN_COMPUTER_USE_VISUAL_CURSOR_OBSERVATION_FILE") != nil,
             let url = visualCursorObservationFileURL(environment: ProcessInfo.processInfo.environment)
         else {
             return

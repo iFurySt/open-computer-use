@@ -45,6 +45,13 @@ public final class ComputerUseToolDispatcher {
     }
 
     public func callTool(name: String, arguments: [String: Any]) throws -> ToolCallResult {
+        // Calls run on threads whose autorelease pool never drains (the stdio read loop, an
+        // app-agent connection), so without one per call every screenshot's bitmap and
+        // encoded data stayed alive for the whole session.
+        try autoreleasepool { try dispatchTool(name: name, arguments: arguments) }
+    }
+
+    private func dispatchTool(name: String, arguments: [String: Any]) throws -> ToolCallResult {
         switch name {
         case "list_apps":
             return service.listApps()

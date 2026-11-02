@@ -8,6 +8,7 @@ arch_mode="native"
 codesign_mode="${OPEN_COMPUTER_USE_CODESIGN_MODE:-auto}"
 codesign_identity="${OPEN_COMPUTER_USE_CODESIGN_IDENTITY:-}"
 codesign_keychain="${OPEN_COMPUTER_USE_CODESIGN_KEYCHAIN:-}"
+app_variant_override="${OPEN_COMPUTER_USE_APP_VARIANT:-}"
 
 usage() {
   cat <<'EOF'
@@ -18,6 +19,7 @@ Examples:
   ./scripts/build-open-computer-use-app.sh --configuration release --arch universal
 
 Environment:
+  OPEN_COMPUTER_USE_APP_VARIANT=dev  # Keep development identity with release optimization.
   OPEN_COMPUTER_USE_APP_OUTPUT_DIR=/path/to/isolated/output
   OPEN_COMPUTER_USE_CODESIGN_MODE=auto|identity|adhoc|none
   OPEN_COMPUTER_USE_CODESIGN_IDENTITY="Developer ID Application: Example, Inc. (TEAMID)"
@@ -58,6 +60,17 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -n "${app_variant_override}" && "${app_variant_override}" != "dev" ]]; then
+  echo "Unsupported OPEN_COMPUTER_USE_APP_VARIANT: ${app_variant_override}; use dev or leave unset" >&2
+  exit 1
+fi
+# Locked Use components follow the build configuration, so a release-optimized dev app
+# cannot embed them consistently. Refuse instead of packaging a mismatched bundle.
+if [[ "${app_variant_override}" == "dev" && "${configuration}" == "release" && "${OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE:-auto}" == "1" ]]; then
+  echo "OPEN_COMPUTER_USE_APP_VARIANT=dev does not package Locked Use; leave OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE unset or set it to 0" >&2
+  exit 1
+fi
 
 if [[ "${configuration}" != "debug" && "${configuration}" != "release" ]]; then
   echo "Unsupported configuration: ${configuration}" >&2
@@ -259,7 +272,7 @@ bundle_identifier="com.ifuryst.opencomputeruse"
 app_variant="release"
 app_bundle_name="${release_app_bundle_name}"
 
-if [[ "${configuration}" != "release" ]]; then
+if [[ "${configuration}" != "release" || "${app_variant_override}" == "dev" ]]; then
   bundle_display_name="Open Computer Use (Dev)"
   bundle_identifier="com.ifuryst.opencomputeruse.dev"
   app_variant="dev"
@@ -275,11 +288,15 @@ contents_dir="${app_root}/Contents"
 macos_dir="${contents_dir}/MacOS"
 resources_dir="${contents_dir}/Resources"
 
-rm -rf "${app_root}" "${legacy_app_root}"
-if [[ "${app_variant}" == "release" ]]; then
-  rm -rf "${development_app_root}"
-else
-  rm -rf "${release_app_root}"
+rm -rf "${app_root}"
+# An explicit dev build must not remove a neighboring release or legacy bundle.
+if [[ "${app_variant_override}" != "dev" ]]; then
+  rm -rf "${legacy_app_root}"
+  if [[ "${app_variant}" == "release" ]]; then
+    rm -rf "${development_app_root}"
+  else
+    rm -rf "${release_app_root}"
+  fi
 fi
 mkdir -p "${macos_dir}" "${resources_dir}"
 
@@ -377,7 +394,7 @@ locked_use_requested="${OPEN_COMPUTER_USE_INCLUDE_LOCKED_USE:-auto}"
 locked_use_identity="$(resolve_codesign_identity || true)"
 if [[ "$locked_use_requested" == auto ]]; then
   locked_use_requested=0
-  if [[ "$configuration" == release && -n "$locked_use_identity" && "$locked_use_identity" != - ]]; then
+  if [[ "$configuration" == release && "$app_variant" == release && -n "$locked_use_identity" && "$locked_use_identity" != - ]]; then
     locked_use_requested=1
   fi
 fi

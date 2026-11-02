@@ -37,6 +37,14 @@ https://github.com/user-attachments/assets/e036b1c8-2200-4896-abd4-19225915cf66
 
 <sub><em>`open-computer-use` running on Linux.</em></sub>
 
+### Locked Use
+
+Locked Use is now supported on macOS. `OCU` temporarily unlocks your Mac after it has been locked so the agent can continue working, with protective services such as a full-screen shield in place during use.
+
+![Open Computer Use Locked Use screen](./docs/assets/ocu-locked-use.webp)
+
+See the [Locked Use guide](docs/locked-use.en.md) for setup, installed components, and permissions
+
 ## Quick Start
 
 ```bash
@@ -61,6 +69,7 @@ Before using it, install it into your agent:
 ```bash
 # Install into Codex by writing to ~/.codex/config.toml
 open-computer-use install-codex-mcp
+ocu install-codex-mcp
 ```
 
 Or add it to your own client manually:
@@ -103,14 +112,11 @@ You can also manually download and install the
 
 ## More
 
-See the [Locked Use guide](docs/locked-use.en.md) for setup, installed components, and permissions.
-
 Besides the MCP JSON config above, you can also use the built-in commands:
 
 ```bash
 # Install into Codex by writing to ~/.codex/config.toml
 open-computer-use install-codex-mcp
-ocu install-codex-mcp
 
 # Install as a Codex plugin, mainly for Codex App
 open-computer-use install-codex-plugin
@@ -127,27 +133,10 @@ open-computer-use install-gemini-mcp --scope user
 # Install into opencode by writing to ~/.config/opencode/opencode.json (or the active config file)
 open-computer-use install-opencode-mcp
 
-# Install through DeepSeek Harness's generic MCP compatibility path:
-# verifies the server, then writes a profile patch, turn-boundary hook, and skill
-open-computer-use install-dsh-mcp
-./scripts/install-dsh-mcp.sh --profile web --no-hook
-
 # Call a single Computer Use tool and print the MCP-style JSON result
 open-computer-use call list_apps
 ocu call list_apps
 open-computer-use call get_app_state --args '{"app":"TextEdit"}'
-
-# Inspect code-first runtime availability
-ocu capabilities
-ocu capabilities --json
-
-# Run one JavaScript evaluation, from an argument, stdin, or a file
-ocu js 'var apps = await cua.listApps({ emit: false }); nodeRepl.write(apps)'
-printf '%s' 'nodeRepl.write(6 * 7)' | ocu js -
-ocu js --file ./automation.mjs
-
-# Keep JavaScript and cua bindings for the current terminal session
-ocu repl
 
 # Run a sequence in one process so element_index state can be reused
 # Sequence runs sleep 1s between successful operations by default
@@ -160,47 +149,14 @@ open-computer-use doctor
 # macOS: query permission JSON without opening onboarding
 ocu doctor --json
 
-# Run local validation from a source checkout
-make smoke
-OPEN_COMPUTER_USE_STRESS_LOOPS=20 make stress
-make agent-smoke
-make agent-smoke SCENARIO=fixture-full
-node ./scripts/run-agent-smoke-tests.mjs --agents=claude,codex --command=open-computer-use
-node ./scripts/run-agent-smoke-tests.mjs --scenario=fixture --agents=claude,codex --command=open-computer-use
-node ./scripts/run-agent-smoke-tests.mjs --scenario=fixture-full --agents=claude,codex --command=open-computer-use
-OPEN_COMPUTER_USE_HERMES_PROVIDER=anthropic OPEN_COMPUTER_USE_HERMES_MODEL=claude-opus-4-20250514 make agent-smoke AGENTS=hermes SCENARIO=fixture-full
-node ./scripts/run-agent-smoke-tests.mjs --agents=hermes --hermes-provider=anthropic --hermes-model=claude-opus-4-20250514
-node ./scripts/run-agent-smoke-tests.mjs --scenario=fixture --agents=hermes --hermes-provider=anthropic --hermes-model=claude-opus-4-20250514
-node ./scripts/run-agent-smoke-tests.mjs --scenario=fixture-full --agents=hermes --hermes-provider=anthropic --hermes-model=claude-opus-4-20250514 --hermes-max-turns=12
-
 # Show help
 open-computer-use -h
 ocu -h
 ```
 
-`ocu js` closes its JavaScript Worker and native MCP child after one
-evaluation. `ocu repl` keeps them for the current terminal session until
-`.exit`, Ctrl-D, or termination; `.reset` clears its bindings. On macOS, the
-separate hidden `Open Computer Use.app` permission agent may remain resident so
-later commands reuse the same permission identity. `ocu mcp` continues to expose
-the nine core native tools, plus `query` on macOS.
+## Global Configuration
 
-The npm launcher itself currently requires Node.js 18 or newer. Its help always lists
-`js` / `repl`, while `ocu capabilities --json` reports whether Node, the REPL
-adapter/kernel, and the native runtime are available. Once started, it reuses
-the current Node executable instead of looking up another `node` on PATH.
-
-`ocu doctor --json` (macOS only) returns `platform`, `accessibilityTrusted`, `screenCaptureGranted`, `allGranted`, and `missingPermissions`. Missing permissions still exit with code 0; hosts should check `allGranted` and query again after authorization. The snapshot uses existing system API/TCC diagnostics and does not prove an operation succeeded; some permission changes may still require a process restart.
-
-### Targeted query (macOS)
-
-Find controls by text or role without taking a screenshot. See [query usage](docs/targeted-query.md).
-
-## Cursor Motion
-
-Cursor Motion is an open-source cursor motion system for macOS, based on public information shared by members of the Software.Inc team. You can download the app from the [Releases page](https://github.com/iFurySt/open-computer-use/releases).
-
-[![Cursor Motion custom demo cover](./docs/generated/readme-assets/cursor-motion-demo-cover.png)](https://youtu.be/KRUq5GUHv1Q)
+`ocu` supports global configuration starting with version 1.0.0 to accommodate different workflows and use cases. The default configuration file is `~/.config/ocu/config.json`. You can edit the file directly or use the `ocu config` subcommands. See the [configuration guide](docs/configuration.md) for details.
 
 ## Star History
 
@@ -214,8 +170,4 @@ Cursor Motion is an open-source cursor motion system for macOS, based on public 
 
 ## License
 
-[MIT](./LICENSE).
-
-### Persistent configuration
-
-Use `ocu config` to inspect settings and `ocu config set image.format jpg` to persist a macOS screenshot preference. Environment overrides remain supported. See [configuration](docs/configuration.md) ([简体中文](docs/configuration.zh-CN.md)) for settings and CLI commands.
+[MIT](./LICENSE)

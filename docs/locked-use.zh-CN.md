@@ -26,6 +26,8 @@ ocu locked-use disable
 
 更新 OCU 不会自动替换 `enable` 安装的系统组件。如果 `status` 显示已安装和 App 内置的插件版本不同，先完成未结束的恢复，再执行 `ocu locked-use disable`、`ocu locked-use enable`，重新安装。
 
+如果正常手动解锁时偶尔长时间转圈、连续重试却很快，可以用仓库里的 `python3 scripts/measure-locked-use-auth-latency.py` 在已解锁状态测量插件首次加载和重复调用的耗时。它不锁屏、不修改认证规则；需要已有 Locked Use 安装。复现证据、公证票据分发修正与仍待验证的边界见 [冷加载诊断](references/macos-locked-use-cold-auth-latency.md)。
+
 ## 需要什么权限
 
 在「系统设置 → 隐私与安全性」中允许：

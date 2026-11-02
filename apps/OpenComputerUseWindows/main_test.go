@@ -331,9 +331,7 @@ func TestWindowsRuntimeTreeBudgetDefaultsMatchMacOS(t *testing.T) {
 	if !strings.Contains(windowsRuntimeScript, "$AccessibilityTreeMaxDepth = 64") {
 		t.Fatal("Windows runtime should default to the shared 64 level tree depth")
 	}
-	if !strings.Contains(windowsRuntimeScript, "$script:nextIndex -ge $script:MaxTreeNodes -or $depth -gt $script:MaxTreeDepth") {
-		t.Fatal("Windows runtime should use shared tree budget constants while rendering")
-	}
+	// Traversal bounds are exercised by windows-tree-budget.test.ps1 against production functions.
 }
 
 func TestWindowsScreenshotValidationRejectsDegenerateImages(t *testing.T) {
@@ -480,10 +478,10 @@ func TestWindowsKeyMethodSchemaAndUnsupportedSkyKey(t *testing.T) {
 func TestWindowsWindowPlacementSchemaAndUnsupportedAgentDisplay(t *testing.T) {
 	tool := findToolDefinition(t, "get_app_state")
 	properties := tool.InputSchema["properties"].(map[string]any)
-	placement := properties["window_placement"].(map[string]any)
-	if strings.Join(placement["enum"].([]string), ",") != "keep,agent_display,restore" {
-		t.Fatalf("window_placement enum = %#v", placement["enum"])
+	if _, exposed := properties["window_placement"]; exposed {
+		t.Fatal("unsupported window_placement must not be advertised")
 	}
+
 	if got, err := parseWindowPlacement(" AGENT_DISPLAY "); err != nil || got != "agent_display" {
 		t.Fatalf("parseWindowPlacement = %q, %v", got, err)
 	}

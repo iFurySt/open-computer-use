@@ -2,19 +2,31 @@
 
 set -euo pipefail
 
+# These entry points select the release/dev payload by configuration, not variant.
+# An inherited dev override could leave an old release bundle selected for delivery.
+if [[ -n "${OPEN_COMPUTER_USE_APP_VARIANT:-}" ]]; then
+  echo 'OPEN_COMPUTER_USE_APP_VARIANT is only supported by build-open-computer-use-app.sh; unset it before packaging or installing.' >&2
+  exit 1
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dist_dir="${repo_root}/dist"
 release_dir="${dist_dir}/release"
 staging_dir="${release_dir}/npm-staging"
 tarball_dir="${release_dir}/npm"
 
+build_args=(--configuration release --arch universal --out-dir "${staging_dir}")
+if [[ $# -eq 1 && "$1" == --skip-build ]]; then
+  build_args+=(--skip-build)
+elif [[ $# -ne 0 ]]; then
+  echo 'Usage: scripts/release-package.sh [--skip-build]' >&2
+  exit 64
+fi
+
 rm -rf "${release_dir}"
 mkdir -p "${tarball_dir}"
 
-node "${repo_root}/scripts/npm/build-packages.mjs" \
-  --configuration release \
-  --arch universal \
-  --out-dir "${staging_dir}"
+node "${repo_root}/scripts/npm/build-packages.mjs" "${build_args[@]}"
 
 "${repo_root}/scripts/package-github-release-assets.sh"
 

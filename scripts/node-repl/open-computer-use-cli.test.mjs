@@ -29,7 +29,7 @@ function makePackage() {
   const nativePath = path.join(packageRoot, "dist", "fake-native");
   mkdirSync(scripts, { recursive: true });
   mkdirSync(path.dirname(nativePath), { recursive: true });
-  for (const name of ["open-computer-use-repl.mjs", "open-computer-use-kernel.mjs"]) {
+  for (const name of ["open-computer-use-repl.mjs", "open-computer-use-kernel.mjs", "ocu-config.mjs"]) {
     cpSync(path.join(HERE, name), path.join(scripts, name));
   }
   writeFileSync(nativePath, `#!${process.execPath}

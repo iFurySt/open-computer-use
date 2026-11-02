@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-var version = "1.1.2"
+var version = "1.1.3"
 
 var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
 
@@ -956,7 +956,6 @@ func toolDefinitions() []toolDefinition {
 				"text_limit":         textLimitProperty("Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
 				"max_tree_nodes":     positiveIntegerProperty("Maximum accessibility tree nodes to render. Defaults to 1200."),
 				"max_tree_depth":     positiveIntegerProperty("Maximum accessibility tree depth to render. Defaults to 64."),
-				"window_placement":   enumStringProperty("keep (default) leaves the window where it is. agent_display and restore are macOS-only and not supported on Windows.", windowPlacementValues),
 			}, []string{"app"}),
 		},
 		{

@@ -4,6 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 
 export const settings = {
+  "virtualDisplay.enabled": { default: false, env: "OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED", boolean: true },
   "image.format": { default: "png", env: "OPEN_COMPUTER_USE_IMAGE_FORMAT", choices: ["png", "jpg", "webp"] },
   "image.jpegQuality": { default: 0.8, env: "OPEN_COMPUTER_USE_IMAGE_JPEG_QUALITY", min: 0, max: 1 },
   "image.maxLongEdgePixels": { default: 1280, env: "OPEN_COMPUTER_USE_IMAGE_MAX_DIMENSION", min: 1, max: 16384, integer: true, nullable: true },
@@ -47,7 +48,9 @@ export function readConfig(file) {
   try { value = JSON.parse(readFileSync(file, "utf8")); }
   catch (error) { throw new Error(`Cannot read config ${file}: ${error.message}`); }
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Config must be a JSON object");
-  if (value.image !== undefined && (!value.image || typeof value.image !== "object" || Array.isArray(value.image))) throw new Error("Config image must be an object");
+  for (const section of ["image", "virtualDisplay"]) {
+    if (value[section] !== undefined && (!value[section] || typeof value[section] !== "object" || Array.isArray(value[section]))) throw new Error(`Config ${section} must be an object`);
+  }
   return value;
 }
 
@@ -56,17 +59,20 @@ export function inspectConfig(env = process.env) {
   const persisted = readConfig(file);
   const values = {}, sources = {}, warnings = [];
   for (const [key, spec] of Object.entries(settings)) {
-    const name = key.split(".")[1];
+    const [section, name] = key.split(".");
     const legacyName = { maxLongEdgePixels: "maxDimension" }[name];
-    if (persisted.image?.[name] === undefined && legacyName && persisted.image?.[legacyName] !== undefined) persisted.image[name] = persisted.image[legacyName];
+    if (section === "image" && persisted.image?.[name] === undefined && legacyName && persisted.image?.[legacyName] !== undefined) persisted.image[name] = persisted.image[legacyName];
     let value = spec.default, source = "default";
-    if (persisted.image?.[name] !== undefined) {
-      try { value = validateSetting(key, persisted.image[name]); source = "file"; }
+    if (persisted[section]?.[name] !== undefined) {
+      try { value = validateSetting(key, persisted[section][name]); source = "file"; }
       catch (error) { warnings.push(error.message); }
     }
     if (env[spec.env] !== undefined) {
       try { value = validateSetting(key, env[spec.env], { fromText: true }); source = "env"; }
-      catch (error) { warnings.push(`${spec.env}: ${error.message}`); }
+      catch (error) {
+        if (key === "virtualDisplay.enabled") { value = false; source = "default"; }
+        warnings.push(`${spec.env}: ${error.message}`);
+      }
     }
     values[key] = value; sources[key] = source;
   }
@@ -89,7 +95,7 @@ export function configCommand(argv, env = process.env) {
   if (action === "list" && (argv.length <= 1 || (argv.length === 2 && argv[1] === "--json"))) {
     const report = inspectConfig(env);
     if (argv[1] === "--json") return JSON.stringify(report, null, 2);
-    return [`Config: ${report.path}`, "Screenshot settings apply to macOS.", ...Object.entries(report.values).map(([key, value]) => `${key} = ${value} (${report.sources[key]})`), ...report.warnings.map(w => `Warning: ${w}`)].join("\n");
+    return [`Config: ${report.path}`, "Screenshot and virtual display settings apply to macOS.", ...Object.entries(report.values).map(([key, value]) => `${key} = ${value} (${report.sources[key]})`), ...report.warnings.map(w => `Warning: ${w}`)].join("\n");
   }
   if (action === "get" && argv.length === 2) {
     validateKey(argv[1]); return String(inspectConfig(env).values[argv[1]]);
@@ -97,17 +103,19 @@ export function configCommand(argv, env = process.env) {
   if (action === "set" && argv.length === 3) {
     const [key, raw] = argv.slice(1), value = validateSetting(key, raw, { fromText: true });
     const file = configPath(env), config = readConfig(file);
-    config.image ??= {}; config.image[key.split(".")[1]] = value;
+    const [section, name] = key.split(".");
+    config[section] ??= {}; config[section][name] = value;
     save(file, config);
     return `${key} = ${value} saved to ${file}${env[settings[key].env] !== undefined ? `\nWarning: ${settings[key].env} overrides this saved setting.` : ""}`;
   }
   if (action === "reset" && argv.length === 2) {
     const key = argv[1]; validateKey(key);
     const file = configPath(env), config = readConfig(file);
-    if (config.image) {
-      const name = key.split(".")[1]; delete config.image[name];
-      const legacy = { maxLongEdgePixels: "maxDimension" }[name];
-      if (legacy) delete config.image[legacy];
+    const [section, name] = key.split(".");
+    if (config[section]) {
+      delete config[section][name];
+      const legacy = section === "image" && { maxLongEdgePixels: "maxDimension" }[name];
+      if (legacy) delete config[section][legacy];
     }
     if (existsSync(file)) save(file, config);
     return `${key} reset (environment overrides still apply)`;
@@ -116,13 +124,15 @@ export function configCommand(argv, env = process.env) {
 }
 function validateKey(key) { if (!settings[key]) throw new Error(`Unknown setting: ${key}`); }
 export const configHelp = `Usage: ocu config [list [--json] | path | get KEY | set KEY VALUE | reset KEY]
-Settings (macOS screenshots): ${Object.keys(settings).join(", ")}
+Settings (macOS): ${Object.keys(settings).join(", ")}
 image.maxLongEdgePixels: maximum long edge in pixels (null disables).
 image.scaleDownAfterMaxSize: true resizes oversized images; false omits them.
 image.discardBelowPixelCount: omit when width * height is below this total pixel count (0 disables).
 Formats: png (default), jpg, webp (lossless); jpeg is a jpg alias.
-Precedence: environment > config file > defaults. Changes apply on the next capture.
+Precedence: environment > config file > defaults. Changes apply on the next capture or tools/list; reconnect MCP clients to refresh cached schemas.
+virtualDisplay.enabled: false by default; true exposes window_placement and permits virtual display creation.
 Examples:
+  ocu config set virtualDisplay.enabled true
   ocu config set image.format jpg
   ocu config set image.maxLongEdgePixels 1024
   ocu config reset image.format`;

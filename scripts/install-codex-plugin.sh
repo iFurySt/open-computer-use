@@ -2,6 +2,13 @@
 
 set -euo pipefail
 
+# These entry points select the release/dev payload by configuration, not variant.
+# An inherited dev override could leave an old release bundle selected for delivery.
+if [[ -n "${OPEN_COMPUTER_USE_APP_VARIANT:-}" ]]; then
+  echo 'OPEN_COMPUTER_USE_APP_VARIANT is only supported by build-open-computer-use-app.sh; unset it before packaging or installing.' >&2
+  exit 1
+fi
+
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 config_helper="${repo_root}/scripts/install-config-helper.mjs"
 codex_home="${CODEX_HOME:-${HOME}/.codex}"
@@ -196,7 +203,7 @@ fi
 if [[ ! -f "${repl_source_root}/open-computer-use-repl.mjs" ]]; then
   repl_source_root="${plugin_source_root}/scripts"
 fi
-for repl_file in open-computer-use-repl.mjs open-computer-use-kernel.mjs; do
+for repl_file in open-computer-use-repl.mjs open-computer-use-kernel.mjs ocu-config.mjs; do
   if [[ ! -f "${repl_source_root}/${repl_file}" ]]; then
     echo "Missing JS REPL runtime at ${repl_source_root}/${repl_file}" >&2
     exit 1
@@ -221,6 +228,7 @@ cp -R "${plugin_source_root}/." "${plugin_install_root}/"
 node "${config_helper}" copy-into-dir "${plugin_install_root}" "${payload_path}"
 cp "${repl_source_root}/open-computer-use-repl.mjs" "${plugin_install_root}/scripts/open-computer-use-repl.mjs"
 cp "${repl_source_root}/open-computer-use-kernel.mjs" "${plugin_install_root}/scripts/open-computer-use-kernel.mjs"
+cp "${repl_source_root}/ocu-config.mjs" "${plugin_install_root}/scripts/ocu-config.mjs"
 
 node "${config_helper}" codex-plugin-config "${config_path}" "${repo_root}" "${marketplace_name}" "${plugin_name}"
 

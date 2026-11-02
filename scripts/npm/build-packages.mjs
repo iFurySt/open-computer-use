@@ -437,6 +437,10 @@ function copyInstallerScripts(packageRoot) {
     );
   }
   cpSync(
+    path.join(repoRoot, "scripts", "node-repl", "ocu-config.mjs"),
+    path.join(packageRoot, "plugins", "open-computer-use", "scripts", "ocu-config.mjs")
+  );
+  cpSync(
     path.join(repoRoot, "scripts", "node-repl", "open-computer-use-repl.mjs"),
     path.join(packageRoot, "plugins", "open-computer-use", "scripts", "open-computer-use-repl.mjs")
   );
@@ -529,6 +533,9 @@ function stagePackage(packageName, version, outDir) {
 
 function main() {
   const options = parseArgs(process.argv.slice(2));
+  if (process.env.OPEN_COMPUTER_USE_APP_VARIANT) {
+    throw new Error("OPEN_COMPUTER_USE_APP_VARIANT is only supported by build-open-computer-use-app.sh; unset it before packaging.");
+  }
   const pluginManifestPath = path.join(repoRoot, "plugins", "open-computer-use", ".codex-plugin", "plugin.json");
   const { version } = readJSON(pluginManifestPath);
 

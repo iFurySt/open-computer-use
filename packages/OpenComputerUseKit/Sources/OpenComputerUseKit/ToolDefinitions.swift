@@ -29,7 +29,23 @@ public struct ToolDefinition: @unchecked Sendable {
 }
 
 public enum ToolDefinitions {
-    public static let all: [ToolDefinition] = [
+    public static var all: [ToolDefinition] {
+        configured(virtualDisplayEnabled: VirtualDisplayConfig.current.enabled)
+    }
+
+    static func configured(virtualDisplayEnabled: Bool) -> [ToolDefinition] {
+        guard !virtualDisplayEnabled else { return definitions }
+        return definitions.map { tool in
+            guard tool.name == "get_app_state" else { return tool }
+            var schema = tool.inputSchema
+            var properties = schema["properties"] as? [String: Any] ?? [:]
+            properties.removeValue(forKey: "window_placement")
+            schema["properties"] = properties
+            return ToolDefinition(name: tool.name, description: tool.description, annotations: tool.annotations, inputSchema: schema)
+        }
+    }
+
+    private static let definitions: [ToolDefinition] = [
         ToolDefinition(
             name: "click",
             description: "Click an element by index or pixel coordinates from screenshot. This tool is part of plugin `Computer Use`.",
