@@ -7,6 +7,8 @@ on:
       - 'scripts/tests/windows-observation*'
       - 'scripts/tests/windows-input*'
       - 'scripts/tests/windows-tree-budget*'
+      - 'scripts/tests/windows-set-value*'
+      - 'scripts/tests/fixtures/WindowsSetValueFixture.ps1'
       - 'scripts/tests/fixtures/WindowsTreeBudgetFixture.ps1'
       - 'scripts/tests/windows-fixture-state.ps1'
       - 'scripts/tests/fixtures/WindowsInputFixture.ps1'
@@ -60,3 +62,7 @@ jobs:
         run: ./scripts/tests/windows-tree-budget.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
       - name: Real WPF tree budget and visibility
         run: ./scripts/tests/windows-tree-budget-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
+      - name: Set value verification unit tests
+        run: ./scripts/tests/windows-set-value.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+      - name: Real WPF set value verification
+        run: ./scripts/tests/windows-set-value-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"

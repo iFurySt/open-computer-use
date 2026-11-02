@@ -15,6 +15,7 @@ final class ProbeTextView: NSTextView {
     var rejectSelectedWrite = false
     var rejectValueWrite = false
     var rejectCaretWrite = false
+    var valueMode = "normal"
     var valueWrites = 0
     var selectedWrites = 0
     var moveFocusOnProbe = false
@@ -40,7 +41,13 @@ final class ProbeTextView: NSTextView {
                 NSException(name: .invalidArgumentException, reason: "Fixture rejects value writes", userInfo: nil).raise()
                 return
             }
-            string = value
+            switch valueMode {
+            case "ignore": return
+            case "trim": string = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            case "numeric": string = String(Int(value) ?? 0)
+            case "delay": DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { self.string = value }
+            default: string = value
+            }
         } else if attribute == .selectedTextRange, let value = value as? NSValue {
             if rejectCaretWrite {
                 NSException(name: .invalidArgumentException, reason: "Fixture rejects caret writes", userInfo: nil).raise()
@@ -96,8 +103,10 @@ final class Controller {
                 if let sheet { window.endSheet(sheet); sheet.orderOut(nil); self.sheet = nil }
                 view.valueWritable = true; view.selectedWritable = true; view.rejectSelectedWrite = false; view.rejectValueWrite = false; view.rejectCaretWrite = false; view.moveFocusOnProbe = false
                 view.string = "hello world"; field.stringValue = "untouched"; sheetField.stringValue = "save.txt"
+                view.valueMode = "normal"
                 view.valueWrites = 0; view.selectedWrites = 0
             }
+            if let mode = cmd["valueMode"] as? String { view.valueMode = mode }
             if let flag = cmd["valueWritable"] as? Bool { view.valueWritable = flag }
             if let flag = cmd["selectedWritable"] as? Bool { view.selectedWritable = flag }
             if let flag = cmd["rejectSelectedWrite"] as? Bool { view.rejectSelectedWrite = flag }

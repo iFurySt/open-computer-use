@@ -1,40 +1,13 @@
-## [2026-10-21 12:08] | Task: set_value 增加 AX 回读校验
+# set_value 写入验证（PR #111）
 
-### Execution Context
+原 PR 由 wicgee 提出，修复 AX API 返回成功但控件未应用值的情况。2026-11-02 根据用户要求基于最新 main 完善，扩展检查 Windows / Linux，并保留原 PR 提交和作者贡献。
 
-- Agent ID: `lead`
-- Base Model: deepseek-flash
-- Runtime: DSH web
+- macOS 直接读 AXValue，按实际类型比较；文本不 trim、不转数值、不做 Unicode 归一化，数值比较避免大整数转 Double 丢失精度。
+- 轮询使用单调时钟，最多 0.6 秒，只读不重写；每次读取和返回前检查会话。关闭完整回读不跳过验证。
+- Windows UIA ValuePattern 和 Linux EditableText 同样精确验证；Linux AT-SPI Value 采用数值比较，不在文本写失败后切换数值路径。
+- Linux / Windows 入口保留 value 的空白，三平台允许空字符串清空。验证失败不输出整段值，提示重新观察后再决定是否重试。
+- 新增 AppKit / GTK / WPF 可控忽略、改写、延迟 fixture，生产函数边界测试和 Windows CI；文档同步到 docs/set-value-verification.md。
 
-### User Query
+## 验证进度
 
-> 实现 #83 P1：`set_value` 在 AX 写入后读回并比对，避免"返回成功但值未变"的静默失败；比较逻辑抽成纯函数并补单测与 fixture 回归；本地分支提交，不 push。
-
-### Changes Overview
-
-- 新增 `SetValueReadBack.swift`：
-  - `setValueReadBackResult(requested:before:after:)` 纯函数，返回 `verified` / `unchanged` / `mismatched`；
-  - `setValueValuesMatch` 依次做 trim 后精确比较、数值比较（`15` == `15.0`）、布尔字面量比较（`true` == `1`）；
-  - `setValueReadBackString(from:)` 支持 `CFString` / `CFNumber` / `CFBoolean`，整数型数值不会读回成 `15.0`；
-  - `setValueReadBackErrorMessage` 生成带元素索引与实际值的错误文案。
-- `ComputerUseService.setValue` 在写入前记录当前值，AX 写入成功后 0.6 秒内轮询回读并比对；值未变化或不一致时抛出明确错误，不再静默成功。请求值等于元素现值时视为 no-op 成功。
-- `ToolDefinitions.swift` 的 `set_value` 描述说明结果会校验实际写入。
-- `skills/open-computer-use/references/usage.md` 补充回读语义说明。
-
-### Design Intent
-
-macOS 的 `AXUIElementSetAttributeValue` 对一些控件（select、date stepper 等）会返回成功但实际不写入，agent 无法从 `isError` 判断失败。回读比对把这种失败转成显式错误，并保留"重复写入相同值"的幂等语义。fixture 分支（`OpenComputerUseFixture` 无头 harness）保持原有行为，不进入 AX 回读路径；单测用该 harness 在 smoke 脚本中写入的 Unicode 值做数据级回归。
-
-### Files Modified
-
-- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/SetValueReadBack.swift`（新增）
-- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
-- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ToolDefinitions.swift`
-- `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
-- `skills/open-computer-use/references/usage.md`
-
-### Validation
-
-- `swift build` 成功。
-- `swift test`：386 个测试，7 个跳过，0 失败；新增 4 个用例全部通过（字符串/数字/布尔/空白/同值 no-op/不一致/不可读、AX 值转换、错误文案、fixture Unicode 值回归）。
-- 变更只在本地分支 `fix/set-value-read-back`，未 push、未开 PR。
+Swift 比较 / 轮询单测、Linux Python 42 项、Linux / Windows Go 测试、PowerShell 生产验证函数测试通过。真实 GTK 的正常、清空、空白/Unicode、忽略、长度限制、延迟、开关完整回读均通过。macOS 最终真实回归和 Windows CI 进行中。

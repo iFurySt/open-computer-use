@@ -1138,6 +1138,21 @@ function Find-Element($process, $record) {
     return $null
 }
 
+function Invoke-VerifiedSetValue($pattern, [string]$value) {
+    if ($pattern.Current.IsReadOnly) { throw "Cannot set a value for an element that is not settable" }
+    $pattern.SetValue($value)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $matched = $false
+        try { $matched = [string]::Equals($pattern.Current.Value, $value, [StringComparison]::Ordinal) } catch { }
+        if ($matched) { return }
+        if ($clock.Elapsed.TotalSeconds -ge 0.6) {
+            throw "set_value could not verify the requested value. Read the current value before retrying; the write may have changed the control."
+        }
+        Start-Sleep -Milliseconds 50
+    }
+}
+
 function Get-CurrentPatternOrNull($element, $pattern) {
     try {
         return $element.GetCurrentPattern($pattern)
@@ -1460,7 +1475,7 @@ try {
                 if ($null -eq $valuePattern) {
                     throw "Cannot set a value for an element that is not settable"
                 }
-                $valuePattern.SetValue($operation.value)
+                Invoke-VerifiedSetValue $valuePattern ([string]$operation.value)
             }
             default {
                 throw "unsupportedTool(`"$($operation.tool)`")"
