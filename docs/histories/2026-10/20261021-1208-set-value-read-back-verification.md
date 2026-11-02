@@ -10,4 +10,4 @@
 
 ## 验证进度
 
-Swift 比较 / 轮询单测、Linux Python 42 项、Linux / Windows Go 测试、PowerShell 生产验证函数测试通过。真实 GTK 的正常、清空、空白/Unicode、忽略、长度限制、延迟、开关完整回读均通过。macOS 最终真实回归和 Windows CI 进行中。
+Swift 比较 / 轮询单测、Linux Python 42 项、Linux / Windows Go 测试、PowerShell 生产验证函数测试通过。真实 GTK 的正常、清空、空白/Unicode、忽略、长度限制、延迟、开关完整回读均通过。macOS 正常/清空/忽略/改写/延迟、开关完整回读和 JS 错误传播均通过；旧 main 在忽略写入的真实控件上仍返回 ok，负对照复现。完整 Swift 428 项（9 跳过）、Node 54 项和既有 AppKit 文本输入回归通过。GTK 原生数值控件也验证通过；Windows CI 进行中。

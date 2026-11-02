@@ -12,9 +12,12 @@ final class SetValueReadBackTests: XCTestCase {
     }
     func testOnlyActualNumericAndBooleanValuesAllowTypedComparison() {
         XCTAssertTrue(setValueMatches(requested: "15.0", actual: NSNumber(value: 15)))
+        XCTAssertTrue(setValueMatches(requested: "1.0e-200", actual: NSNumber(value: 1e-200)))
+        XCTAssertTrue(setValueMatches(requested: "1e200", actual: NSNumber(value: 1e200)))
+        XCTAssertTrue(setValueMatches(requested: "-0.00", actual: NSNumber(value: 0)))
         XCTAssertTrue(setValueMatches(requested: "true", actual: kCFBooleanTrue))
         XCTAssertTrue(setValueMatches(requested: "0", actual: kCFBooleanFalse))
-        for value in ["15garbage", "15\n", "NaN", "Infinity"] {
+        for value in ["15garbage", "15\n", "NaN", "Infinity", "", ".", "1e", "1.2.3", "1e999999999999999999999999"] {
             XCTAssertFalse(setValueMatches(requested: value, actual: NSNumber(value: 15)))
         }
         XCTAssertFalse(setValueMatches(requested: "9007199254740993", actual: NSNumber(value: Int64(9007199254740992))))

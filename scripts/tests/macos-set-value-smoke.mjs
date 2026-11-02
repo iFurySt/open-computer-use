@@ -62,7 +62,7 @@ try {
       {mode:'normal',value:'hello world'}, {mode:'delay',value:'delayed'},
       {mode:'ignore',value:'new',error:true}, {mode:'trim',value:' padded ',error:true},
       {mode:'numeric',value:'0015',error:true},
-    ]) {
+    ].filter(item => !process.argv.includes('--ignored-only') || item.mode === 'ignore')) {
       await configure({reset:true,target:'view',valueMode:item.mode});
       const snapshot=await call('get_app_state',{include_screenshot:false});
       const index=text(snapshot).match(/^\s*(\d+) .*Document input/m)?.[1];

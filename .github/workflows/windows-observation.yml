@@ -54,6 +54,10 @@ jobs:
         run: |
           powershell.exe -NoProfile -NonInteractive -File ./scripts/tests/windows-input.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Set value verification unit tests
+        run: ./scripts/tests/windows-set-value.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+      - name: Real WPF set value verification
+        run: ./scripts/tests/windows-set-value-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
       - name: Real WPF and native MCP
         run: ./scripts/tests/windows-observation-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
       - name: Real Windows scroll, DPI and physical input
@@ -62,7 +66,3 @@ jobs:
         run: ./scripts/tests/windows-tree-budget.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
       - name: Real WPF tree budget and visibility
         run: ./scripts/tests/windows-tree-budget-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
-      - name: Set value verification unit tests
-        run: ./scripts/tests/windows-set-value.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
-      - name: Real WPF set value verification
-        run: ./scripts/tests/windows-set-value-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"

@@ -1,7 +1,7 @@
 param([Parameter(Mandatory=$true)][string]$StatePath)
 $ErrorActionPreference='Stop'
-Add-Type -AssemblyName PresentationFramework,UIAutomationProvider,UIAutomationTypes
-$refs=@('System.dll',[System.Windows.Controls.TextBox].Assembly.Location,[System.Windows.Media.Visual].Assembly.Location,[System.Windows.Threading.DispatcherObject].Assembly.Location,[System.Windows.Automation.Provider.IValueProvider].Assembly.Location,[System.Windows.Automation.AutomationElementIdentifiers].Assembly.Location)
+Add-Type -AssemblyName PresentationFramework,UIAutomationProvider,UIAutomationTypes,System.Xaml
+$refs=@('System.dll',[System.Windows.Markup.IQueryAmbient].Assembly.Location,[System.Windows.Controls.TextBox].Assembly.Location,[System.Windows.Media.Visual].Assembly.Location,[System.Windows.Threading.DispatcherObject].Assembly.Location,[System.Windows.Automation.Provider.IValueProvider].Assembly.Location,[System.Windows.Automation.AutomationElementIdentifiers].Assembly.Location)
 Add-Type -ReferencedAssemblies $refs -TypeDefinition @'
 using System;
 using System.Windows.Controls;

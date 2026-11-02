@@ -14,6 +14,7 @@ function Assert($condition, $message) { if (-not $condition) { throw $message } 
 function Wait-For($test, $description) {
     $deadline = [DateTime]::UtcNow.AddSeconds(15)
     do {
+        if ($null -ne $fixture -and $fixture.HasExited) { throw "WPF fixture exited before $description" }
         try { if (& $test) { return } } catch { }
         Start-Sleep -Milliseconds 50
     } while ([DateTime]::UtcNow -lt $deadline)
