@@ -843,11 +843,17 @@ private struct RenderContext {
 
 // Runs the real renderer against a scoped, injected AX provider. The returned
 // records let semantic fixtures verify the actual numeric action lookup targets.
-func renderAXSemanticFixture(root: AXUIElement, focused: AXUIElement? = nil) -> (lines: [String], records: [Int: ElementRecord]) {
+func renderAXSemanticFixture(root: AXUIElement, focused: AXUIElement? = nil, limits: AccessibilityTreeLimits = .defaults) -> (lines: [String], records: [Int: ElementRecord]) {
     var renderer = TreeRenderer(context: RenderContext(windowBounds: .zero, focusedElement: focused,
-        textLimit: .max, treeLimits: .defaults))
+        textLimit: .max, treeLimits: limits))
     renderer.render(root)
     return (renderer.lines, renderer.records)
+}
+
+private struct TraversalElementKey: Hashable {
+    let element: AXUIElement
+    static func == (lhs: Self, rhs: Self) -> Bool { CFEqual(lhs.element, rhs.element) }
+    func hash(into hasher: inout Hasher) { hasher.combine(CFHash(element)) }
 }
 
 private struct TreeRenderer {
@@ -858,12 +864,75 @@ private struct TreeRenderer {
     var records: [Int: ElementRecord] = [:]
     var identifierIndex: [String: String] = [:]
     var focusedSummary: String?
+    private var selected: Set<TraversalElementKey> = []
+    private var rendered: Set<TraversalElementKey> = []
+    private var plannedChildren: [TraversalElementKey: [AXUIElement]] = [:]
 
     init(context: RenderContext) {
         self.context = context
     }
 
-    mutating func render(_ root: AXUIElement, depth: Int = 0, ancestors: [AXUIElement] = []) {
+    mutating func render(_ root: AXUIElement) {
+        let truncated = plan(root)
+        renderSelected(root)
+        if truncated { lines.append("[Accessibility tree truncated: prioritized visible controls; some nodes were omitted.]") }
+    }
+
+    // Discover before rendering: a large early list cannot consume the output budget
+    // before later dialog controls. Render the selected graph in its original order.
+    private mutating func plan(_ root: AXUIElement) -> Bool {
+        struct Work {
+            let node: AXUIElement
+            let depth: Int
+            let inCollection: Bool
+            let viewport: CGRect?
+        }
+        selected = []; plannedChildren = [:]
+        let limit = max(0, context.treeLimits.maxNodeCount - nextIndex)
+        let scanLimit = max(64, min(limit, 2500) * 4)
+        var scanned = 0, truncated = false
+        var queues = Array(repeating: [Work](), count: 5)
+        var offsets = Array(repeating: 0, count: 5)
+        var discovered: Set<TraversalElementKey> = []
+        func enqueue(_ work: Work) {
+            guard work.depth < context.treeLimits.maxDepth, scanned < scanLimit else { truncated = true; return }
+            scanned += 1
+            guard discovered.insert(.init(element: work.node)).inserted else { return }
+            let role = stringValue(of: work.node, attribute: kAXRoleAttribute) ?? ""
+            let frame = resolveLocalFrame(of: work.node, windowBounds: nil)
+            let hidden = frame.map { frame in
+                frame.width > 0 && frame.height > 0 && work.viewport.map { !$0.intersects(frame) } == true
+            } ?? false
+            let control = ["AXButton", "AXCheckBox", "AXRadioButton", "AXTextField", "AXTextArea", "AXComboBox", "AXPopUpButton", "AXMenuButton", "AXSlider"].contains(role)
+                || context.focusedElement.map { CFEqual($0, work.node) } == true
+            let collection = work.inCollection || usesRowsAsPrimaryRole(role) || role == "AXScrollArea"
+            let rank = hidden ? 4 : collection ? (control ? 2 : 3) : control ? 0 : 1
+            queues[rank].append(work)
+        }
+        let rootFrame = resolveLocalFrame(of: root, windowBounds: nil)
+        enqueue(.init(node: root, depth: 0, inCollection: false, viewport: rootFrame))
+        while selected.count < limit, let rank = queues.indices.first(where: { offsets[$0] < queues[$0].count }) {
+            let work = queues[rank][offsets[rank]]; offsets[rank] += 1
+            let key = TraversalElementKey(element: work.node)
+            selected.insert(key)
+            let role = stringValue(of: work.node, attribute: kAXRoleAttribute)
+            let collection = work.inCollection || usesRowsAsPrimaryRole(role) || role == "AXScrollArea"
+            var viewport = work.viewport
+            if role == "AXScrollArea", let frame = resolveLocalFrame(of: work.node, windowBounds: nil), frame.width > 0, frame.height > 0 {
+                viewport = viewport.map { $0.intersection(frame) } ?? frame
+            }
+            let remaining = work.depth + 1 >= context.treeLimits.maxDepth ? 0 : max(0, scanLimit - scanned)
+            let raw = rawChildren(of: work.node, limit: remaining, truncated: &truncated)
+            // Duplicate and skipped entries still cost provider traversal work.
+            scanned += raw.inspected - raw.children.count
+            plannedChildren[key] = raw.children
+            for child in raw.children { enqueue(.init(node: child, depth: work.depth + 1, inCollection: collection, viewport: viewport)) }
+        }
+        return truncated || queues.indices.contains { offsets[$0] < queues[$0].count }
+    }
+
+    private mutating func renderSelected(_ root: AXUIElement, depth: Int = 0, ancestors: [AXUIElement] = []) {
+        guard selected.contains(.init(element: root)), rendered.insert(.init(element: root)).inserted else { return }
         guard shouldContinueRendering(nextIndex: nextIndex, depth: depth, limits: context.treeLimits) else {
             return
         }
@@ -938,7 +1007,7 @@ private struct TreeRenderer {
         )
         let linkText = role == "AXLink" ? markdownLinkText(for: root, title: title, label: label, value: value, textLimit: context.textLimit) : nil
         let displayTitle = linkText ?? title
-        let inlineRowSummary = outlineRowSummary(for: root, role: role)
+        let inlineRowSummary = outlineRowSummary(for: root, role: role, selectedChildren: childElements)
         let hidesChildren = shouldSuppressChildren(
             role: role,
             title: displayTitle,
@@ -973,7 +1042,7 @@ private struct TreeRenderer {
             preservesCompactGenericActionTarget: rendersCompactGenericActionTarget
         ) {
             for child in childElements {
-                render(child, depth: depth, ancestors: nextAncestors)
+                renderSelected(child, depth: depth, ancestors: nextAncestors)
             }
             return
         }
@@ -1053,7 +1122,7 @@ private struct TreeRenderer {
         if rendersSummaryAsChildren, let genericTextSummary {
             renderSyntheticText(genericTextSummary, representedBy: root, depth: depth + 1)
             for image in summaryImageChildren {
-                render(image, depth: depth + 1, ancestors: nextAncestors)
+                renderSelected(image, depth: depth + 1, ancestors: nextAncestors)
             }
             return
         }
@@ -1063,7 +1132,7 @@ private struct TreeRenderer {
         }
 
         for child in childElements {
-            render(child, depth: depth + 1, ancestors: nextAncestors)
+            renderSelected(child, depth: depth + 1, ancestors: nextAncestors)
         }
     }
 
@@ -1106,40 +1175,27 @@ private struct TreeRenderer {
     }
 
     private func children(of element: AXUIElement) -> [AXUIElement] {
+        (plannedChildren[.init(element: element)] ?? []).filter { selected.contains(.init(element: $0)) }
+    }
+
+    private func rawChildren(of element: AXUIElement, limit: Int, truncated: inout Bool) -> (children: [AXUIElement], inspected: Int) {
         let role = stringValue(of: element, attribute: kAXRoleAttribute)
         let rows = copyArray(element, attribute: kAXRowsAttribute) ?? []
-        let visibleChildren = copyArray(element, attribute: axVisibleChildrenAttribute) ?? []
-        let attributes = childTraversalAttributes(
-            role: role,
-            hasRows: !rows.isEmpty,
-            hasVisibleChildren: !visibleChildren.isEmpty
-        )
+        let visible = copyArray(element, attribute: axVisibleChildrenAttribute) ?? []
+        let attributes = childTraversalAttributes(role: role, hasRows: !rows.isEmpty, hasVisibleChildren: !visible.isEmpty)
         var children: [AXUIElement] = []
-
+        var inspected = 0
+        var seen: Set<TraversalElementKey> = []
         for attribute in attributes {
-            let sourceValues: [AXUIElement]
-            if attribute == kAXRowsAttribute {
-                sourceValues = rows
-            } else if attribute == axVisibleChildrenAttribute {
-                sourceValues = visibleChildren
-            } else {
-                sourceValues = copyArray(element, attribute: attribute) ?? []
-            }
-
-            let values = attribute == kAXRowsAttribute ? visibleRows(in: sourceValues, parent: element) : sourceValues
-
-            for child in values {
-                if shouldSkipChild(child, of: element) {
-                    continue
-                }
-
-                if !children.contains(where: { CFEqual($0, child) }) {
-                    children.append(child)
-                }
+            let source = attribute == kAXRowsAttribute ? rows : attribute == axVisibleChildrenAttribute ? visible : copyArray(element, attribute: attribute) ?? []
+            for child in source {
+                guard inspected < limit else { truncated = true; return (children, inspected) }
+                inspected += 1
+                guard seen.insert(.init(element: child)).inserted else { continue }
+                if !shouldSkipChild(child, of: element) { children.append(child) }
             }
         }
-
-        return children
+        return (children, inspected)
     }
 
     private func containsActionableLinkDescendant(
@@ -1180,6 +1236,7 @@ private struct TreeRenderer {
 }
 
 func childTraversalAttributes(role: String?, hasRows: Bool, hasVisibleChildren: Bool) -> [String] {
+    if hasVisibleChildren && usesRowsAsPrimaryRole(role) { return [axVisibleChildrenAttribute] }
     var attributes: [String] = []
     if !(hasRows && usesRowsAsPrimaryRole(role)) && !(hasVisibleChildren && usesVisibleChildrenAsPrimaryRole(role)) {
         attributes.append(kAXChildrenAttribute)
@@ -1481,7 +1538,7 @@ private func markdownEscapedLinkText(_ text: String) -> String {
         .replacingOccurrences(of: "]", with: "\\]")
 }
 
-private func outlineRowSummary(for element: AXUIElement, role: String) -> String? {
+private func outlineRowSummary(for element: AXUIElement, role: String, selectedChildren: [AXUIElement]) -> String? {
     guard role == kAXOutlineRole as String || role == kAXListRole as String else {
         return nil
     }
@@ -1490,12 +1547,10 @@ private func outlineRowSummary(for element: AXUIElement, role: String) -> String
         return nil
     }
 
-    let visibleRows = visibleRows(in: allRows, parent: element)
-    guard !visibleRows.isEmpty, visibleRows.count < allRows.count else {
-        return nil
-    }
-
-    return "(showing 0-\(visibleRows.count - 1) of \(allRows.count) items)"
+    let rows = Set(allRows.map { TraversalElementKey(element: $0) })
+    let included = selectedChildren.filter { rows.contains(.init(element: $0)) }.count
+    guard included < allRows.count else { return nil }
+    return "(\(included) of \(allRows.count) items included)"
 }
 
 private func formattedValueSegment(for element: AXUIElement, roleText: String, title: String?, value: String?) -> String {
@@ -2260,26 +2315,6 @@ private func summaryTextForLink(
 
 func summaryMarkdownLinkText(text: String, url: String) -> String {
     "[\(markdownEscapedLinkText(text))](\(url))"
-}
-
-private func visibleRows(in rows: [AXUIElement], parent: AXUIElement) -> [AXUIElement] {
-    guard let parentFrame = resolveLocalFrame(of: parent, windowBounds: nil) else {
-        return Array(rows.prefix(20))
-    }
-
-    let visible = rows.filter { row in
-        guard let rowFrame = resolveLocalFrame(of: row, windowBounds: nil) else {
-            return false
-        }
-
-        return rowFrame.intersects(parentFrame)
-    }
-
-    if visible.isEmpty {
-        return Array(rows.prefix(20))
-    }
-
-    return Array(visible.prefix(20))
 }
 
 private func displayIdentifier(_ value: String?) -> String? {

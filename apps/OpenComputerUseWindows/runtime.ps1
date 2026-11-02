@@ -803,29 +803,137 @@ function Get-ElementTitle($record) {
     return ""
 }
 
+# This cache lives only for one snapshot. Action targets are still resolved afresh.
+function New-TreeCacheRequest {
+    $cache = New-Object Windows.Automation.CacheRequest
+    $cache.TreeScope = [Windows.Automation.TreeScope]::Element
+    $cache.TreeFilter = [Windows.Automation.Condition]::TrueCondition
+    foreach ($name in @('ControlType', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
+        'IsInvokePatternAvailable', 'IsTogglePatternAvailable', 'IsSelectionItemPatternAvailable', 'IsExpandCollapsePatternAvailable',
+        'IsScrollItemPatternAvailable', 'IsScrollPatternAvailable', 'IsValuePatternAvailable')) {
+        $cache.Add([Windows.Automation.AutomationElement]::($name + 'Property'))
+    }
+    $cache.Add([Windows.Automation.ValuePattern]::ValueProperty)
+    $cache.Add([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
+    return $cache
+}
+
+function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
+    try {
+        $info = $element.Cached
+        $rect = $info.BoundingRectangle
+        $frame = $null
+        if (-not $rect.IsEmpty -and $rect.Width -gt 0 -and $rect.Height -gt 0) {
+            $frame = if ($null -eq $windowBounds) { New-Frame $rect.X $rect.Y $rect.Width $rect.Height }
+                     else { New-Frame ($rect.X - $windowBounds.x) ($rect.Y - $windowBounds.y) $rect.Width $rect.Height }
+        }
+        $actions = New-Object System.Collections.Generic.List[string]
+        foreach ($pair in @(@('Invoke', 'Invoke'), @('Toggle', 'Toggle'), @('SelectionItem', 'Select'),
+            @('ScrollItem', 'ScrollIntoView'), @('Scroll', 'Scroll'), @('Value', 'SetValue'))) {
+            if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::('Is' + $pair[0] + 'PatternAvailableProperty'))) {
+                $actions.Add($pair[1])
+            }
+        }
+        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty)) {
+            $state = $element.GetCachedPropertyValue([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
+            if ($state -eq [Windows.Automation.ExpandCollapseState]::Collapsed) { $actions.Add('Expand') }
+            elseif ($state -eq [Windows.Automation.ExpandCollapseState]::Expanded) { $actions.Add('Collapse') }
+        }
+        $value = ''
+        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty)) {
+            $value = Limit-Text ([string]$element.GetCachedPropertyValue([Windows.Automation.ValuePattern]::ValueProperty)) $TextLimit
+        }
+        return [pscustomobject]@{
+            index = $index
+            runtimeId = @($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty))
+            automationId = $info.AutomationId
+            name = Limit-Text $info.Name $TextLimit
+            controlType = $info.ControlType.ProgrammaticName
+            localizedControlType = $info.LocalizedControlType
+            className = $info.ClassName
+            value = $value
+            nativeWindowHandle = [int64]$info.NativeWindowHandle
+            frame = $frame
+            actions = $actions.ToArray()
+        }
+    } catch {
+        return Get-ElementRecord $element $index $windowBounds $TextLimit
+    }
+}
+
+function Get-TreeChildren($node, [int]$limit) {
+    if ($limit -le 0) {
+        return [pscustomobject]@{ children = @(); truncated = ($null -ne [Windows.Automation.TreeWalker]::RawViewWalker.GetFirstChild($node)) }
+    }
+    $children = $node.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
+    $result = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt [math]::Min($children.Count, $limit); $i++) { $result.Add($children.Item($i)) }
+    [pscustomobject]@{ children = $result.ToArray(); truncated = ($children.Count -gt $limit) }
+}
+
+function Get-PrioritizedTree($root, [int]$MaxNodes, [int]$MaxDepth) {
+    $queues = @(); $offsets = @(0, 0, 0, 0, 0)
+    for ($i = 0; $i -lt 5; $i++) { $queues += ,(New-Object System.Collections.Generic.List[object]) }
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $selected = New-Object System.Collections.Generic.List[object]
+    $state = @{ scanned = 0; truncated = $false; limit = [math]::Max(64, [math]::Min($MaxNodes, 2500) * 4) }
+    function Enqueue($node, [int]$depth, [string]$path, [bool]$inCollection) {
+        if ($depth -gt $MaxDepth -or $state.scanned -ge $state.limit) { $state.truncated = $true; return }
+        $state.scanned++
+        if ($null -eq $node) { return }
+        try { $runtime = (@($node.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty)) -join '.') }
+        catch { try { $runtime = (@($node.GetRuntimeId()) -join '.') } catch { $runtime = $path } }
+        if ([string]::IsNullOrWhiteSpace($runtime)) { $runtime = $path }
+        if (-not $seen.Add($runtime)) { return }
+        try { $role = $node.Cached.ControlType.ProgrammaticName } catch { $role = Get-ElementControlTypeName $node }
+        if ([string]::IsNullOrWhiteSpace($role)) { $role = Get-ElementControlTypeName $node }
+        $collection = $inCollection -or $role -in @('ControlType.List', 'ControlType.DataGrid', 'ControlType.Tree', 'ControlType.Table')
+        $hidden = $false
+        try {
+            $info = $node.Cached
+            if ($null -eq $info) { $info = $node.Current }
+            $hidden = [bool]$info.IsOffscreen
+        } catch { try { $hidden = [bool]$node.Current.IsOffscreen } catch { } }
+        $control = $role -in @('ControlType.Button', 'ControlType.CheckBox', 'ControlType.RadioButton', 'ControlType.Edit', 'ControlType.ComboBox', 'ControlType.Slider', 'ControlType.Spinner', 'ControlType.Hyperlink')
+        $rank = if ($hidden) { 4 } elseif ($collection) { if ($control) { 2 } else { 3 } } elseif ($control) { 0 } else { 1 }
+        $queues[$rank].Add([pscustomobject]@{ node = $node; depth = $depth; path = $path; collection = $collection })
+    }
+    Enqueue $root 0 '' $false
+    while ($selected.Count -lt $MaxNodes) {
+        $rank = -1
+        for ($i = 0; $i -lt 5; $i++) { if ($offsets[$i] -lt $queues[$i].Count) { $rank = $i; break } }
+        if ($rank -lt 0) { break }
+        $work = $queues[$rank][$offsets[$rank]]; $offsets[$rank]++
+        $selected.Add($work)
+        try {
+            $remaining = if ($work.depth -ge $MaxDepth) { 0 } else { [math]::Max(0, $state.limit - $state.scanned) }
+            $result = Get-TreeChildren $work.node $remaining
+            if ($result.truncated) { $state.truncated = $true }
+            for ($i = 0; $i -lt $result.children.Count; $i++) {
+                Enqueue $result.children[$i] ($work.depth + 1) ($work.path + '/' + $i.ToString('D10')) $work.collection
+            }
+        } catch { $state.truncated = $true }
+    }
+    for ($i = 0; $i -lt 5; $i++) { if ($offsets[$i] -lt $queues[$i].Count) { $state.truncated = $true } }
+    [pscustomobject]@{ nodes = @($selected | Sort-Object path); truncated = $state.truncated }
+}
+
 function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLimit, [int]$MaxTreeNodes = $script:AccessibilityTreeMaxNodeCount, [int]$MaxTreeDepth = $script:AccessibilityTreeMaxDepth) {
     $records = New-Object System.Collections.Generic.List[object]
     $lines = New-Object System.Collections.Generic.List[string]
-    $visited = New-Object System.Collections.Generic.HashSet[string]
-    $nextIndex = 0
     $effectiveMaxTreeNodes = if ($MaxTreeNodes -gt 0) { $MaxTreeNodes } else { $script:AccessibilityTreeMaxNodeCount }
     $effectiveMaxTreeDepth = if ($MaxTreeDepth -gt 0) { $MaxTreeDepth } else { $script:AccessibilityTreeMaxDepth }
-
-    function Visit($node, [int]$depth) {
-        if ($script:nextIndex -ge $script:MaxTreeNodes -or $depth -gt $script:MaxTreeDepth) {
-            return
-        }
-        $runtime = ""
-        try { $runtime = (@($node.GetRuntimeId()) -join ".") } catch { $runtime = [guid]::NewGuid().ToString() }
-        if (-not $script:visited.Add($runtime)) {
-            return
-        }
-
-        $index = $script:nextIndex
-        $script:nextIndex++
-        $record = Get-ElementRecord $node $index $script:windowBounds $TextLimit
-        $script:records.Add($record)
-
+    $cache = New-TreeCacheRequest
+    $scope = $cache.Activate()
+    try {
+        try { $element = $element.GetUpdatedCache($cache) } catch { }
+        $plan = Get-PrioritizedTree $element $effectiveMaxTreeNodes $effectiveMaxTreeDepth
+    } finally { $scope.Dispose() }
+    foreach ($work in $plan.nodes) {
+        $depth = $work.depth
+        $index = $records.Count
+        $record = Get-TreeRecord $work.node $index $windowBounds $TextLimit
+        $records.Add($record)
         $role = $record.localizedControlType
         if ([string]::IsNullOrWhiteSpace($role)) {
             $role = $record.controlType
@@ -844,25 +952,12 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
         if ($null -ne $record.frame) {
             $frameSegment = " Frame: {{x: {0}, y: {1}, width: {2}, height: {3}}}" -f [int][math]::Round($record.frame.x), [int][math]::Round($record.frame.y), [int][math]::Round($record.frame.width), [int][math]::Round($record.frame.height)
         }
-        $script:lines.Add(("`t" * ($depth + 1)) + "$index $role $title$valueSegment$actionsSegment$frameSegment")
+        $lines.Add(("`t" * ($depth + 1)) + "$index $role $title$valueSegment$actionsSegment$frameSegment")
 
-        try {
-            $children = $node.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
-            for ($i = 0; $i -lt $children.Count; $i++) {
-                Visit $children.Item($i) ($depth + 1)
-            }
-        } catch {
-        }
     }
-
-    $script:records = $records
-    $script:lines = $lines
-    $script:visited = $visited
-    $script:nextIndex = $nextIndex
-    $script:windowBounds = $windowBounds
-    $script:MaxTreeNodes = $effectiveMaxTreeNodes
-    $script:MaxTreeDepth = $effectiveMaxTreeDepth
-    Visit $element 0
+    if ($plan.truncated) {
+        $lines.Add('[Accessibility tree truncated: prioritized visible controls; some nodes were omitted.]')
+    }
 
     [pscustomobject]@{
         records = $records.ToArray()
