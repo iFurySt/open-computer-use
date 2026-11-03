@@ -87,6 +87,39 @@ class RuntimeInterfaceDetectionTests(unittest.TestCase):
         self.assertTrue(self.runtime.set_element_value(node, "hello"))
 
 
+class SetValueVerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load_runtime()
+        self.clock = 0.0
+        def sleep(seconds): self.clock += seconds
+        self.patch = mock.patch.multiple(self.runtime.time, monotonic=lambda: self.clock, sleep=sleep)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def test_literal_text_and_typed_numbers(self):
+        for text in ["", " \t中文🙂\n", "0015", "e\u0301"]:
+            self.runtime.verify_set_value(text, lambda: text)
+        for requested, actual in [("0015", "15"), (" x ", "x"), ("e\u0301", "é"), ("true", "1"), ("x", None)]:
+            with self.assertRaisesRegex(RuntimeError, "could not verify"):
+                self.runtime.verify_set_value(requested, lambda: actual)
+        self.runtime.verify_set_value("15.0", lambda: 15.0, numeric=True)
+        with self.assertRaisesRegex(RuntimeError, "could not verify"):
+            self.runtime.verify_set_value("9007199254740993", lambda: 9007199254740992.0, numeric=True)
+
+    def test_delayed_success_and_unreadable_failure(self):
+        self.runtime.verify_set_value("new", lambda: "new" if self.clock >= 0.15 else "old")
+        self.assertLessEqual(self.clock, 0.6)
+        with self.assertRaisesRegex(RuntimeError, "could not verify"):
+            self.runtime.verify_set_value("new", lambda: (_ for _ in ()).throw(RuntimeError("gone")))
+
+    def test_ignored_text_write_is_attempted_once_without_numeric_fallback(self):
+        node = InterfaceOnlyAccessible(["Accessible", "Text", "EditableText"])
+        with mock.patch.object(self.runtime.Atspi.EditableText, "set_text_contents", return_value=True) as write:
+            with self.assertRaisesRegex(RuntimeError, "could not verify"):
+                self.runtime.set_element_value(node, "ignored")
+            self.assertEqual(write.call_count, 1)
+
+
 class FakeKeySynthType:
     PRESS = "PRESS"
     RELEASE = "RELEASE"

@@ -121,6 +121,13 @@ open-computer-use call get_app_state --args '{"app":"TextEdit"}'
 open-computer-use call set_value --args '{"app":"TextEdit","element_index":"1","value":"Draft"}'
 ```
 
+`set_value` verifies the actual value on macOS, Windows and Linux, including when
+full action read-back is disabled. Text is exact: whitespace, case and leading
+zeros matter; `""` clears the field. Numeric/boolean comparison is used only for
+native attributes of that type. Verification polls for up to 0.6 seconds without
+repeating the write. If it fails, observe the control before deciding to retry:
+the write may already have changed it.
+
 Use `--calls` for short action sequences that need to reuse the same process state:
 
 ```sh

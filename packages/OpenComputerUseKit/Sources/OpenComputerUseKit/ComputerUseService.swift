@@ -1077,7 +1077,11 @@ public final class ComputerUseService {
                 throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
             }
 
-            pauseBeforeReadBack(0.1)
+            try verifySetValueReadBack(requested: value, elementIndex: elementIndex, read: {
+                // Direct AX reads: never verify against a cached snapshot value.
+                var actual: CFTypeRef?
+                return AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &actual) == .success ? actual : nil
+            }, validate: { try requireUsableComputerUseSession() })
         } catch {
             settleVisualCursor(at: cursorTarget)
             throw error
