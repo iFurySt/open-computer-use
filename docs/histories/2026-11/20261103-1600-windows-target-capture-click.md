@@ -1,0 +1,57 @@
+# Windows target capture and child click routing
+
+## Request
+
+Reproduce screenshots disagreeing with the selected application and ordinary
+clicks reporting success without reaching a nested control on Windows.
+
+## Changes and rationale
+
+- `apps/OpenComputerUseWindows/runtime.ps1`: capture the selected HWND with
+  PrintWindow instead of cropping desktop pixels; retain physical full-window
+  coordinates, geometry checks, disposal and fail-closed image omission.
+- Route posted clicks through the target's child hierarchy; validate process,
+  enabled state, client point, current window/element geometry and delivery.
+  Attempt mouse release on interrupted/failed down delivery.
+- `scripts/tests/fixtures/WindowsTargetFixture.ps1` and
+  `scripts/tests/windows-target-smoke.ps1`: real native MCP before/after regression
+  at 200% DPI, distinguishing delivery from semantic action acceptance.
+- `scripts/tests/windows-target.test.ps1`: production-function fault injection
+  for child-local coordinates, stale/invalid input and message failure cleanup.
+- Correct the existing WPF smoke helpers for PowerShell 5.1 array shape, UTF-8 input and localized control roles, with regression checks.
+- Update the observation test to check that capture receives the target HWND;
+  wire regression tests into the existing Windows workflow and document limits
+  in `docs/windows-targeting.md` and the feature release notes.
+
+## Validation
+
+The v1.1.3 baseline reproduces both defects: pink occluder pixels replace the blue
+window, and the nested button receives no mouse-up despite a successful call.
+The patched native bridge captures blue pixels under cover and delivers child
+button/panel mouse events; a standard native-style button's Click counter also
+increments through `auto`. Go tests, PowerShell observation/input fault tests and
+the new posted-input fault tests pass. Native MCP also checks disabled controls,
+stale window/element geometry, invalid points and minimized-image omission.
+
+## Boundaries
+
+No global input is enabled implicitly. PrintWindow support depends on the target
+renderer; a successful posted message does not guarantee toolkit acceptance.
+Owner-drawn controls rejecting background input remain a documented limitation.
+
+## WPF observation validation
+
+The complete existing WPF/native MCP/CLI/Worker JS observation smoke passes on
+the tested Windows desktop after correcting its PowerShell 5.1 and localization
+assumptions: preserve single-image arrays, match the fixture's stable name rather
+than the localized `edit` role, and encode JSON-RPC input explicitly as UTF-8.
+The initial "missing image" failure was a harness assertion error: diagnostics
+showed one actual image while the scalar object's Count property was null.
+
+Coverage includes selective channels, stale-index rejection and AX recovery,
+real Unicode value updates, and image omission/recovery for 1x1, minimized and
+cloaked windows. The Worker JS path also passes. These results do not establish
+support for every Windows toolkit or renderer.
+
+The native smoke supports opt-in cropped evidence output. The before/after PNG
+in `docs/assets/windows-target-capture.png` contains fixture pixels only.

@@ -6,6 +6,8 @@ on:
       - 'apps/OpenComputerUseWindows/**'
       - 'scripts/tests/windows-observation*'
       - 'scripts/tests/windows-input*'
+      - 'scripts/tests/windows-target*'
+      - 'scripts/tests/fixtures/WindowsTargetFixture.ps1'
       - 'scripts/tests/windows-tree-budget*'
       - 'scripts/tests/fixtures/WindowsTreeBudgetFixture.ps1'
       - 'scripts/tests/windows-fixture-state.ps1'
@@ -60,3 +62,9 @@ jobs:
         run: ./scripts/tests/windows-tree-budget.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
       - name: Real WPF tree budget and visibility
         run: ./scripts/tests/windows-tree-budget-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
+      - name: Posted click delivery regression
+        run: |
+          powershell.exe -NoProfile -NonInteractive -File ./scripts/tests/windows-target.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Occluded target capture and child input through MCP
+        run: ./scripts/tests/windows-target-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
