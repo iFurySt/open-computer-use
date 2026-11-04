@@ -39,4 +39,27 @@ final class LockedUseShieldCoverageTests: XCTestCase {
             XCTAssertFalse(LockedUseShieldCoverage.covers(display, display: invalid))
         }
     }
+
+    /// Measured on macOS 26.4.1 with the 1920x1080 agent virtual display at
+    /// Quartz {-1920, 0}: passing the global frame to init produced WindowServer
+    /// bounds {{-4320, -843}, {2880, 1620}} (shieldBoundsMismatch). The local
+    /// rect produced {{-2400, -270}, {2880, 1620}}, which covers the display.
+    func testSecondaryScreenInitRectIsScreenLocal() {
+        let screenOrigin = CGPoint(x: -1920, y: 573)
+        let global = LockedUseShieldCoverage.surfaceFrame(for: CGRect(origin: screenOrigin, size: CGSize(width: 1920, height: 1080)))
+        XCTAssertEqual(global, CGRect(x: -2400, y: 303, width: 2880, height: 1620))
+        let local = LockedUseShieldCoverage.screenLocalRect(global, screenOrigin: screenOrigin)
+        XCTAssertEqual(local, CGRect(x: -480, y: -270, width: 2880, height: 1620))
+        // AppKit adds the screen origin back: the window must land on the global frame.
+        XCTAssertEqual(local.offsetBy(dx: screenOrigin.x, dy: screenOrigin.y), global)
+        // Measured WindowServer bounds before/after the fix, against Quartz display bounds.
+        let display = CGRect(x: -1920, y: 0, width: 1920, height: 1080)
+        XCTAssertFalse(LockedUseShieldCoverage.covers(CGRect(x: -4320, y: -843, width: 2880, height: 1620), display: display))
+        XCTAssertTrue(LockedUseShieldCoverage.covers(CGRect(x: -2400, y: -270, width: 2880, height: 1620), display: display))
+    }
+
+    func testPrimaryScreenLocalRectIsUnchanged() {
+        let global = LockedUseShieldCoverage.surfaceFrame(for: CGRect(x: 0, y: 0, width: 2557, height: 1653))
+        XCTAssertEqual(LockedUseShieldCoverage.screenLocalRect(global, screenOrigin: .zero), global)
+    }
 }

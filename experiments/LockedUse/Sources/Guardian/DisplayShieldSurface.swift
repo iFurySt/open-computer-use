@@ -55,8 +55,17 @@ final class DisplayShieldSurface {
         guard !screens.isEmpty else { throw GuardianError.message("No display available") }
         topology = displayTopology()
         for (id, screen) in screens {
+            // `NSWindow(contentRect:screen:)` positions contentRect relative to
+            // the given screen's origin, while `surfaceFrame` is global Cocoa
+            // space. On the primary display (origin 0,0) both agree; on any
+            // secondary display (e.g. the 1920x1080 agent virtual display) the
+            // initial window lands offset by the screen origin and WindowServer
+            // reports bounds that never contain the display
+            // (`shieldBoundsMismatch`). Pass screen-local coordinates to init and
+            // keep the global frame for setFrame.
             let frame = LockedUseShieldCoverage.surfaceFrame(for: screen.frame)
-            let window = ShieldWindow(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false, screen: screen)
+            let local = LockedUseShieldCoverage.screenLocalRect(frame, screenOrigin: screen.frame.origin)
+            let window = ShieldWindow(contentRect: local, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false, screen: screen)
             window.animationBehavior = .none
             window.hidesOnDeactivate = false
             window.isFloatingPanel = true
