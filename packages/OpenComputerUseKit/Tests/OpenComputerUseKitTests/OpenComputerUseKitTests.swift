@@ -2369,8 +2369,11 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testSoftwareCursorGlyphArtworkNeutralHeadingMatchesCursorMotionBaseline() {
+        // The drawing space applies `pointerArtworkRotation` in the same direction as the contour
+        // heading, so the two add up to the heading the glyph actually rests on. Subtracting here
+        // let the glyph sit 135 deg away from `targetNeutralHeading` while this test stayed green.
         let correctedNeutralHeading = SoftwareCursorGlyphMetrics.proceduralContourNeutralHeading
-            - SoftwareCursorGlyphMetrics.pointerArtworkRotation
+            + SoftwareCursorGlyphMetrics.pointerArtworkRotation
 
         XCTAssertEqual(
             correctedNeutralHeading,

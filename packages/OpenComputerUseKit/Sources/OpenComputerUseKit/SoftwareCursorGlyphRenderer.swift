@@ -46,8 +46,15 @@ enum SoftwareCursorGlyphMetrics {
     static let pointerSize = CGSize(width: 21, height: 21)
     static let pointerOffset = CGPoint(x: 2.6, y: -3.2)
     static let targetNeutralHeading = -(3 * CGFloat.pi / 4)
-    static let proceduralContourNeutralHeading = -(96.5 * CGFloat.pi / 180)
-    static let pointerArtworkRotation = -(targetNeutralHeading - proceduralContourNeutralHeading)
+
+    /// Screen-space (y down) heading the fallback contour must be authored at so that
+    /// `pointerArtworkRotation` lands its apex on `targetNeutralHeading`.
+    ///
+    /// The previous -96.5 deg made the fallback point straight down (+132 deg measured) while the
+    /// reference artwork rests facing upper-left, so users who run the CLI without the bundled
+    /// `Resources` (every non-app build) saw a pointer rotated ~135 deg away from the cursor.
+    static let proceduralContourNeutralHeading = -(CGFloat.pi / 4)
+    static let pointerArtworkRotation = targetNeutralHeading - proceduralContourNeutralHeading
 }
 
 private enum SoftwareCursorGlyphColors {
@@ -61,11 +68,12 @@ enum SoftwareCursorGlyphRenderer {
     static func draw(
         in bounds: CGRect,
         context: CGContext,
-        state: SoftwareCursorGlyphRenderState
+        state: SoftwareCursorGlyphRenderState,
+        usesReferenceArtwork: Bool = true
     ) {
         let drawingState = state.appKitDrawingState
 
-        if let referenceImage {
+        if let referenceImage, usesReferenceArtwork {
             drawReferenceImage(
                 referenceImage,
                 in: bounds,
