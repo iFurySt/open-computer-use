@@ -1116,7 +1116,7 @@ public final class ComputerUseService {
             try FixtureBridge.post(FixtureCommand(kind: "select_text", identifier: identifier, value: text,
                                                  selection: selection.rawValue, prefix: prefix, suffix: suffix))
             let deadline = Date().addingTimeInterval(1)
-            while Date() < deadline {
+            while Date().isBefore(deadline) {
                 if let applied = try FixtureBridge.readState(), applied.focusedIdentifier == identifier,
                    applied.selectedRangeLocation == target.location, applied.selectedRangeLength == target.length,
                    let current = applied.elements.first(where: { $0.identifier == identifier })?.value,
