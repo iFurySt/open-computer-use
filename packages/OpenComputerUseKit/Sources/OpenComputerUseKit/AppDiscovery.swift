@@ -503,7 +503,7 @@ enum AppDiscovery {
                 let key = bundleIdentifier.lowercased()
                 let lastUsed = attributes[lastUsedDateRankingAttribute] as? Date
                     ?? attributes[kMDItemLastUsedDate as String] as? Date
-                guard let lastUsed, lastUsed >= cutoffDate else {
+                guard let lastUsed, lastUsed.isAtOrAfter(cutoffDate) else {
                     continue
                 }
 
