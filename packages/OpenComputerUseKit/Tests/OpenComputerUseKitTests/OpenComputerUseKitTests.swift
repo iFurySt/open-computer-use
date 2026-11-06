@@ -278,6 +278,15 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(size.height, 24)
     }
 
+    func testRenderedCoordinateNeverTrapsOnNonFiniteValues() {
+        XCTAssertEqual(renderedCoordinate(12.7), "12")
+        XCTAssertEqual(renderedCoordinate(-3.2), "-3")
+        XCTAssertEqual(renderedCoordinate(.nan), "?")
+        XCTAssertEqual(renderedCoordinate(.infinity), "?")
+        XCTAssertEqual(renderedCoordinate(-.infinity), "?")
+        XCTAssertEqual(renderedCoordinate(CGFloat(Int64.max)), "?")
+    }
+
     func testToolDefinitionCount() {
         XCTAssertEqual(ToolDefinitions.all.count, 11)
         XCTAssertEqual(

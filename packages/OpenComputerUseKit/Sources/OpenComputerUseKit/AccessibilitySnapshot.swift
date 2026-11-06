@@ -617,13 +617,22 @@ private struct WindowCapture {
     }
 
     /// WindowServer's hardware window capture first (any Space, covered or not,
-    /// ~10-40ms), ScreenCaptureKit when it is unavailable.
+    /// ~10-40ms), ScreenCaptureKit when it is unavailable or when the window is
+    /// partially off-screen or spans displays: the hardware path only yields the
+    /// on-screen part, which would silently shift every screenshot coordinate.
     private static func captureImage(windowID: CGWindowID, bounds: CGRect, config: ImageCaptureConfig) -> CGImage? {
-        if !LockedUseActionScope.requiresScreenCaptureKit,
-           let image = TimingLog.measure("snapshot.capture_hw", { SkyLightSPI.shared.hardwareCaptureWindow(windowID) }) {
-            return image
-        }
-        return TimingLog.measure("snapshot.capture_sck") { captureImageWithScreenCaptureKit(windowID: windowID, bounds: bounds, config: config) }
+        WindowCaptureGeometry.capture(
+            bounds: bounds, displayBounds: WindowCaptureGeometry.activeDisplayBounds(),
+            hardware: {
+                guard !LockedUseActionScope.requiresScreenCaptureKit else { return nil }
+                return TimingLog.measure("snapshot.capture_hw") { SkyLightSPI.shared.hardwareCaptureWindow(windowID) }
+            },
+            fullWindow: {
+                TimingLog.measure("snapshot.capture_sck") {
+                    captureImageWithScreenCaptureKit(windowID: windowID, bounds: bounds, config: config)
+                }
+            }
+        )
     }
 
     private static func captureImageWithScreenCaptureKit(windowID: CGWindowID, bounds: CGRect, config: ImageCaptureConfig) -> CGImage? {
@@ -635,7 +644,8 @@ private struct WindowCapture {
 
             let configuration = SCStreamConfiguration()
             let scaleFactor = bestEffortScaleFactor(for: bounds)
-            let captureSize = window.frame.isEmpty ? bounds.size : window.frame.size
+            // 出屏窗口的 SCWindow.frame 仍是完整几何，但以 CG bounds 为准可和坐标映射保持同一来源。
+            let captureSize = bounds.isEmpty ? window.frame.size : bounds.size
             configuration.width = max(1, Int(ceil(captureSize.width * scaleFactor)))
             configuration.height = max(1, Int(ceil(captureSize.height * scaleFactor)))
             configuration.showsCursor = false
@@ -1698,7 +1708,9 @@ private func resolveLocalFrame(of element: AXUIElement, windowBounds: CGRect?) -
     let sizeAXValue = sizeValue as! AXValue
     var position = CGPoint.zero
     var size = CGSize.zero
-    guard AXValueGetValue(positionAXValue, .cgPoint, &position), AXValueGetValue(sizeAXValue, .cgSize, &size) else {
+    guard AXValueGetValue(positionAXValue, .cgPoint, &position), AXValueGetValue(sizeAXValue, .cgSize, &size),
+          [position.x, position.y, size.width, size.height].allSatisfy(\.isFinite) else {
+        // AX 偶尔给出 NaN / 无穷的 frame（Contacts 新建卡片的编辑态实测）；当作没有几何信息。
         return nil
     }
 
@@ -2343,8 +2355,15 @@ private func quoted(_ value: String) -> String {
 
 private extension CGRect {
     var renderedLocalFrame: String {
-        "x=\(Int(origin.x)), y=\(Int(origin.y)), w=\(Int(width)), h=\(Int(height))"
+        "x=\(renderedCoordinate(origin.x)), y=\(renderedCoordinate(origin.y)), "
+            + "w=\(renderedCoordinate(width)), h=\(renderedCoordinate(height))"
     }
+}
+
+/// `Int(Double)` 遇到 NaN / 无穷会直接 trap 并带崩整个 helper；渲染时用 "?" 代替，不信任上游几何。
+func renderedCoordinate(_ value: CGFloat) -> String {
+    guard value.isFinite, abs(value) < CGFloat(Int32.max) else { return "?" }
+    return String(Int(value))
 }
 
 enum TargetedAX {
