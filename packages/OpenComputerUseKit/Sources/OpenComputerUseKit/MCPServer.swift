@@ -137,6 +137,7 @@ public final class StdioMCPServer {
         VisualCursorSupport.performOnMain {
             SoftwareCursorOverlay.reset()
         }
+        ForegroundBorrow.returnFocusIfBorrowed()
         backgroundStateReset()
     }
 
