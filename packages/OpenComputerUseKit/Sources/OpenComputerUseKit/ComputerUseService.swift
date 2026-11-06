@@ -1072,6 +1072,10 @@ public final class ComputerUseService {
 
         do {
             try requireUsableComputerUseSession()
+            if try setNumericValue(value, on: element, record: record) {
+                settleVisualCursor(at: cursorTarget)
+                return try actionResult(for: query)
+            }
             let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString)
             guard result == .success else {
                 throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
@@ -1089,6 +1093,78 @@ public final class ComputerUseService {
 
         settleVisualCursor(at: cursorTarget)
         return try actionResult(for: query)
+    }
+
+    /// 滑块 / 滚动条 / 步进器的 AXValue 是数值：写 CFString 得到 -25201；SwiftUI 的滑块（系统设置的音量）
+    /// 还会无视直接写入，只认 AXIncrement / AXDecrement。先按数值写并核实，不行就按步进逼近到最接近的可达值，
+    /// 最终值由 action 结果里的状态回读给模型。非数值控件返回 false，走原来的字符串路径。
+    private func setNumericValue(_ requested: String, on element: AXUIElement, record: ElementRecord) throws -> Bool {
+        func read() -> (value: Double, isFloat: Bool)? {
+            var raw: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &raw) == .success, let raw,
+                  CFGetTypeID(raw) == CFNumberGetTypeID() else { return nil }
+            let number = unsafeDowncast(raw, to: CFNumber.self)
+            return ((number as NSNumber).doubleValue, CFNumberIsFloatType(number))
+        }
+        guard let current = read() else { return false }
+        guard let target = Self.parseNumericValue(requested, current: current.value) else {
+            throw ComputerUseError.invalidArguments(
+                "element \(record.index) holds a number (\(current.value)); value must be numeric, got '\(requested)'"
+            )
+        }
+        let number: NSNumber = current.isFloat ? NSNumber(value: target) : NSNumber(value: Int(target.rounded()))
+        let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, number)
+        Thread.sleep(forTimeInterval: 0.1)
+        let tolerance = max(1e-6, abs(target) * 1e-3)
+        if result == .success, let value = read()?.value, abs(value - target) <= tolerance { return true }
+
+        let increment = kAXIncrementAction as String
+        let decrement = kAXDecrementAction as String
+        let canIncrement = record.rawActions.contains { $0.caseInsensitiveCompare(increment) == .orderedSame }
+        let canDecrement = record.rawActions.contains { $0.caseInsensitiveCompare(decrement) == .orderedSame }
+        guard canIncrement || canDecrement, var value = read()?.value else {
+            if result == .success {
+                throw ComputerUseError.message(
+                    "set_value could not verify the requested value \(requested) for element \(record.index); the control still reports \(current.value)"
+                )
+            }
+            throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
+        }
+        var moved = false
+        for _ in 0..<200 {
+            let distance = abs(value - target)
+            if distance <= tolerance { return true }
+            let forward = value < target
+            guard forward ? canIncrement : canDecrement,
+                  AXUIElementPerformAction(element, (forward ? increment : decrement) as CFString) == .success
+            else { break }
+            Thread.sleep(forTimeInterval: 0.03)
+            guard let next = read()?.value, next != value else { break }
+            moved = true
+            if abs(next - target) > distance {
+                // 这一步跨过了目标且离得更远：退回上一步，停在更近的一侧。
+                _ = AXUIElementPerformAction(element, (forward ? decrement : increment) as CFString)
+                Thread.sleep(forTimeInterval: 0.03)
+                break
+            }
+            value = next
+        }
+        guard moved else {
+            throw ComputerUseError.message(
+                "set_value could not change element \(record.index): direct write was rejected and Increment/Decrement had no effect (value \(value))"
+            )
+        }
+        return true
+    }
+
+    /// "0.25"、"25%"（当前值在 0…1 区间时按比例）、"3" 都接受。
+    static func parseNumericValue(_ requested: String, current: Double) -> Double? {
+        var text = requested.trimmingCharacters(in: .whitespacesAndNewlines)
+        var percent = false
+        if text.hasSuffix("%") { percent = true; text.removeLast(); text = text.trimmingCharacters(in: .whitespaces) }
+        guard let number = Double(text), number.isFinite else { return nil }
+        if percent { return (0 ... 1).contains(abs(current)) ? number / 100 : number }
+        return number
     }
 
     public func selectText(
