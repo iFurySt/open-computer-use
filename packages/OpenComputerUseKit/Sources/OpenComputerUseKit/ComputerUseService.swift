@@ -979,6 +979,13 @@ public final class ComputerUseService {
         guard let focused = Self.focusedElement(pid: snapshot.app.pid) else {
             throw ComputerUseError.stateUnavailable("type_text could not read the app's current focused element. Focus a text entry area and try again.")
         }
+        if isBrowserAddressBar(focused, bundleIdentifier: snapshot.app.bundleIdentifier) {
+            // 浏览器地址栏接受 AX 文本插入后只更新显示，不更新 omnibox 的输入模型，随后 Return 不会导航；
+            // 对它一律走真实键盘事件。网页里的输入框在 AXWebArea 下，不受影响。
+            try requireCurrentTextFocus(focused, pid: snapshot.app.pid)
+            try InputSimulation.typeText(text, pid: snapshot.app.pid)
+            return try actionResult(for: query)
+        }
         if try typeTextUsingAccessibility(text, on: focused, pid: snapshot.app.pid) {
             pauseBeforeReadBack(0.1)
             return try actionResult(for: query)
@@ -991,6 +998,18 @@ public final class ComputerUseService {
         try requireCurrentTextFocus(focused, pid: snapshot.app.pid)
         try InputSimulation.typeText(text, pid: snapshot.app.pid)
         return try actionResult(for: query)
+    }
+
+    private static let browserBundlePrefixes = [
+        "com.google.Chrome", "org.chromium.Chromium", "com.apple.Safari", "org.mozilla.firefox", "com.microsoft.edgemac",
+        "com.brave.Browser", "company.thebrowser.Browser", "com.vivaldi.Vivaldi", "com.operasoftware.Opera",
+    ]
+
+    /// 浏览器窗口 chrome 里的文本框（地址栏 / 搜索栏），不含网页内容里的输入框。
+    private func isBrowserAddressBar(_ element: AXUIElement, bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier, Self.browserBundlePrefixes.contains(where: { bundleIdentifier.hasPrefix($0) }) else { return false }
+        guard stringValue(of: element, attribute: kAXRoleAttribute) == kAXTextFieldRole as String else { return false }
+        return !hasAncestorRole("AXWebArea", of: element)
     }
 
     private static func focusedElement(pid: pid_t) -> AXUIElement? {
