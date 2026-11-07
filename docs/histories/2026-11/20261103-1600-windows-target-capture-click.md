@@ -76,3 +76,7 @@ Validation on reviewed code `ddf846b`:
 - Cursor coordinates stayed unchanged in covered-click observations. The first covered posted click changed the foreground HWND; no guarantee of foreground stability is claimed. The posted path has no explicit activation/global-pointer calls, but a receiving application can change focus itself.
 - Author evidence at 200% remains separate; this hosted run adds 100%, not 150% or mixed-monitor validation. GPU/protected renderer support is still limited by PrintWindow. Posted drag/keyboard routing from #91 is outside this PR.
 - Fixture-only screenshot artifacts were uploaded; local artifact download hit a network TLS timeout. Pixel assertions and independent counters are available in the successful run logs.
+
+Final PR head `881ac1c` passed the complete [Windows workflow](https://github.com/iFurySt/open-computer-use/actions/runs/42351354214).
+Commented `LGTM. Thanks!` and squash merged #147 as `4dbaa7a`, retaining contributor
+authorship and the maintainer co-author. No version bump or release was made.
