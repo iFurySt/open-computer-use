@@ -172,6 +172,10 @@ workflow 会使用 `docs/releases/github/<tag>.md` 创建新 Release；如果 Re
 - `What's Changed` 必须列出本次用户可感知的 1-3 个英文变化。
 - 保留 `Full Changelog` 链接。
 
+### 7. 跟进发布后验证
+
+检查 [发布后待验证](pending-validation.md)，只对本次版本实际包含的修复跟进。发布后按已记录的维护者授权，在对应 issue 告知准确版本号并请报告者复测；更新邀请与反馈状态，不能把待验证项写成已通过。
+
 ## Release 失败时怎么查
 
 ### 1. 先看最新 run

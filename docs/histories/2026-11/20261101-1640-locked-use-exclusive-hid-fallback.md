@@ -29,4 +29,4 @@ Karabiner-Elements seizes the built-in keyboard, Bluetooth keyboards and the Tou
 - 新增 / 移除设备、回调错误和启动中变化均使监控失效；补停止、重启和旧代次回调保护。
 - 新增 Guardian 测试目标与 9 项状态 / 异常 / 清理回归；完整 Swift 453 项，9 跳过，0 失败。
 - 签名独立 fixture 的真实设备启动、停止、重启通过；本机无 Karabiner；用户配合的 Shift 测试收到 48 次活动回调。可见 60 秒鼠标对照中，旧版和新版均收到 3680 次 CG 指针事件，HID 均为 0；系统活动时间确认用户操作，不能将其写成原始 HID 鼠标或完整接管测试通过。没有改安装组件、认证规则或请求锁屏。
-- 本轮不合并、不关闭 #142；仍需 Karabiner 下键盘 / 指针转发与 Secure Input 的接管验证，详见 [输入监控说明](../../locked-use-input-monitor.md)。
+- 初次评审因缺少 Karabiner 实机验证暂缓合并。维护者随后明确决定先合并，在后续版本发布后请贡献者验证；#142 保持开放，未覆盖项仍如实保留。跟进见 [发布后待验证](../../releases/pending-validation.md)与 [输入监控说明](../../locked-use-input-monitor.md)。

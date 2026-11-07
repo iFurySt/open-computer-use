@@ -30,7 +30,7 @@ PR #143 / issue #142 报告：Karabiner 独占键盘后，原来的 IOHIDManager
 
 输入类别检查是必要条件，**不是所有被独占设备都被正确转发的证明**。Karabiner 会通过虚拟 HID 设备重发事件，但配置可能吞掉或改写输入；普通用户进程在 Secure Input 期间也可能收不到键盘事件。不能只凭 `open` 成功或其他设备产生了回调就宣布接管保护正常。参考 [Karabiner 架构](https://github.com/pqrs-org/Karabiner-Elements/blob/main/DEVELOPMENT.md)与[隐私说明](https://karabiner-elements.pqrs.org/docs/privacy/)。
 
-因此，本轮补充提交后保留 PR 待验证，不自动关闭 #142。最终合并需要 Karabiner 环境下确认键盘和指针输入能分别触发接管，以及 Secure Input / 设备断开后的故障行为；现有模拟回归不能代替这些测试。
+2026-11-07，维护者决定基于代码审查、现有回归与贡献者原始证据先合并修复，把 Karabiner 实机验证留到包含该修复的版本发布后。保持 #142 开放，届时请贡献者分别确认键盘 / 指针接管、Secure Input 和设备断开后的行为；现有模拟回归不替代这些测试。后续跟进见 [发布后待验证](releases/pending-validation.md)。
 
 ## 复现
 
