@@ -1352,7 +1352,7 @@ public final class ComputerUseService {
         invalidSecondaryActionErrorMessage(action: action, elementIndex: record.index)
     }
 
-    private func performPreferredClick(on record: ElementRecord, button: MouseButtonKind, clickCount: Int) throws -> Bool {
+    private func performPreferredClick(on record: ElementRecord, button: MouseButtonKind, clickCount: Int, snapshot: AppSnapshot? = nil) throws -> Bool {
         guard let element = record.element else {
             return false
         }
@@ -1367,6 +1367,7 @@ public final class ComputerUseService {
             }
 
             if try performAction(named: kAXPressAction as String, on: element, availableActions: record.rawActions, repeatCount: clickCount) {
+                if let snapshot { waitForOpenedMenu(after: record, snapshot: snapshot) }
                 return true
             }
 
@@ -1488,14 +1489,14 @@ public final class ComputerUseService {
             canUseActivationOnlyClickFallback(role: stringValue(of: $0, attribute: kAXRoleAttribute))
         } == true
         if !preferContainingWebRowAXClick && !windowIndexClick {
-            if try performPreferredClick(on: record, button: button, clickCount: clickCount) {
+            if try performPreferredClick(on: record, button: button, clickCount: clickCount, snapshot: snapshot) {
                 debugClickDecision("handled by preferred target \(clickDebugDescription(record))")
                 pauseBeforeReadBack(0.15)
                 return true
             }
 
             for candidate in descendantClickCandidates(for: record, snapshot: snapshot) where isAtTarget(candidate) {
-                if try performPreferredClick(on: candidate, button: button, clickCount: clickCount) {
+                if try performPreferredClick(on: candidate, button: button, clickCount: clickCount, snapshot: snapshot) {
                     debugClickDecision("handled by descendant \(clickDebugDescription(candidate))")
                     pauseBeforeReadBack(0.15)
                     return true
@@ -1509,7 +1510,7 @@ public final class ComputerUseService {
                     }
 
                     if !isLikelySyntheticSideAction(hitRecord, in: record),
-                       try performPreferredClick(on: hitRecord, button: button, clickCount: clickCount)
+                       try performPreferredClick(on: hitRecord, button: button, clickCount: clickCount, snapshot: snapshot)
                     {
                         debugClickDecision("handled by hit record \(clickDebugDescription(hitRecord))")
                         pauseBeforeReadBack(0.15)
@@ -1525,7 +1526,7 @@ public final class ComputerUseService {
                             snapshot: snapshot,
                             sideActionScope: record
                         ) where isAtTarget(candidate) {
-                            if try performPreferredClick(on: candidate, button: button, clickCount: clickCount) {
+                            if try performPreferredClick(on: candidate, button: button, clickCount: clickCount, snapshot: snapshot) {
                                 debugClickDecision("handled by hit descendant \(clickDebugDescription(candidate))")
                                 pauseBeforeReadBack(0.15)
                                 return true
@@ -1553,6 +1554,20 @@ public final class ComputerUseService {
         }
 
         return false
+    }
+
+    /// 菜单栏项 / 弹出按钮按下后菜单要过几十到几百毫秒才出现；读回或下一次观察太早就会说"没有菜单"。
+    /// 只等打开，不动输入，也不改变已有的读回节奏。
+    private func waitForOpenedMenu(after record: ElementRecord, snapshot: AppSnapshot) {
+        guard [kAXMenuBarItemRole as String, "AXPopUpButton", "AXMenuButton"].contains(record.role),
+              let windowID = snapshot.targetWindowID, let bounds = snapshot.windowBounds else { return }
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.6
+        while ProcessInfo.processInfo.systemUptime < deadline {
+            if !captureActiveAXMenus(pid: snapshot.app.pid, windowID: windowID, bounds: bounds, maximumNodes: 64).roots.isEmpty {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
     }
 
     private func performAction(named action: String, on element: AXUIElement, availableActions: [String], repeatCount: Int = 1) throws -> Bool {

@@ -288,15 +288,28 @@ enum SnapshotBuilder {
         }
         let focusedElement = preferredFocusedElement(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
         let selectedText = focusedElement.flatMap { copySelectedText($0, textLimit: textLimit) }
+        // 活动菜单优先渲染：大窗口耗尽节点预算后，菜单项仍然可见、可点。
+        let activeMenus = TimingLog.measure("snapshot.active_menus") {
+            captureActiveAXMenus(
+                pid: app.pid, windowID: windowCapture.windowID,
+                bounds: windowBounds, maximumNodes: treeLimits.maxNodeCount
+            )
+        }
         let context = RenderContext(
             windowBounds: windowBounds,
             focusedElement: focusedElement,
             textLimit: textLimit,
-            treeLimits: treeLimits
+            treeLimits: treeLimits,
+            activeMenus: activeMenus
         )
 
         var renderer = TreeRenderer(context: context)
-        TimingLog.measure("snapshot.tree_walk") { AXSnapshotReadCache.withSnapshot { renderer.render(rootElement) } }
+        TimingLog.measure("snapshot.tree_walk") {
+            AXSnapshotReadCache.withSnapshot {
+                for menu in activeMenus.roots { renderer.render(menu) }
+                renderer.render(rootElement)
+            }
+        }
 
         // Pin the window's visible state (WindowServer occlusion notifications
         // off) so covering it or moving it to another Space later does not hide
@@ -852,6 +865,8 @@ private struct RenderContext {
     let focusedElement: AXUIElement?
     let textLimit: SnapshotTextLimit
     let treeLimits: AccessibilityTreeLimits
+    /// 当前打开的菜单（菜单栏菜单、弹出按钮菜单）。它们不是窗口的子树，只能单独发现后并入渲染。
+    var activeMenus: AXActiveMenuTree<AXUIElement> = .init()
 }
 
 // Runs the real renderer against a scoped, injected AX provider. The returned
@@ -916,7 +931,7 @@ private struct TreeRenderer {
             let hidden = frame.map { frame in
                 frame.width > 0 && frame.height > 0 && work.viewport.map { !$0.intersects(frame) } == true
             } ?? false
-            let control = ["AXButton", "AXCheckBox", "AXRadioButton", "AXTextField", "AXTextArea", "AXComboBox", "AXPopUpButton", "AXMenuButton", "AXSlider"].contains(role)
+            let control = ["AXButton", "AXCheckBox", "AXRadioButton", "AXTextField", "AXTextArea", "AXComboBox", "AXPopUpButton", "AXMenuButton", "AXSlider", kAXMenuItemRole as String].contains(role)
                 || context.focusedElement.map { CFEqual($0, work.node) } == true
             let collection = work.inCollection || usesRowsAsPrimaryRole(role) || role == "AXScrollArea"
             let rank = hidden ? 4 : collection ? (control ? 2 : 3) : control ? 0 : 1
@@ -935,7 +950,14 @@ private struct TreeRenderer {
                 viewport = viewport.map { $0.intersection(frame) } ?? frame
             }
             let remaining = work.depth + 1 >= context.treeLimits.maxDepth ? 0 : max(0, scanLimit - scanned)
-            let raw = rawChildren(of: work.node, limit: remaining, truncated: &truncated)
+            let raw: (children: [AXUIElement], inspected: Int)
+            if let verified = context.activeMenus.children(of: work.node, equal: { CFEqual($0, $1) }) {
+                // 活动菜单只走发现阶段验证过的边，不再读实时 children：菜单正在关闭时实时读取会把半残树渲染出来。
+                raw = (Array(verified.prefix(remaining)), min(verified.count, remaining))
+                if verified.count > remaining { truncated = true }
+            } else {
+                raw = rawChildren(of: work.node, limit: remaining, truncated: &truncated)
+            }
             // Duplicate and skipped entries still cost provider traversal work.
             scanned += raw.inspected - raw.children.count
             plannedChildren[key] = raw.children
@@ -2465,7 +2487,10 @@ extension SnapshotBuilder {
         // Read budgets must not leak into the subsequent action: closing a sheet
         // can take longer than 50–100 ms even though AXPress succeeds.
         defer { AXUIElementSetMessagingTimeout(element, 0) }
-        guard belongsToWindow(element, window: freshContext.windowElement),
+        // 菜单项挂在菜单栏 / 弹出菜单下而不是窗口下；只要它仍在当前打开的菜单里就算有效。
+        let inActiveMenu = activeMenus(in: freshContext, maximumNodes: criteria.maxNodes)
+            .entries.contains { CFEqual($0.element, element) }
+        guard inActiveMenu || belongsToWindow(element, window: freshContext.windowElement),
               let bounds = freshContext.windowBounds else {
             throw ComputerUseError.stateUnavailable("Query target no longer belongs to its window; run query again")
         }
@@ -2473,7 +2498,7 @@ extension SnapshotBuilder {
         guard scan.role == record.role,
               displayIdentifier(scan.identifier) == record.identifier,
               targetedRecordMatches(criteria, role: scan.role, title: scan.title, description: scan.description, value: scan.value),
-              let frame = scan.globalFrame, !frame.isEmpty, frame.intersects(bounds) else {
+              let frame = scan.globalFrame, !frame.isEmpty, inActiveMenu || frame.intersects(bounds) else {
             throw ComputerUseError.stateUnavailable("Query target changed or its current position is unavailable; run query again")
         }
         let fresh = makeRecord(element, scan: scan, windowBounds: bounds, index: record.index)
@@ -2525,9 +2550,17 @@ extension SnapshotBuilder {
         var records: [AXSearchNode: ElementRecord] = [:]
         var textTruncated = false
         var clip: CGRect?
-        let root = AXSearchNode(element: context.windowElement)
-        let result = try boundedTargetedWalk(root: root, maxNodes: criteria.maxNodes, limit: criteria.limit,
-                                            expired: expired, inspect: { node in
+        // 打开的菜单先搜：菜单项不在窗口子树里，否则 query 永远找不到它们。
+        let menus = activeMenus(in: context, maximumNodes: criteria.maxNodes)
+        let roots = menus.roots.map(AXSearchNode.init(element:)) + [AXSearchNode(element: context.windowElement)]
+        var merged = TargetedWalkResult<AXSearchNode>()
+        for root in roots {
+            guard !expired(), merged.stopReason == nil || merged.stopReason == "complete" else { break }
+            let maxNodes = max(1, criteria.maxNodes - merged.visitedNodes)
+            let limit = max(1, criteria.limit - merged.matches.count)
+            clip = nil
+            let partial = try boundedTargetedWalk(root: root, maxNodes: maxNodes, limit: limit,
+                                                 expired: expired, inspect: { node in
             AXUIElementSetMessagingTimeout(node.element, 0.05)
             let scan = batchScan(node.element)
             guard scan.role != nil else { throw ComputerUseError.stateUnavailable("AX node could not be read") }
@@ -2540,6 +2573,9 @@ extension SnapshotBuilder {
             return (matches, visible)
         }, children: { node, remaining in
             guard !expired() else { return ([], true) }
+            if let verified = menus.children(of: node.element, equal: { CFEqual($0, $1) }) {
+                return (Array(verified.prefix(remaining)).map(AXSearchNode.init(element:)), verified.count > remaining)
+            }
             let role = scans[node]?.role
             let attributes = role.map { largeContainerRoles.contains($0) } == true
                 ? [axVisibleChildrenAttribute, kAXChildrenAttribute as String]
@@ -2558,9 +2594,21 @@ extension SnapshotBuilder {
                 return (elements.map { AXSearchNode(element: $0) }, count > remaining)
             }
             return ([], false)
-        })
+            })
+            merged.matches.append(contentsOf: partial.matches)
+            merged.visitedNodes += partial.visitedNodes
+            merged.stopReason = partial.stopReason
+            if merged.matches.count >= criteria.limit { merged.stopReason = "limit"; break }
+        }
+        let result = merged
         let reason = result.stopReason ?? (textTruncated ? "text_limit" : nil)
         return .init(records: result.matches.compactMap { records[$0] }, truncated: reason != nil, stopReason: reason, visitedNodes: result.visitedNodes)
+    }
+
+    /// 查询窗口上下文对应的活动菜单；没有可信的 CGWindowID 几何时不读菜单。
+    static func activeMenus(in context: TargetedAX.WindowContext, maximumNodes: Int) -> AXActiveMenuTree<AXUIElement> {
+        guard let windowID = context.windowID, let bounds = context.windowBounds else { return .init() }
+        return captureActiveAXMenus(pid: context.app.pid, windowID: windowID, bounds: bounds, maximumNodes: maximumNodes)
     }
 
     private struct AXSearchNode: Hashable {
