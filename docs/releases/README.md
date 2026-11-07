@@ -6,6 +6,8 @@
 
 如果任务是“准备发版 / bump 版本 / 打 tag / 查 release 失败”，先读 `RELEASE_GUIDE.md`。
 
+[pending-validation.md](pending-validation.md) 记录维护者批准留到发版后验证的项目，发布后按准确版本号联系报告者复测。
+
 ## 规则
 
 - 按月份分组，格式使用 `## YYYY-MM`
