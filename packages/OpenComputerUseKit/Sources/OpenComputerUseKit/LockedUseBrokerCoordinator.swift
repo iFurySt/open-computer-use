@@ -180,7 +180,7 @@ public struct LockedUseBrokerCoordinator: Sendable {
             if let pending = message.unlockWorkPending { unlockWorkDrained = !pending }
             if everGranted, session.state == .unlocked { observedUnlocked = true }
             if message.stopReason == .physicalInput { try apply(machine.localInput()) }
-            else if message.stopReason != nil, let owner {
+            else if message.stopReason != nil, let owner = machine.owner {
                 try apply(machine.end(owner: owner, reason: .guardLost))
             }
             if phase == .preparing {
