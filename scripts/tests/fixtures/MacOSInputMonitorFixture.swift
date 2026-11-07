@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 import IOKit.hid
 
@@ -17,15 +18,19 @@ struct InputMonitorFixture {
         let data = try! JSONSerialization.data(withJSONObject: values, options: .sortedKeys)
         FileHandle.standardOutput.write(data + Data([10]))
     }
-    @MainActor static func settle(_ seconds: Double) {
+    @MainActor static func settle(_ seconds: Double, tick: (() -> Void)? = nil) {
         let deadline = Date(timeIntervalSinceNow: seconds)
         while Date() < deadline {
-            _ = RunLoop.main.run(mode: .default, before: min(deadline, Date(timeIntervalSinceNow: 0.02)))
+            if let event = NSApp.nextEvent(matching: .any, until: min(deadline, Date(timeIntervalSinceNow: 0.02)), inMode: .default, dequeue: true) {
+                NSApp.sendEvent(event)
+            }
+            tick?()
+            NSApp.updateWindows()
         }
     }
     @MainActor static func main() {
         let seconds = CommandLine.arguments.dropFirst().first.flatMap(Double.init) ?? 5
-        guard seconds >= 1, seconds <= 30 else { exit(64) }
+        guard seconds >= 1, seconds <= 60 else { exit(64) }
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
         app.finishLaunching()
@@ -64,8 +69,38 @@ struct InputMonitorFixture {
         do {
             try monitor.start()
             emit(["event": "started", "healthy": monitor.healthy, "seconds": seconds,
-                  "lockRequested": false, "readsInputValues": false])
-            settle(seconds)
+                  "lockRequested": false, "readsInputValues": false,
+                  "secureInput": IsSecureEventInputEnabled()])
+            let label = NSTextField(wrappingLabelWithString: "")
+            let panel: NSPanel? = CommandLine.arguments.contains("--panel") ? NSPanel(
+                contentRect: NSRect(x: 0, y: 0, width: 440, height: 150),
+                styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false) : nil
+            if let panel {
+                panel.title = "OCU 输入监控测试"
+                panel.isReleasedWhenClosed = false
+                panel.level = .floating
+                label.frame = NSRect(x: 20, y: 20, width: 400, height: 110)
+                label.font = .systemFont(ofSize: 16)
+                panel.contentView?.addSubview(label)
+                panel.center()
+                panel.orderFrontRegardless()
+            }
+            defer { panel?.close() }
+            let began = ProcessInfo.processInfo.systemUptime
+            var activePointerSamples = 0
+            var minimumPointerIdle = Double.greatestFiniteMagnitude
+            settle(seconds) {
+                let elapsed = ProcessInfo.processInfo.systemUptime - began
+                let idle = [CGEventType.mouseMoved, .leftMouseDown, .rightMouseDown, .scrollWheel].map {
+                    CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: $0)
+                }.min()!
+                if elapsed > 3 {
+                    minimumPointerIdle = min(minimumPointerIdle, idle)
+                    if idle < 0.25 { activePointerSamples += 1 }
+                }
+                label.stringValue = "请移动鼠标 / 触控板并轻点，不要按键。\n剩余 \(max(0, Int(ceil(seconds - elapsed)))) 秒\nHID 活动：\(activity)；系统鼠标事件：\(events.pointer)\n仅统计次数，不记录位置或按键内容。"
+            }
+            panel?.orderOut(nil)
             let healthy = monitor.healthy
             monitor.stop()
             let countAtStop = activity
@@ -82,7 +117,9 @@ struct InputMonitorFixture {
             emit(["event": "completed", "healthy": healthy, "activityCallbacks": countAtStop,
                   "failures": failures, "restartHealthy": restarted, "healthyAfterStop": monitor.healthy,
                   "systemPointerEvents": events.pointer, "systemKeyboardEvents": events.keyboard,
-                  "comparisonTapDisabled": events.disabled])
+                  "comparisonTapDisabled": events.disabled,
+                  "pointerRecentlyActiveSamples": activePointerSamples,
+                  "minimumPointerIdleSeconds": minimumPointerIdle])
             guard restarted, failures == 0 else { throw GuardianError.message("Restart failed") }
         } catch {
             monitor.stop()

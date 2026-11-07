@@ -16,9 +16,10 @@ ROOT = Path(__file__).resolve().parents[2]
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--signing-identity')
-    parser.add_argument('--seconds', type=int, choices=range(1, 31), default=5)
+    parser.add_argument('--seconds', type=int, choices=range(1, 61), default=5)
     parser.add_argument('--build-only', action='store_true')
     parser.add_argument('--baseline-ref')
+    parser.add_argument('--panel', action='store_true')
     args = parser.parse_args()
     folder = 'baseline' if args.baseline_ref else 'current'
     app = ROOT / '.build/input-monitor-smoke' / folder / 'OCU Input Monitor Test.app'
@@ -51,7 +52,7 @@ def main():
     if args.build_only:
         print(binary)
     else:
-        subprocess.run([str(binary), str(args.seconds)], timeout=args.seconds + 10, check=True)
+        subprocess.run([str(binary), str(args.seconds), *(['--panel'] if args.panel else [])], timeout=args.seconds + 10, check=True)
 
 
 if __name__ == '__main__':
