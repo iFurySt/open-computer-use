@@ -52,3 +52,13 @@ has acknowledged release. Full Locked Use suite: 128 tests pass, including the
 explicit known-bug diagnostic. See [incident replay](../../locked-use-incident-replay.md).
 Remaining: consume recovery hello effects in the actual Guardian adapter and
 validate the signed desktop path before claiming complete incident recovery.
+
+## Completion
+
+Maintainer approved the reconnect fix and merging before signed desktop testing.
+Recovery and periodic replies now share production reply orchestration and effect
+handling; failed recovery closes the candidate connection. The reconnect replay
+now asserts successful release and subsequent lease admission. Removing recovery
+reply consumption makes that regression fail on shield release, relock and phase.
+Signed desktop validation is explicitly deferred to the next patch release;
+subsequent findings will be handled in separate PRs. This development plan is complete.

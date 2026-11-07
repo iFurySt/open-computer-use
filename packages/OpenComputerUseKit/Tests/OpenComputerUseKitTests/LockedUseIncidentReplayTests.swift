@@ -99,23 +99,36 @@ final class LockedUseIncidentReplayTests: XCTestCase {
         }
     }
 
-    func testReconnectStillLosesReleaseWhenHelloEffectsAreDiscarded() throws {
+    @MainActor
+    func testReconnectConsumesReleaseBeforeNextReport() async throws {
         var r = try Replay()
         let hello = try r.send(.init(operation: .guardianRecoveryHello, leaseID: r.lease,
             hasObservedUnlock: true), r.guardian, 31.75)
         XCTAssertTrue(hello.effects.contains("releaseGuards"))
-        // Deliberately reproduce DisplayGuardian's existing reconnect adapter:
-        // it checks hello.result but ignores hello.effects.
-        let next = try r.report(r.locked, 31.8, stopped: true)
-        XCTAssertFalse(next.effects.contains("releaseGuards"))
-        XCTAssertEqual(try r.poll(r.locked, 32), [])
-        XCTAssertEqual(try r.poll(r.unlocked, 32.6), [.requestRelock])
+        var time = 31.75
+        try await LockedUseGuardianBrokerExchange.report(recoveryReply: hello,
+            isFinished: { r.policy.phase == .finished },
+            send: {
+                // This reply has no release effect: the hello already drained it.
+                time = 31.8
+                return try r.report(r.locked, time, stopped: true)
+            }, receive: { reply in
+                if reply.effects.contains("releaseGuards") {
+                    r.policy.confirmQuiescence()
+                    _ = r.policy.stop(.stopRequested, now: time)
+                }
+            })
+        XCTAssertEqual(try r.poll(r.locked, 32), [.releaseShield])
+        XCTAssertEqual(try r.poll(r.unlocked, 32.6), [])
         let watchdog = try r.send(.init(operation: .watchdogReport, leaseID: r.lease,
             session: r.locked, guards: r.healthy), r.watchdog, 32.7)
         XCTAssertTrue(watchdog.effects.contains("releaseWatchdog"))
         _ = try r.send(.init(operation: .watchdogReleased, leaseID: r.lease), r.watchdog, 32.8)
         XCTAssertFalse(r.broker.isFullyReleased)
         XCTAssertThrowsError(try r.send(.init(operation: .begin, session: r.locked), r.agent, 33))
-        XCTAssertEqual(r.policy.phase, .relocking)
+        XCTAssertEqual(r.policy.phase, .finished)
+        _ = try r.send(.init(operation: .guardianReleased, leaseID: r.lease), r.guardian, 33.1)
+        XCTAssertTrue(r.broker.isFullyReleased)
+        XCTAssertEqual(try r.send(.init(operation: .begin, session: r.locked), r.agent, 33.2).phase, .preparing)
     }
 }

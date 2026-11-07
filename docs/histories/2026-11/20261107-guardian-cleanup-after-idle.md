@@ -34,7 +34,7 @@
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/LockedUseBrokerCoordinator.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/LockedUseBrokerCoordinatorTests.swift`
 - `docs/releases/feature-release-notes.md`
-- `docs/exec-plans/active/20261107-guardian-cleanup-after-idle.md`
+- `docs/exec-plans/completed/20261107-guardian-cleanup-after-idle.md`
 
 ### Maintainer reproduction
 
@@ -46,3 +46,14 @@
 watchdog 已释放和新租约被拒绝。该用例记录已知故障，不代表重连成功。
 完整 Locked Use 128 项通过；边界和复现方式见
 [事故回放](../../locked-use-incident-replay.md)。没有安装组件或操作真实锁屏。
+
+### Reconnect fix
+
+用户确认补齐重连后合并，真实验证留到后续小版本。新增生产
+LockedUseGuardianBrokerExchange 编排：先消费恢复握手回复，再发送普通报告，
+两种回复共用 DisplayGuardian.applyBrokerReply。拒绝回复和传输错误继续失败，
+完成后的回复不再执行；恢复请求失败或恢复期间任务已完成时关闭新连接。
+原诊断用例改为释放成功的正向回归，另外覆盖顺序、拒绝、完成和传输错误。
+撤回握手回复消费时复现 3 个断言失败；恢复修复后通过。
+最终全量 Swift 回归：435 项，9 项跳过，0 失败；真实 OCUGuardian target 编译通过。
+文档检查及 diff 检查通过。测试未安装系统组件，真实锁屏验证留待发版后。

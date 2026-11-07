@@ -153,6 +153,8 @@
 
 ## macOS Locked Use 实验
 
+- Guardian 在重连后先处理握手回复中的指令，再发送普通报告；两类回复共用效果处理入口。Broker 回到 idle 后仍允许已认证 Guardian 完成清理。见 [事故回放](locked-use-incident-replay.md)。
+
 - `locked-use status [--json]` 和 `doctor` 增加只读 session / Input Monitoring / 插件诊断，由 app agent 提供真实 runtime 权限状态。 `doctor --json` 保持纯权限 JSON，不弹权限引导；定向 AX `query` 在读取前和返回结果前检查会话与当前租约。
 - 真实窗口 snapshot、缓存复用与事件投递检查当前控制台 session；锁屏或未知 / 切换用户状态明确拒绝。fixture 不属于真实桌面，继续支持 headless 测试。
 - `LockedUseStateMachine` 是由独立 Broker 串行驱动的纯保护策略，覆盖一次性许可、租约、guardian heartbeat、接管和重锁确认；已接入管理员显式启用的 unlock 事务，受保护 legacy 闭环已实测，完整生产证据仍待完成。
