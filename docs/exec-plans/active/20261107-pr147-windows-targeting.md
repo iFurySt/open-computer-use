@@ -17,6 +17,13 @@ fix review findings, and merge the original contributor PR after validation.
 ## Progress
 
 - [x] Read PR and synchronize current main; merge without conflicts.
-- [ ] Review/fix production paths and strengthen regression coverage.
-- [ ] Run local checks and hosted Windows before/after and existing regressions.
+- [x] Review/fix production paths and strengthen regression coverage.
+- [x] Run local checks and hosted Windows before/after and existing regressions.
 - [ ] Record evidence, push contributor branch, comment LGTM and squash merge.
+
+
+[Hosted Windows evidence](https://github.com/iFurySt/open-computer-use/actions/runs/42350802353)
+passed on `ddf846b`, with actual DPI 96. Both defects reproduced on pinned v1.1.4
+and disappeared on the candidate. Local Go/vet, 48 Node tests and docs passed.
+Foreground stability is not guaranteed; 150%/mixed DPI and GPU applications remain
+outside independently verified coverage. See the existing review history for details.

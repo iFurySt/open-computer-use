@@ -63,4 +63,16 @@ after validation. Merged main including v1.1.4 without conflicts. Added guards
 against a child moving while retaining its HWND, including between repeated
 clicks; regression tests check no stale click and mouse-up after interruption.
 The hosted Windows workflow compares the candidate with pinned v1.1.4 using
-the same fixture and retains cropped fixture-only evidence. Results pending.
+the same fixture and retains cropped fixture-only evidence.
+
+
+Validation on reviewed code `ddf846b`:
+
+- [Hosted Windows run](https://github.com/iFurySt/open-computer-use/actions/runs/42350802353) passed all steps on `windows-2025`, actual fixture DPI 96 (100%).
+- Pinned v1.1.4: child mouse-up delta 0; occluded capture sampled RGB `220,30,120` (occluder). Candidate: delta 1; RGB `20,80,180` (target).
+- Candidate passed covered auto/button, posted left/right/panel delivery, disabled/outside/stale-target refusal, minimized-image omission, and production moved-child/interruption tests.
+- Existing WPF set-value, selective observation, Unicode, native MCP/CLI/Worker JS, physical input, scrolling and tree-budget smoke passed.
+- Local Go tests/vet, 48 Node tests, docs and whitespace checks passed. No macOS/Linux production behavior changed.
+- Cursor coordinates stayed unchanged in covered-click observations. The first covered posted click changed the foreground HWND; no guarantee of foreground stability is claimed. The posted path has no explicit activation/global-pointer calls, but a receiving application can change focus itself.
+- Author evidence at 200% remains separate; this hosted run adds 100%, not 150% or mixed-monitor validation. GPU/protected renderer support is still limited by PrintWindow. Posted drag/keyboard routing from #91 is outside this PR.
+- Fixture-only screenshot artifacts were uploaded; local artifact download hit a network TLS timeout. Pixel assertions and independent counters are available in the successful run logs.

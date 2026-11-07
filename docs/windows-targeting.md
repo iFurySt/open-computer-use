@@ -79,8 +79,10 @@ support for every Windows toolkit or renderer.
 ## Display scale and screenshot evidence
 
 Desktop occlusion and posting to the wrong HWND are not specific to a display
-scale. The native tests here ran at 192 DPI (200%); 100%, 150% and mixed-DPI monitor
-transitions have not been independently validated. The fix retains physical
+scale. The native tests here ran at 192 DPI (200%); The maintainer
+[hosted regression](https://github.com/iFurySt/open-computer-use/actions/runs/42350802353)
+also passed at 96 DPI (100%). 150% and mixed-DPI monitor transitions have not been
+independently validated. The fix retains physical
 screen/window coordinates rather than applying a fixed scaling factor.
 
 ![Original v1.1.3 versus patched target capture under occlusion](assets/windows-target-capture.png)
@@ -104,3 +106,11 @@ and increment independent counters. Both cropped fixture captures are uploaded.
 Production-function tests additionally cover child movement without changing the
 top-level HWND, movement between repeated clicks, and interruption after down.
 Hosted results and actual DPI are recorded in the PR review history.
+
+
+The hosted run passed the original/candidate pixel and event-counter comparison,
+plus the existing WPF, native MCP/CLI/Worker JS, input and tree-budget regressions.
+The first covered posted click changed the foreground HWND despite unchanged
+cursor coordinates. No explicit activation is performed by this path, but the
+receiving application may change focus; background delivery is not a guarantee
+of an unchanged foreground window.
