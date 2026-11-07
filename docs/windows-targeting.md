@@ -12,7 +12,7 @@ The existing bridge process timeout bounds an unresponsive renderer to 30 second
 visible native child inside the requested window and convert the point to that
 child's client coordinates. They do not use desktop `WindowFromPoint`, which
 would select the occluder. Disabled controls, cross-process descendants,
-out-of-client-area coordinates, stale window/element geometry and failed
+out-of-client-area coordinates, stale window/element geometry, child movement between clicks, and failed
 `PostMessage` delivery are refused. Use accessibility actions for window chrome.
 The global pointer path remains explicitly opt-in.
 
@@ -94,3 +94,13 @@ To save the same privacy-cropped capture while running the native regression,
 pass `-EvidencePath <output.png>` to `scripts/tests/windows-target-smoke.ps1`.
 The containing directory must exist. Evidence output is opt-in and contains only
 the disposable fixture's cropped client region, not raw desktop screenshots.
+
+## Maintainer review on current main
+
+The Windows workflow also builds the pinned v1.1.4 baseline and runs the same
+fixture with `-ExpectOriginal`, proving that the old binary returns the occluder
+pixels and misses child mouse-up events. The candidate must return target pixels
+and increment independent counters. Both cropped fixture captures are uploaded.
+Production-function tests additionally cover child movement without changing the
+top-level HWND, movement between repeated clicks, and interruption after down.
+Hosted results and actual DPI are recorded in the PR review history.

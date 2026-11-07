@@ -73,4 +73,23 @@ jobs:
           powershell.exe -NoProfile -NonInteractive -File ./scripts/tests/windows-target.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Occluded target capture and child input through MCP
-        run: ./scripts/tests/windows-target-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
+        run: ./scripts/tests/windows-target-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe" -EvidencePath "$env:RUNNER_TEMP/target-patched.png"
+      - name: Check out known-broken capture baseline
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: 97a8810182a2d09fbccd15387f4628aa1916e7d7 # v1.1.4
+          path: .baseline
+          sparse-checkout: apps/OpenComputerUseWindows
+          persist-credentials: false
+      - name: Reproduce original capture and child delivery defects
+        run: |
+          go -C .baseline/apps/OpenComputerUseWindows build -o "$env:RUNNER_TEMP/ocu-baseline.exe" .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/tests/windows-target-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-baseline.exe" -ExpectOriginal -EvidencePath "$env:RUNNER_TEMP/target-original.png"
+      - name: Upload fixture-only capture comparison
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-target-captures
+          path: ${{ runner.temp }}/target-*.png
+          if-no-files-found: ignore

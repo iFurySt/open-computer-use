@@ -55,3 +55,12 @@ support for every Windows toolkit or renderer.
 
 The native smoke supports opt-in cropped evidence output. The before/after PNG
 in `docs/assets/windows-target-capture.png` contains fixture pixels only.
+
+## 2026-11-07 maintainer review
+
+User requested integration with current main, actual Windows testing and merge
+after validation. Merged main including v1.1.4 without conflicts. Added guards
+against a child moving while retaining its HWND, including between repeated
+clicks; regression tests check no stale click and mouse-up after interruption.
+The hosted Windows workflow compares the candidate with pinned v1.1.4 using
+the same fixture and retains cropped fixture-only evidence. Results pending.

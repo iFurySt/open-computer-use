@@ -461,6 +461,14 @@ function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$b
     for ($i = 0; $i -lt $repeat; $i++) {
         Assert-CurrentWindowBounds $hwnd $bounds
         if ([OCUWin32]::ClickTarget($hwnd, $screenX, $screenY) -ne $target) { throw "Click target changed; observe again." }
+        # A child can move inside an unchanged top-level window, retaining its HWND.
+        $currentPoint = New-Object OCUWin32+POINT
+        $currentPoint.X = $screenX
+        $currentPoint.Y = $screenY
+        if (-not [OCUWin32]::ScreenToClient($target, [ref]$currentPoint) -or
+            $currentPoint.X -ne $point.X -or $currentPoint.Y -ne $point.Y) {
+            throw "Click target geometry changed; observe again."
+        }
         if (-not [OCUWin32]::PostMessage($target, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)) { throw "PostMessage mouse move delivery failed." }
         try {
             if (-not [OCUWin32]::PostMessage($target, $down, [IntPtr]$downFlag, $lParam)) { throw "PostMessage mouse down delivery failed." }
