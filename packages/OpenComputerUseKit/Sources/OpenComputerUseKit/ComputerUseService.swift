@@ -979,8 +979,18 @@ public final class ComputerUseService {
         guard let focused = Self.focusedElement(pid: snapshot.app.pid) else {
             throw ComputerUseError.stateUnavailable("type_text could not read the app's current focused element. Focus a text entry area and try again.")
         }
+        // Pages 的正文这类自绘文本视图接受 AXSelectedText / AXValue 写入却不改内容：写完读回仍是原值。
+        // 读回没变化时视为没写进去，改走键盘事件；写入前后值不可读则信任写入结果。
+        let textBefore = stringValue(of: focused, attribute: kAXValueAttribute)
         if try typeTextUsingAccessibility(text, on: focused, pid: snapshot.app.pid) {
             pauseBeforeReadBack(0.1)
+            let textAfter = stringValue(of: focused, attribute: kAXValueAttribute)
+            let silentlyIgnored = textBefore != nil && textAfter == textBefore
+            if !silentlyIgnored || !canTypeTextUsingKeyboardFallback(on: focused) {
+                return try actionResult(for: query)
+            }
+            try requireCurrentTextFocus(focused, pid: snapshot.app.pid)
+            try InputSimulation.typeText(text, pid: snapshot.app.pid)
             return try actionResult(for: query)
         }
 
