@@ -27,3 +27,7 @@
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/AXActiveMenuTests.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/AXActiveMenuGeometryTests.swift`
+
+### 追加（2026-11-07 16:20）：AXPress 过的子菜单父项也要认成打开
+
+Music「File → New」：AXPress 父项 New 后子菜单实际打开（CG 多出一个菜单窗口），但 New 的 `AXExpanded` 仍为 false，`isOpen` 把它的 AXMenu 子节点拒掉，模型看不到「Playlist Folder」。现在父项 `AXSelected=true` 与 ancestors 认证同等看待，子菜单仍要几何等独立证据。本地复核：点 New 后子菜单 5 项进树。

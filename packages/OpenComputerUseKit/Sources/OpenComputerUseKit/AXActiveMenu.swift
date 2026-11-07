@@ -182,11 +182,13 @@ func readActiveAXMenus<Element>(
         return result
     }
     func isOpen(_ candidate: Element, parent: Element, ancestors: [Element]) -> Bool {
-        // 父项在 ancestors 里（焦点链或菜单栏 AXSelectedChildren 认证）时，其 AXExpanded=false 不作数；
-        // 菜单本身是否打开仍要下面的独立证据。
+        // 父项在 ancestors 里（焦点链或菜单栏 AXSelectedChildren 认证）或本身 AXSelected 时，其 AXExpanded=false
+        // 不作数：macOS 27 的 Music 对 AXPress 过的「File → New」子菜单父项仍报 expanded=false。
+        // 菜单本身是否打开仍要下面的独立证据（visible / expanded / 可见子项 / 几何）。
         guard owned(candidate), reader.role(candidate) == menu,
               reader.visible(candidate) != false, reader.visible(parent) != false,
-              reader.expanded(parent) != false || contains(ancestors, parent), !expired() else { return false }
+              reader.expanded(parent) != false || contains(ancestors, parent) || reader.selected(parent), !expired()
+        else { return false }
         foundCandidate()
         if reader.visible(candidate) == true || reader.expanded(parent) == true || contains(ancestors, candidate) {
             return !expired()

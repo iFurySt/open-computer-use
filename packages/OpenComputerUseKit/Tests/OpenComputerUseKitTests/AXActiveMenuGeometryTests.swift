@@ -295,4 +295,44 @@ extension AXActiveMenuTests {
         XCTAssertFalse(evidence(frame.insetBy(dx: -75, dy: -75), layer: 0).matches(frame, pid: 42, excluding: 11))
     }
 
+    /// macOS 27 Music：AXPress 过的子菜单父项「New」AXSelected=true 但 AXExpanded=false，子菜单 AXVisible 不支持，
+    /// CG 子菜单窗口比 AX 内容区四边各大 75pt；应作为嵌套菜单发布。
+    func testSelectedSubmenuParentWithCollapsedFlagPublishesSubmenuByGeometry() throws {
+        let fixture = fixture()
+        let folder = Node(kAXMenuItemRole)
+        let submenu = Node(kAXMenuRole, children: [folder])
+        submenu.visible = nil
+        submenu.frame = CGRect(x: 335, y: 34, width: 227, height: 130)
+        let parent = Node(kAXMenuItemRole, children: [submenu])
+        parent.selected = true
+        parent.expanded = false
+        fixture.menu.children.append(parent); parent.parent = fixture.menu
+        let window = AXMenuWindowEvidence(windowID: 13, pid: 42, bounds: CGRect(x: 260, y: -41, width: 377, height: 280),
+                                          layer: 101, onScreen: true, alpha: 1)
+        let tree = readActiveAXMenus(
+            menuBar: fixture.bar, focused: { fixture.selected }, pid: 42,
+            rootWindowID: 11, windowEvidence: { [window] }, validateWindow: { true }, reader: reader()
+        )
+        XCTAssertTrue(tree.roots.first === fixture.menu)
+        let children = try XCTUnwrap(tree.children(of: parent, equal: { $0 === $1 }))
+        XCTAssertTrue(children.first === submenu)
+        XCTAssertTrue(tree.entries.contains { $0.element === folder })
+    }
+
+    func testUnselectedCollapsedSubmenuParentStaysClosed() throws {
+        let fixture = fixture()
+        let submenu = Node(kAXMenuRole, children: [Node(kAXMenuItemRole)])
+        submenu.visible = nil
+        let parent = Node(kAXMenuItemRole, children: [submenu])
+        parent.expanded = false
+        fixture.menu.children.append(parent); parent.parent = fixture.menu
+        let tree = readActiveAXMenus(
+            menuBar: fixture.bar, focused: { nil }, pid: 42,
+            windowEvidence: { XCTFail("未选中且明确折叠的子菜单父项不该查几何"); return [] },
+            validateWindow: { true }, reader: reader()
+        )
+        XCTAssertTrue(tree.roots.first === fixture.menu)
+        XCTAssertNil(tree.children(of: submenu, equal: { $0 === $1 }))
+    }
+
 }
