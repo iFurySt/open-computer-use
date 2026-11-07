@@ -530,6 +530,21 @@ func canUseKeyboardTextFallback(role: String?, roleDescription: String?, isValue
         || roleDescription.contains("text entry")
 }
 
+/// AXPress 对这些角色是空操作（Numbers 的 AXColumn），点击必须经指针路径投递才会落到单元格。
+func prefersPointerDeliveryOverAXPress(role: String?) -> Bool {
+    role == "AXColumn"
+}
+
+/// 焦点停在 iWork 画布（表格或版面区域）时，文本只能靠键盘事件进入当前选中的单元格 / 对象。
+func prefersKeyboardTextInput(role: String?, bundleIdentifier: String?) -> Bool {
+    // Numbers 的 bundle id 没有 iWork 前缀（com.apple.Numbers），Pages / Keynote 才有。
+    let iWorkBundleIdentifiers: Set<String> = [
+        "com.apple.Numbers", "com.apple.iWork.Numbers", "com.apple.iWork.Pages", "com.apple.iWork.Keynote",
+    ]
+    guard let bundleIdentifier, iWorkBundleIdentifiers.contains(bundleIdentifier), let role else { return false }
+    return role == kAXTableRole as String || role == "AXLayoutArea"
+}
+
 func isElectronScopedWebRowClickOptimizationTarget(appName: String, bundleIdentifier: String?) -> Bool {
     let normalizedBundleIdentifier = bundleIdentifier?
         .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -979,6 +994,18 @@ public final class ComputerUseService {
         guard let focused = Self.focusedElement(pid: snapshot.app.pid) else {
             throw ComputerUseError.stateUnavailable("type_text could not read the app's current focused element. Focus a text entry area and try again.")
         }
+        let focusedRole = stringValue(of: focused, attribute: kAXRoleAttribute)
+        if inputFallbackDebugEnabled(environment: ProcessInfo.processInfo.environment) {
+            let description = stringValue(of: focused, attribute: kAXRoleDescriptionAttribute) ?? "nil"
+            fputs("[open-computer-use] type_text focused role=\(focusedRole ?? "nil") description=\(description)\n", stderr)
+        }
+        if prefersKeyboardTextInput(role: focusedRole, bundleIdentifier: snapshot.app.bundleIdentifier) {
+            // iWork 画布：选中单元格后焦点落在 AXTable / AXLayoutArea 上，它们既不可写也读不出值，AX 文本插入没有落点；
+            // 键盘事件才会开始编辑选中的单元格 / 对象（Numbers 实测）。限定 iWork，别把普通表格的 type-select 当成输入。
+            try requireCurrentTextFocus(focused, pid: snapshot.app.pid)
+            try InputSimulation.typeText(text, pid: snapshot.app.pid)
+            return try actionResult(for: query)
+        }
         if try typeTextUsingAccessibility(text, on: focused, pid: snapshot.app.pid) {
             pauseBeforeReadBack(0.1)
             return try actionResult(for: query)
@@ -1359,6 +1386,12 @@ public final class ComputerUseService {
 
         switch button {
         case .left:
+            // 电子表格的整列（Numbers 的 AXColumn 实测）接受 AXPress 却什么也不做：既不选列也不选单元格。
+            // 坐标点击被命中测试解析成整列时不能算已处理，要落到指针路径让点击真正落在单元格上。
+            if prefersPointerDeliveryOverAXPress(role: record.role) {
+                return false
+            }
+
             if clickCount <= 1,
                !hasAncestorRole("AXWebArea", of: element),
                try selectContainingListItem(for: element)

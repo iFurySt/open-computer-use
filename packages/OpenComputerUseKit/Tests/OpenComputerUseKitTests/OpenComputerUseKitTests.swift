@@ -686,6 +686,32 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(parsed.modifiers.count, 1)
     }
 
+    func testKeyPressParserSupportsPunctuationKeys() throws {
+        XCTAssertEqual(try KeyPressParser.parse(".").keyCode, try KeyPressParser.parse("period").keyCode)
+        XCTAssertEqual(try KeyPressParser.parse(".").displayValue, ".")
+        XCTAssertEqual(try KeyPressParser.parse("shift+-").keyCode, try KeyPressParser.parse("minus").keyCode)
+        XCTAssertEqual(try KeyPressParser.parse("shift+-").modifiers.count, 1)
+        XCTAssertNotEqual(try KeyPressParser.parse(",").keyCode, try KeyPressParser.parse(".").keyCode)
+        XCTAssertThrowsError(try KeyPressParser.parse("§"))
+    }
+
+    func testSpreadsheetColumnNeverCountsAsHandledByAXPress() {
+        XCTAssertTrue(prefersPointerDeliveryOverAXPress(role: "AXColumn"))
+        XCTAssertFalse(prefersPointerDeliveryOverAXPress(role: kAXButtonRole as String))
+        XCTAssertFalse(prefersPointerDeliveryOverAXPress(role: kAXRowRole as String))
+        XCTAssertFalse(prefersPointerDeliveryOverAXPress(role: nil))
+    }
+
+    func testIWorkCanvasFocusTypesThroughKeyboard() {
+        let numbers = "com.apple.Numbers"
+        XCTAssertTrue(prefersKeyboardTextInput(role: kAXTableRole as String, bundleIdentifier: numbers))
+        XCTAssertTrue(prefersKeyboardTextInput(role: "AXLayoutArea", bundleIdentifier: "com.apple.iWork.Pages"))
+        XCTAssertFalse(prefersKeyboardTextInput(role: kAXTextFieldRole as String, bundleIdentifier: numbers))
+        XCTAssertFalse(prefersKeyboardTextInput(role: kAXTableRole as String, bundleIdentifier: "com.apple.finder"))
+        XCTAssertFalse(prefersKeyboardTextInput(role: kAXTableRole as String, bundleIdentifier: nil))
+        XCTAssertFalse(prefersKeyboardTextInput(role: nil, bundleIdentifier: numbers))
+    }
+
     func testKeyPressParserSupportsOfficialXdotoolAliases() throws {
         XCTAssertEqual(try KeyPressParser.parse("BackSpace").displayValue, "backspace")
         XCTAssertEqual(try KeyPressParser.parse("Page_Up").displayValue, "page_up")
