@@ -20,7 +20,7 @@ import (
 	"time"
 )
 
-var version = "1.1.3"
+var version = "1.1.4"
 
 var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
 
@@ -282,7 +282,11 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 		}
 		return s.pressKey(requiredString(args, "app"), requiredString(args, "key"), keyMethod)
 	case "set_value":
-		return s.setValue(requiredString(args, "app"), requiredElementIndex(args), requiredString(args, "value"))
+		value, ok := args["value"].(string)
+		if !ok {
+			return textResult("set_value value must be a string", true)
+		}
+		return s.setValue(requiredString(args, "app"), requiredElementIndex(args), value)
 	default:
 		return textResult(fmt.Sprintf("unsupportedTool(%q)", name), true)
 	}
@@ -1350,7 +1354,7 @@ func toolDefinitions() []toolDefinition {
 		},
 		{
 			Name:        "set_value",
-			Description: "Set the value of a settable accessibility element. This tool is part of plugin `Computer Use`.",
+			Description: "Set the value of a settable accessibility element and verify the actual value. Text is compared exactly, including whitespace; an empty string clears it. Unverified writes return an error. This tool is part of plugin `Computer Use`.",
 			Annotations: defaultAnnotations(),
 			InputSchema: objectSchema(map[string]any{
 				"app":           stringProperty("App name or bundle identifier"),

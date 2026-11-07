@@ -131,7 +131,7 @@ Example working invocation against `open-computer-use`:
 ```bash
 go run . list-tools \
   --transport direct \
-  --server-bin ~/.codex/plugins/cache/open-computer-use-local/open-computer-use/1.1.3/scripts/launch-open-computer-use.sh
+  --server-bin ~/.codex/plugins/cache/open-computer-use-local/open-computer-use/1.1.4/scripts/launch-open-computer-use.sh
 ```
 
 Example working comparison flow against a local repo build:

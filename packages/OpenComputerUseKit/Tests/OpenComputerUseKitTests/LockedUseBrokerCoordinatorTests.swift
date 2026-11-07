@@ -129,9 +129,17 @@ final class LockedUseBrokerCoordinatorTests: XCTestCase {
         try grant(&broker, lease: lease)
         _ = try broker.handle(.init(operation: .guardianReport, leaseID: lease, session: unlocked, guards: healthy, unlockWorkPending: false), context: guardian, now: 1.5)
         _ = try broker.handle(.init(operation: .end), context: agent, now: 1.6)
+        _ = try broker.handle(.init(operation: .guardianReport, leaseID: lease, session: locked,
+            guards: healthy, stopReason: .guardLost, unlockWorkPending: false), context: guardian, now: 1.65)
         _ = try broker.handle(.init(operation: .quiesced, leaseID: lease), context: agent, now: 1.7)
-        let release = try broker.handle(.init(operation: .guardianReport, leaseID: lease, session: locked, guards: healthy, unlockWorkPending: false), context: guardian, now: 1.8)
+        let release = try broker.handle(.init(operation: .guardianReport, leaseID: lease, session: locked,
+            guards: healthy, stopReason: .guardLost, unlockWorkPending: false), context: guardian, now: 1.8)
         XCTAssertEqual(release.phase, .idle)
+        XCTAssertTrue(release.effects.contains("releaseGuards"))
+        let stopped = try broker.handle(.init(operation: .guardianReport, leaseID: lease, session: locked,
+            guards: healthy, stopReason: .guardLost, unlockWorkPending: false), context: guardian, now: 1.85)
+        XCTAssertEqual(stopped.phase, .idle)
+        XCTAssertFalse(broker.isFullyReleased)
         XCTAssertThrowsError(try broker.handle(.init(operation: .begin, session: locked), context: agent, now: 1.9))
         XCTAssertThrowsError(try broker.handle(.init(operation: .guardianReleased, leaseID: lease), context: agent, now: 2))
         _ = try broker.handle(.init(operation: .guardianReleased, leaseID: lease), context: guardian, now: 2.1)

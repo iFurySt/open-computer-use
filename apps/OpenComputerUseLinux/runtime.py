@@ -806,22 +806,55 @@ def insert_text(root, text):
     )
 
 
+def verify_set_value(requested, read, numeric=False):
+    from decimal import Decimal, InvalidOperation
+    import re
+    def matches(actual):
+        if not numeric:
+            return isinstance(actual, str) and actual == requested
+        try:
+            if re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", requested) is None:
+                return False
+            expected, observed = Decimal(requested), Decimal(str(actual))
+            return expected.is_finite() and observed.is_finite() and expected == observed
+        except (InvalidOperation, ValueError):
+            return False
+    deadline = time.monotonic() + 0.6
+    while True:
+        if matches(safe(read)):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("set_value could not verify the requested value. Read the current value before retrying; the write may have changed the control.")
+        time.sleep(min(0.05, remaining))
+
+
 def set_element_value(node, value):
+    value = str(value)
     if node is not None and supports_interface(node, "EditableText"):
         editable = safe(node.get_editable_text_iface)
         if editable is not None:
-            return bool(
-                safe(
-                    lambda: Atspi.EditableText.set_text_contents(editable, str(value)),
-                    False,
-                )
-            )
+            # A failed text write must not be retried through the numeric interface.
+            if not Atspi.EditableText.set_text_contents(editable, value):
+                raise RuntimeError("set_value was rejected; read the current value before retrying")
+            text = safe(node.get_text_iface) if supports_interface(node, "Text") else None
+            def read():
+                if text is None:
+                    return None
+                count = Atspi.Text.get_character_count(text)
+                return Atspi.Text.get_text(text, 0, count)
+            verify_set_value(value, read)
+            return True
     value_iface = safe(node.get_value_iface) if node is not None else None
     if value_iface is not None:
-        try:
-            return bool(Atspi.Value.set_current_value(value_iface, float(value)))
-        except Exception:
-            pass
+        import math
+        number = float(value)
+        if not math.isfinite(number):
+            raise RuntimeError("set_value requires a finite numeric value")
+        if not Atspi.Value.set_current_value(value_iface, number):
+            raise RuntimeError("set_value was rejected; read the current value before retrying")
+        verify_set_value(value, lambda: Atspi.Value.get_current_value(value_iface), numeric=True)
+        return True
     return False
 
 

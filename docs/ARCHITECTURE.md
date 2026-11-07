@@ -80,6 +80,7 @@
 - 对真实 app 的 `get_app_state` / action tool 入口，当前只保留一层密码管理器 bundle denylist：bundle-id 直传时直接返回 safety denial；名称匹配时默认不解析到这些 app。终端、Chrome / Atlas 和系统组件不再属于内置阻止目标。
 - 普通 app 的 element frame 当前按“窗口左上角为原点”的 window-relative 坐标输出，便于后续把 `element_index` 和截图坐标统一到同一套参考系。点击 AX 命中测试接收窗口点，仅加窗口屏幕原点；截图坐标在入口换算一次，元素索引点击不依赖截图。真实 AppKit 回归可运行 `node scripts/tests/macos-hit-test-smoke.mjs <signed-ocu-executable>`（需要现有辅助功能、录屏权限和 Retina 显示器）。
 - 三个平台的显式 `get_app_state` 均支持 `include_ax` / `include_screenshot`，默认 true，至少保留一项。JS 对应 `includeAX` / `includeScreenshot`，CLI snapshot 提供同名连字符参数。关闭 AX 跳过树、焦点和选区，并使旧快照 / 查询索引及别名失效；关闭截图跳过捕获与编码，元素操作仍可用，截图坐标操作须重新获取图片。参数经 macOS app agent 转发；不改变动作回读，也不做自动图片去重。见 [按需观察](selective-observation.md)。
+- 三平台 `set_value` 在成功返回前验证控件实际值，文本精确保留空白和 Unicode，空字符串可清空；只有原生数值 / 布尔属性采用对应类型比较。关闭完整动作回读不跳过验证，最多轮询 0.6 秒且不重写；失败应重新观察后再决定是否重试。见 [写入验证](set-value-verification.md)。
 - macOS 额外提供 `query` 和 `select_text`，当前 native surface 为 11 个工具；Linux / Windows 仍为 9 个核心工具。JS `app.selectText(elementIndex, text, {prefix?, suffix?, selection?})` 复用快照或 query 索引，支持选中文字及前后光标。按字面文本和 UTF-16 定位、拒绝歧义；写入前及返回前检查会话，验证文本未变且实际选区等于请求，即使关闭完整回读也不能省略验证。失败通过 native `isError` / JS 异常传出；结果刷新使用 read-only recovery，不通过激活、键盘或真实指针补救。
 - `click` / `set_value` 在执行真实动作前后，会额外驱动一层透明 `SoftwareCursorOverlay` window：两者的移动阶段现在共用一条 heading-driven 的官方风格 motion 内核，显式把“当前 cursor 朝向”和“最终 resting pose”一起喂给选路器，优先生成需要时先掉头、再沿车头方向推进的 C 形/单侧大弧轨迹；首次显示时按官方 binary 的 fresh state 从 AppKit 全局 `(0,0)` window origin 生成起点，后续动作继续复用上一帧 visible tip。真正显示出来的 cursor 不再直接等于 path sample，而是经过一层独立的 visual dynamics 状态，把 visible tip、velocity、angle 和 fog/offset 持续推进。`click` 结尾会衔接 click pulse 和更明显但仍然很小的 rotate wobble，`set_value` 则只做 settle / idle，不给 pulse；两者收尾后会在目标点继续保持 idle 状态，等待下一次动作时 tip 保持 anchored、只保留可感知的小角度摆动；只有连续 30 秒没有新动作时才做 cleanup，这样连续 tool call 不会反复从 fresh `(0,0)` 起步；如果宿主在任务 / turn 结束时发出 `turn-ended`，cursor 会立即消失并清掉本轮位置状态。
 - overlay 用目标点相对窗口的锚点跟随窗口移动；行进、settle、点击反馈和 idle 都读取最新缓存帧，发现位置变化时直接重定位可见 tip 并清掉旧速度。窗口帧在后台串行读取，最多 30 Hz、同时最多一个请求，避免 AX 阻塞渲染线程；优先读取快照持有的 AX 窗口，仅在没有 AX 元素时使用窗口列表，读取失败保留最后有效帧。只保留当前窗口的追踪状态，reset / idle 超时后释放；这层跟随只调整显示位置，输入投递仍走既有路径。
@@ -151,6 +152,8 @@
 - Linux 动作回读已有独立 GTK fixture，可在私有 D-Bus / Xvfb 中通过 native MCP 复测；运行方式见 [Linux 动作回读](linux-action-read-back.md)。当前 Linux 侧仍是功能性第一版：没有 visual cursor overlay、没有 installer/desktop entry，也没有覆盖全部工具的 Linux fixture。后续 TODO 记录在 `docs/exec-plans/active/20260422-linux-computer-use-runtime.md`。
 
 ## macOS Locked Use 实验
+
+- Guardian 在重连后先处理握手回复中的指令，再发送普通报告；两类回复共用效果处理入口。Broker 回到 idle 后仍允许已认证 Guardian 完成清理。见 [事故回放](locked-use-incident-replay.md)。
 
 - `locked-use status [--json]` 和 `doctor` 增加只读 session / Input Monitoring / 插件诊断，由 app agent 提供真实 runtime 权限状态。 `doctor --json` 保持纯权限 JSON，不弹权限引导；定向 AX `query` 在读取前和返回结果前检查会话与当前租约。
 - 真实窗口 snapshot、缓存复用与事件投递检查当前控制台 session；锁屏或未知 / 切换用户状态明确拒绝。fixture 不属于真实桌面，继续支持 headless 测试。

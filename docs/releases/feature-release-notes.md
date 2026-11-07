@@ -4,6 +4,9 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-07 | v1.1.4 补丁发布 | 修复 Locked Use 任务结束和重连后的清理，改善三平台控件观察与写入反馈。 | 包含 #158、#145、#111；正式制品强制签名与公证。Locked Use 真实锁屏验证按维护者决定留待本版发布后。 |
+| 2026-11-07 | Locked Use 清理恢复 | 修复租约结束后 Guardian 清理被拒绝、阻止后续任务的问题。 | 区分活动租约所有者与清理连接身份，允许已结束租约的 Guardian 完成报告和释放确认，重连握手与普通报告统一消费指令；保留身份与释放门槛。离线回归通过，签名桌面闭环待验证。见 [计划](../exec-plans/completed/20261107-guardian-cleanup-after-idle.md)。 |
+| 2026-11-02 | 跨平台值写入验证 | 控件忽略或改写输入时，不再误报成功。 | macOS / Windows / Linux 的 set_value 验证实际值，文本精确比较并支持清空；保留两端空白，关闭完整回读仍校验，失败不重写。见 [说明](../set-value-verification.md)。 |
 | 2026-11-01 | 跨平台控件树预算 | 大列表不再优先挤掉窗口操作按钮。 | macOS / Windows / Linux 在有限候选中优先保留可见控件和普通界面区域，再按原树序输出；默认 1200 节点不变，预算不足明确提示，保留元素绑定与连续索引。见 [控件树预算](../tree-budget.md)。 |
 | 2026-11-02 | 发布公证门槛 | 防止正式制品在缺少公证凭据时继续发布。 | tag 与手动 npm 发布均强制公证；缺少签名 / 公证凭据即失败，Cursor Motion DMG 同样检查公证接受状态与票据有效性；保留手动只构建入口。 |
 | 2026-11-03 | Windows target capture and child clicks | Occluded-window screenshots no longer contain the covering application, and posted clicks reach native child controls. | Capture the target HWND with PrintWindow; resolve child controls and local coordinates; reject failed delivery, disabled targets and stale geometry. Global input remains opt-in, and background input depends on toolkit support. |
