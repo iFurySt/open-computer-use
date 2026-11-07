@@ -24,7 +24,10 @@
 ### Validation
 
 独立程序通过真实库 API 在原版复现失败，应用修复后完成释放并接受下一租约。
-本机仅安装 Command Line Tools，XCTest 因缺少模块未能运行；签名桌面闭环未实测。
+本机仅安装 Command Line Tools，XCTest 因缺少模块未能运行；随后在
+[macOS CI](https://github.com/joyleiyc/open-computer-use/actions/runs/42342567222)
+使用 Xcode 26.6 / Swift 6.3.3 确认新增用例在原版因 `clientUnauthorized` 失败，
+修复后的 126 个 Locked Use 测试全部通过。签名桌面闭环未实测。
 
 ### Files Modified
 

@@ -18,12 +18,16 @@ call `machine.end` with the retained cleanup identity after that reset.
 - [x] Use the state machine's active owner in the stopped-report branch.
 - [x] Extend the existing release-acknowledgement regression.
 - [x] Verify cleanup and next-lease admission through the real library API.
-- [ ] Run the affected XCTest suite in an environment providing XCTest.
+- [x] Run the affected XCTest suite in an environment providing XCTest.
 - [ ] Verify the signed system components on an isolated locked desktop.
 
 The local Command Line Tools installation cannot resolve XCTest. A standalone
 Swift executable importing the actual library fails before the fix and passes
-after it. It creates no GUI session and changes no system authentication state.
+after it. [macOS CI](https://github.com/joyleiyc/open-computer-use/actions/runs/42342567222)
+also confirms the new XCTest fails on the original coordinator with
+`clientUnauthorized`, while all 126 Locked Use tests pass with the fix under
+Xcode 26.6 / Swift 6.3.3. The local harness creates no GUI session and changes
+no system authentication state; CI does not install the privileged components.
 
 ## Boundaries
 
