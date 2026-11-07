@@ -509,37 +509,53 @@ final class DisplayGuardian: NSObject {
             defer { brokerReportInFlight = false }
             do {
                 let client: LockedUseIPCClient
+                var recoveryReply: LockedUseIPCReply?
                 if let existing = brokerClient { client = existing }
                 else {
                     let observed = hasObservedUnlock
                     let recovered = try await Task.detached {
                         let candidate = try LockedUseIPCClient(endpoint: .guardian, brokerRequirement: LockedUseSigningIdentity.brokerRequirement())
-                        let hello = try candidate.request(.init(operation: .guardianRecoveryHello, leaseID: bootstrap.leaseID,
-                            session: .current(), unlockWorkPending: false, hasObservedUnlock: observed))
-                        guard hello.result != .denied else { candidate.close(); throw GuardianError.message("Guardian recovery denied") }
-                        return candidate
+                        do {
+                            let hello = try candidate.request(.init(operation: .guardianRecoveryHello, leaseID: bootstrap.leaseID,
+                                session: .current(), unlockWorkPending: false, hasObservedUnlock: observed))
+                            guard hello.result != .denied else { throw GuardianError.message("Guardian recovery denied") }
+                            return (candidate, hello)
+                        } catch {
+                            candidate.close()
+                            throw error
+                        }
                     }.value
-                    brokerClient = recovered; client = recovered
-                }
-                let reply = try await Task.detached { try client.request(message) }.value
-                guard policy.phase != .finished else { return }
-                guard reply.result != .denied else { throw GuardianError.message("Broker denied Guardian report") }
-                for effect in reply.effects {
-                    switch effect {
-                    case "requestUnlock": requestNativeUnlock()
-                    case "cancelUnlock": unlockCancellation.cancel()
-                    case "requestRelock": stop(.stopRequested)
-                    case "releaseGuards":
-                        policy.confirmQuiescence()
-                        execute(policy.stop(.stopRequested, now: ProcessInfo.processInfo.systemUptime))
-                    default: throw GuardianError.message("Unknown Broker Guardian effect")
+                    guard policy.phase != .finished else {
+                        Task.detached { recovered.0.close() }
+                        return
                     }
+                    brokerClient = recovered.0; client = recovered.0
+                    recoveryReply = recovered.1
                 }
+                try await LockedUseGuardianBrokerExchange.report(
+                    recoveryReply: recoveryReply,
+                    isFinished: { self.policy.phase == .finished },
+                    send: { try await Task.detached { try client.request(message) }.value },
+                    receive: { try self.applyBrokerReply($0) })
             } catch {
                 guard policy.phase != .finished else { return }
                 stop(.parentDisconnected)
                 if let failed = brokerClient { Task.detached { failed.close() } }
                 brokerClient = nil
+            }
+        }
+    }
+
+    private func applyBrokerReply(_ reply: LockedUseIPCReply) throws {
+        for effect in reply.effects {
+            switch effect {
+            case "requestUnlock": requestNativeUnlock()
+            case "cancelUnlock": unlockCancellation.cancel()
+            case "requestRelock": stop(.stopRequested)
+            case "releaseGuards":
+                policy.confirmQuiescence()
+                execute(policy.stop(.stopRequested, now: ProcessInfo.processInfo.systemUptime))
+            default: throw GuardianError.message("Unknown Broker Guardian effect")
             }
         }
     }
