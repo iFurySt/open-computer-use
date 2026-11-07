@@ -63,6 +63,8 @@ CI/CD 流程结构和 release 自动化的默认方案，统一写在 `docs/CICD
 
 ## macOS Locked Use 预检
 
+- `python3 scripts/tests/macos-shield-placement-smoke.py`：已解锁桌面上的短暂生产遮罩几何检查；可选 `--virtual-display` 创建并清理测试自有虚拟屏。对照旧版初始化和最终覆盖，范围见 [副屏遮罩坐标](locked-use-shield-placement.md)，不执行系统锁屏或认证。
+
 - `ocu locked-use status --json`：只读检查当前会话 / runtime 权限 / 安装组件；普通 enable 安装并请求权限，status 检查签名、客户端批准与认证规则；开发诊断 profile 不属于普通开启流程。
 - `swift test --filter LockedUseTests`：许可、租约、超时、显示器变化、本地接管和重锁确认策略回归。
 - `./scripts/build-locked-use-plugin.sh`：构建 deny-only ABI probe 并在普通进程内测试；通过不代表 SecurityAgent 加载成功。
