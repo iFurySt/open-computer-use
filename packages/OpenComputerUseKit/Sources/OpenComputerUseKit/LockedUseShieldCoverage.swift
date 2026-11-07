@@ -9,6 +9,13 @@ public enum LockedUseShieldCoverage {
         display.insetBy(dx: -display.width / 4, dy: -display.height / 4)
     }
 
+    /// `NSWindow(contentRect:styleMask:backing:defer:screen:)` interprets the
+    /// content rect relative to `screen`'s origin, not in global Cocoa space.
+    /// Convert a global Cocoa rect before passing it to that initializer.
+    public static func screenLocalRect(_ global: CGRect, screenOrigin: CGPoint) -> CGRect {
+        global.offsetBy(dx: -screenOrigin.x, dy: -screenOrigin.y)
+    }
+
     public static func covers(_ surface: CGRect, display: CGRect) -> Bool {
         func valid(_ rect: CGRect) -> Bool {
             !rect.isNull && !rect.isInfinite && [rect.origin.x, rect.origin.y, rect.size.width, rect.size.height,
