@@ -127,7 +127,7 @@ public final class ComputerUseToolDispatcher {
             return try service.setValue(
                 app: requireString("app", in: arguments),
                 elementIndex: requireElementIndex(in: arguments),
-                value: requireString("value", in: arguments)
+                value: requireString("value", in: arguments, allowEmpty: true)
             )
         case "select_text":
             return try service.selectText(
@@ -157,8 +157,8 @@ public final class ComputerUseToolDispatcher {
         }
     }
 
-    private func requireString(_ key: String, in arguments: [String: Any]) throws -> String {
-        guard let value = arguments[key] as? String, !value.isEmpty else {
+    private func requireString(_ key: String, in arguments: [String: Any], allowEmpty: Bool = false) throws -> String {
+        guard let value = arguments[key] as? String, allowEmpty || !value.isEmpty else {
             throw ComputerUseError.missingArgument(key)
         }
 

@@ -52,6 +52,47 @@ public static class OCUWin32 {
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int valueSize);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr ChildWindowFromPointEx(IntPtr hwnd, POINT point, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowEnabled(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsChild(IntPtr parent, IntPtr child);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    // Hit-test inside the requested window, never against the desktop occluder.
+    public static IntPtr ClickTarget(IntPtr root, int x, int y) {
+        uint rootPid; GetWindowThreadProcessId(root, out rootPid);
+        IntPtr current = root;
+        for (int depth = 0; depth < 64; depth++) {
+            uint pid; GetWindowThreadProcessId(current, out pid);
+            if (rootPid == 0 || pid != rootPid || (current != root && !IsChild(root, current)))
+                throw new InvalidOperationException("Click target process/window changed; observe again.");
+            if (!IsWindowEnabled(current))
+                throw new InvalidOperationException("Click target is disabled.");
+            POINT point = new POINT { X = x, Y = y }; RECT client;
+            if (!ScreenToClient(current, ref point) || !GetClientRect(current, out client) ||
+                point.X < client.Left || point.Y < client.Top || point.X >= client.Right || point.Y >= client.Bottom)
+                throw new InvalidOperationException("Posted click is outside the target client area; use accessibility for window chrome.");
+            // Skip hidden children, but keep disabled controls so they are refused,
+            // rather than delivering their click to the parent underneath them.
+            IntPtr child = ChildWindowFromPointEx(current, point, 1);
+            if (child == IntPtr.Zero || child == current) return current;
+            current = child;
+        }
+        throw new InvalidOperationException("Click target hierarchy is too deep.");
+    }
+
     [DllImport("user32.dll")]
     public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
 
@@ -392,11 +433,15 @@ function Send-GlobalMouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [str
     }
 }
 
-function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count) {
+function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count, $bounds) {
+    Assert-CurrentWindowBounds $hwnd $bounds
+    if ($button -notin @("", "left", "right", "middle")) { throw "Unsupported posted mouse button '$button'." }
+    if ($count -lt 1 -or $count -gt 3) { throw "Click count must be between 1 and 3." }
+    $target = [OCUWin32]::ClickTarget($hwnd, $screenX, $screenY)
     $point = New-Object OCUWin32+POINT
     $point.X = $screenX
     $point.Y = $screenY
-    [void][OCUWin32]::ScreenToClient($hwnd, [ref]$point)
+    if (-not [OCUWin32]::ScreenToClient($target, [ref]$point)) { throw "ScreenToClient failed for click target." }
     $lParam = ConvertTo-LParam $point.X $point.Y
 
     $down = $WM_LBUTTONDOWN
@@ -414,10 +459,23 @@ function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$b
 
     $repeat = [math]::Max(1, $count)
     for ($i = 0; $i -lt $repeat; $i++) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)
-        [void][OCUWin32]::PostMessage($hwnd, $down, [IntPtr]$downFlag, $lParam)
-        Start-Sleep -Milliseconds 35
-        [void][OCUWin32]::PostMessage($hwnd, $up, [IntPtr]::Zero, $lParam)
+        Assert-CurrentWindowBounds $hwnd $bounds
+        if ([OCUWin32]::ClickTarget($hwnd, $screenX, $screenY) -ne $target) { throw "Click target changed; observe again." }
+        # A child can move inside an unchanged top-level window, retaining its HWND.
+        $currentPoint = New-Object OCUWin32+POINT
+        $currentPoint.X = $screenX
+        $currentPoint.Y = $screenY
+        if (-not [OCUWin32]::ScreenToClient($target, [ref]$currentPoint) -or
+            $currentPoint.X -ne $point.X -or $currentPoint.Y -ne $point.Y) {
+            throw "Click target geometry changed; observe again."
+        }
+        if (-not [OCUWin32]::PostMessage($target, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)) { throw "PostMessage mouse move delivery failed." }
+        try {
+            if (-not [OCUWin32]::PostMessage($target, $down, [IntPtr]$downFlag, $lParam)) { throw "PostMessage mouse down delivery failed." }
+            Start-Sleep -Milliseconds 35
+        } finally {
+            if (-not [OCUWin32]::PostMessage($target, $up, [IntPtr]::Zero, $lParam)) { throw "PostMessage mouse up delivery failed." }
+        }
         Start-Sleep -Milliseconds 50
     }
 }
@@ -803,29 +861,137 @@ function Get-ElementTitle($record) {
     return ""
 }
 
+# This cache lives only for one snapshot. Action targets are still resolved afresh.
+function New-TreeCacheRequest {
+    $cache = New-Object Windows.Automation.CacheRequest
+    $cache.TreeScope = [Windows.Automation.TreeScope]::Element
+    $cache.TreeFilter = [Windows.Automation.Condition]::TrueCondition
+    foreach ($name in @('ControlType', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
+        'IsInvokePatternAvailable', 'IsTogglePatternAvailable', 'IsSelectionItemPatternAvailable', 'IsExpandCollapsePatternAvailable',
+        'IsScrollItemPatternAvailable', 'IsScrollPatternAvailable', 'IsValuePatternAvailable')) {
+        $cache.Add([Windows.Automation.AutomationElement]::($name + 'Property'))
+    }
+    $cache.Add([Windows.Automation.ValuePattern]::ValueProperty)
+    $cache.Add([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
+    return $cache
+}
+
+function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
+    try {
+        $info = $element.Cached
+        $rect = $info.BoundingRectangle
+        $frame = $null
+        if (-not $rect.IsEmpty -and $rect.Width -gt 0 -and $rect.Height -gt 0) {
+            $frame = if ($null -eq $windowBounds) { New-Frame $rect.X $rect.Y $rect.Width $rect.Height }
+                     else { New-Frame ($rect.X - $windowBounds.x) ($rect.Y - $windowBounds.y) $rect.Width $rect.Height }
+        }
+        $actions = New-Object System.Collections.Generic.List[string]
+        foreach ($pair in @(@('Invoke', 'Invoke'), @('Toggle', 'Toggle'), @('SelectionItem', 'Select'),
+            @('ScrollItem', 'ScrollIntoView'), @('Scroll', 'Scroll'), @('Value', 'SetValue'))) {
+            if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::('Is' + $pair[0] + 'PatternAvailableProperty'))) {
+                $actions.Add($pair[1])
+            }
+        }
+        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsExpandCollapsePatternAvailableProperty)) {
+            $state = $element.GetCachedPropertyValue([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
+            if ($state -eq [Windows.Automation.ExpandCollapseState]::Collapsed) { $actions.Add('Expand') }
+            elseif ($state -eq [Windows.Automation.ExpandCollapseState]::Expanded) { $actions.Add('Collapse') }
+        }
+        $value = ''
+        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty)) {
+            $value = Limit-Text ([string]$element.GetCachedPropertyValue([Windows.Automation.ValuePattern]::ValueProperty)) $TextLimit
+        }
+        return [pscustomobject]@{
+            index = $index
+            runtimeId = @($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty))
+            automationId = $info.AutomationId
+            name = Limit-Text $info.Name $TextLimit
+            controlType = $info.ControlType.ProgrammaticName
+            localizedControlType = $info.LocalizedControlType
+            className = $info.ClassName
+            value = $value
+            nativeWindowHandle = [int64]$info.NativeWindowHandle
+            frame = $frame
+            actions = $actions.ToArray()
+        }
+    } catch {
+        return Get-ElementRecord $element $index $windowBounds $TextLimit
+    }
+}
+
+function Get-TreeChildren($node, [int]$limit) {
+    if ($limit -le 0) {
+        return [pscustomobject]@{ children = @(); truncated = ($null -ne [Windows.Automation.TreeWalker]::RawViewWalker.GetFirstChild($node)) }
+    }
+    $children = $node.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
+    $result = New-Object System.Collections.Generic.List[object]
+    for ($i = 0; $i -lt [math]::Min($children.Count, $limit); $i++) { $result.Add($children.Item($i)) }
+    [pscustomobject]@{ children = $result.ToArray(); truncated = ($children.Count -gt $limit) }
+}
+
+function Get-PrioritizedTree($root, [int]$MaxNodes, [int]$MaxDepth) {
+    $queues = @(); $offsets = @(0, 0, 0, 0, 0)
+    for ($i = 0; $i -lt 5; $i++) { $queues += ,(New-Object System.Collections.Generic.List[object]) }
+    $seen = New-Object System.Collections.Generic.HashSet[string]
+    $selected = New-Object System.Collections.Generic.List[object]
+    $state = @{ scanned = 0; truncated = $false; limit = [math]::Max(64, [math]::Min($MaxNodes, 2500) * 4) }
+    function Enqueue($node, [int]$depth, [string]$path, [bool]$inCollection) {
+        if ($depth -gt $MaxDepth -or $state.scanned -ge $state.limit) { $state.truncated = $true; return }
+        $state.scanned++
+        if ($null -eq $node) { return }
+        try { $runtime = (@($node.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty)) -join '.') }
+        catch { try { $runtime = (@($node.GetRuntimeId()) -join '.') } catch { $runtime = $path } }
+        if ([string]::IsNullOrWhiteSpace($runtime)) { $runtime = $path }
+        if (-not $seen.Add($runtime)) { return }
+        try { $role = $node.Cached.ControlType.ProgrammaticName } catch { $role = Get-ElementControlTypeName $node }
+        if ([string]::IsNullOrWhiteSpace($role)) { $role = Get-ElementControlTypeName $node }
+        $collection = $inCollection -or $role -in @('ControlType.List', 'ControlType.DataGrid', 'ControlType.Tree', 'ControlType.Table')
+        $hidden = $false
+        try {
+            $info = $node.Cached
+            if ($null -eq $info) { $info = $node.Current }
+            $hidden = [bool]$info.IsOffscreen
+        } catch { try { $hidden = [bool]$node.Current.IsOffscreen } catch { } }
+        $control = $role -in @('ControlType.Button', 'ControlType.CheckBox', 'ControlType.RadioButton', 'ControlType.Edit', 'ControlType.ComboBox', 'ControlType.Slider', 'ControlType.Spinner', 'ControlType.Hyperlink')
+        $rank = if ($hidden) { 4 } elseif ($collection) { if ($control) { 2 } else { 3 } } elseif ($control) { 0 } else { 1 }
+        $queues[$rank].Add([pscustomobject]@{ node = $node; depth = $depth; path = $path; collection = $collection })
+    }
+    Enqueue $root 0 '' $false
+    while ($selected.Count -lt $MaxNodes) {
+        $rank = -1
+        for ($i = 0; $i -lt 5; $i++) { if ($offsets[$i] -lt $queues[$i].Count) { $rank = $i; break } }
+        if ($rank -lt 0) { break }
+        $work = $queues[$rank][$offsets[$rank]]; $offsets[$rank]++
+        $selected.Add($work)
+        try {
+            $remaining = if ($work.depth -ge $MaxDepth) { 0 } else { [math]::Max(0, $state.limit - $state.scanned) }
+            $result = Get-TreeChildren $work.node $remaining
+            if ($result.truncated) { $state.truncated = $true }
+            for ($i = 0; $i -lt $result.children.Count; $i++) {
+                Enqueue $result.children[$i] ($work.depth + 1) ($work.path + '/' + $i.ToString('D10')) $work.collection
+            }
+        } catch { $state.truncated = $true }
+    }
+    for ($i = 0; $i -lt 5; $i++) { if ($offsets[$i] -lt $queues[$i].Count) { $state.truncated = $true } }
+    [pscustomobject]@{ nodes = @($selected | Sort-Object path); truncated = $state.truncated }
+}
+
 function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLimit, [int]$MaxTreeNodes = $script:AccessibilityTreeMaxNodeCount, [int]$MaxTreeDepth = $script:AccessibilityTreeMaxDepth) {
     $records = New-Object System.Collections.Generic.List[object]
     $lines = New-Object System.Collections.Generic.List[string]
-    $visited = New-Object System.Collections.Generic.HashSet[string]
-    $nextIndex = 0
     $effectiveMaxTreeNodes = if ($MaxTreeNodes -gt 0) { $MaxTreeNodes } else { $script:AccessibilityTreeMaxNodeCount }
     $effectiveMaxTreeDepth = if ($MaxTreeDepth -gt 0) { $MaxTreeDepth } else { $script:AccessibilityTreeMaxDepth }
-
-    function Visit($node, [int]$depth) {
-        if ($script:nextIndex -ge $script:MaxTreeNodes -or $depth -gt $script:MaxTreeDepth) {
-            return
-        }
-        $runtime = ""
-        try { $runtime = (@($node.GetRuntimeId()) -join ".") } catch { $runtime = [guid]::NewGuid().ToString() }
-        if (-not $script:visited.Add($runtime)) {
-            return
-        }
-
-        $index = $script:nextIndex
-        $script:nextIndex++
-        $record = Get-ElementRecord $node $index $script:windowBounds $TextLimit
-        $script:records.Add($record)
-
+    $cache = New-TreeCacheRequest
+    $scope = $cache.Activate()
+    try {
+        try { $element = $element.GetUpdatedCache($cache) } catch { }
+        $plan = Get-PrioritizedTree $element $effectiveMaxTreeNodes $effectiveMaxTreeDepth
+    } finally { $scope.Dispose() }
+    foreach ($work in $plan.nodes) {
+        $depth = $work.depth
+        $index = $records.Count
+        $record = Get-TreeRecord $work.node $index $windowBounds $TextLimit
+        $records.Add($record)
         $role = $record.localizedControlType
         if ([string]::IsNullOrWhiteSpace($role)) {
             $role = $record.controlType
@@ -844,25 +1010,12 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
         if ($null -ne $record.frame) {
             $frameSegment = " Frame: {{x: {0}, y: {1}, width: {2}, height: {3}}}" -f [int][math]::Round($record.frame.x), [int][math]::Round($record.frame.y), [int][math]::Round($record.frame.width), [int][math]::Round($record.frame.height)
         }
-        $script:lines.Add(("`t" * ($depth + 1)) + "$index $role $title$valueSegment$actionsSegment$frameSegment")
+        $lines.Add(("`t" * ($depth + 1)) + "$index $role $title$valueSegment$actionsSegment$frameSegment")
 
-        try {
-            $children = $node.FindAll([Windows.Automation.TreeScope]::Children, [Windows.Automation.Condition]::TrueCondition)
-            for ($i = 0; $i -lt $children.Count; $i++) {
-                Visit $children.Item($i) ($depth + 1)
-            }
-        } catch {
-        }
     }
-
-    $script:records = $records
-    $script:lines = $lines
-    $script:visited = $visited
-    $script:nextIndex = $nextIndex
-    $script:windowBounds = $windowBounds
-    $script:MaxTreeNodes = $effectiveMaxTreeNodes
-    $script:MaxTreeDepth = $effectiveMaxTreeDepth
-    Visit $element 0
+    if ($plan.truncated) {
+        $lines.Add('[Accessibility tree truncated: prioritized visible controls; some nodes were omitted.]')
+    }
 
     [pscustomobject]@{
         records = $records.ToArray()
@@ -870,7 +1023,7 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
     }
 }
 
-function Capture-WindowPngBase64($bounds) {
+function Capture-WindowPngBase64($bounds, [IntPtr]$hwnd) {
     if (-not (Test-CapturableFrame $bounds)) {
         return $null
     }
@@ -880,7 +1033,15 @@ function Capture-WindowPngBase64($bounds) {
     try {
         $bitmap = New-Object System.Drawing.Bitmap ([int][math]::Round($bounds.width)), ([int][math]::Round($bounds.height))
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        $graphics.CopyFromScreen([int][math]::Round($bounds.x), [int][math]::Round($bounds.y), 0, 0, $bitmap.Size)
+        Assert-CurrentWindowBounds $hwnd $bounds
+        # PW_RENDERFULLCONTENT captures the requested HWND even when occluded.
+        # Never substitute desktop pixels on failure: they may belong to another app.
+        # The bridge process has a 30-second timeout for unresponsive renderers.
+        $hdc = $graphics.GetHdc()
+        try {
+            if (-not [OCUWin32]::PrintWindow($hwnd, $hdc, 2)) { return $null }
+        } finally { $graphics.ReleaseHdc($hdc) }
+        Assert-CurrentWindowBounds $hwnd $bounds
         $stream = New-Object System.IO.MemoryStream
         $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
         $bytes = $stream.ToArray()
@@ -958,7 +1119,7 @@ function Build-Snapshot([string]$query, $TextLimit = $script:DefaultTextLimit, [
         $focus = Get-FocusedSummary $process.Id $TextLimit
         $selection = Get-SelectedText $process.Id $TextLimit
     }
-    if ($IncludeScreenshot) { $image = Capture-WindowPngBase64 $bounds }
+    if ($IncludeScreenshot) { $image = Capture-WindowPngBase64 $bounds ([IntPtr]$process.MainWindowHandle) }
     [pscustomobject]@{
         app = [pscustomobject]@{
             name = $process.ProcessName
@@ -1041,6 +1202,21 @@ function Find-Element($process, $record) {
         }
     }
     return $null
+}
+
+function Invoke-VerifiedSetValue($pattern, [string]$value) {
+    if ($pattern.Current.IsReadOnly) { throw "Cannot set a value for an element that is not settable" }
+    $pattern.SetValue($value)
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $matched = $false
+        try { $matched = [string]::Equals($pattern.Current.Value, $value, [StringComparison]::Ordinal) } catch { }
+        if ($matched) { return }
+        if ($clock.Elapsed.TotalSeconds -ge 0.6) {
+            throw "set_value could not verify the requested value. Read the current value before retrying; the write may have changed the control."
+        }
+        Start-Sleep -Milliseconds 50
+    }
 }
 
 function Get-CurrentPatternOrNull($element, $pattern) {
@@ -1287,7 +1463,8 @@ try {
                             y = [int][math]::Round($windowBounds.y + [double]$operation.y)
                         }
                     }
-                    Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+                    if ($null -ne $operation.element) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
+                    Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                 } elseif ($clickMethod -eq "global") {
                     if (-not (Test-GlobalPointerFallbackEnabled)) {
                         throw "click_method 'global' requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 because it may move the system pointer and change foreground focus"
@@ -1324,7 +1501,8 @@ try {
                             if ($null -ne $operation.element) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
                             Send-GlobalMouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                         } else {
-                            Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+                            if ($null -ne $operation.element) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
+                            Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                         }
                     }
                 } else {
@@ -1365,7 +1543,7 @@ try {
                 if ($null -eq $valuePattern) {
                     throw "Cannot set a value for an element that is not settable"
                 }
-                $valuePattern.SetValue($operation.value)
+                Invoke-VerifiedSetValue $valuePattern ([string]$operation.value)
             }
             default {
                 throw "unsupportedTool(`"$($operation.tool)`")"

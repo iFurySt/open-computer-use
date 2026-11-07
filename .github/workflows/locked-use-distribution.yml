@@ -63,6 +63,8 @@ jobs:
         run: python3 scripts/tests/locked-use-auth-latency.test.py -v
       - name: Test notarization ordering and failure handling
         run: python3 scripts/tests/locked-use-notarization.test.py -v
+      - name: Test required signing and notarization for publishing
+        run: python3 scripts/tests/locked-use-release-policy.test.py -v
       - name: Test real staging and ticket preservation in release archives
         run: python3 scripts/tests/locked-use-release-packaging.test.py -v
       - name: Test signing keychain restoration

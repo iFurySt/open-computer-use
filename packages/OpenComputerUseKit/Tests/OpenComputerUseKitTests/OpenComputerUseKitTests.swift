@@ -278,6 +278,15 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(size.height, 24)
     }
 
+    func testRenderedCoordinateNeverTrapsOnNonFiniteValues() {
+        XCTAssertEqual(renderedCoordinate(12.7), "12")
+        XCTAssertEqual(renderedCoordinate(-3.2), "-3")
+        XCTAssertEqual(renderedCoordinate(.nan), "?")
+        XCTAssertEqual(renderedCoordinate(.infinity), "?")
+        XCTAssertEqual(renderedCoordinate(-.infinity), "?")
+        XCTAssertEqual(renderedCoordinate(CGFloat(Int64.max)), "?")
+    }
+
     func testToolDefinitionCount() {
         XCTAssertEqual(ToolDefinitions.all.count, 11)
         XCTAssertEqual(
@@ -688,7 +697,7 @@ final class OpenComputerUseKitTests: XCTestCase {
 
     func testInitializeResponseContainsToolsCapability() throws {
         let server = StdioMCPServer(service: ComputerUseService())
-        let response = server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"test","version":"1.1.3"},"capabilities":{}}}"#)
+        let response = server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"test","version":"1.1.4"},"capabilities":{}}}"#)
         XCTAssertNotNil(response)
         XCTAssertTrue(response!.contains(#""name":"open-computer-use""#))
         XCTAssertTrue(response!.contains(#""tools":{"listChanged":false}"#))
@@ -697,7 +706,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     func testInitializeResponseContainsComputerUseInstructions() throws {
         let server = StdioMCPServer(service: ComputerUseService())
         let response = try XCTUnwrap(
-            server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"test","version":"1.1.3"},"capabilities":{}}}"#)
+            server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"test","version":"1.1.4"},"capabilities":{}}}"#)
         )
         let data = try XCTUnwrap(response.data(using: .utf8))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -2330,7 +2339,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(selected?.windowID, main.windowID)
     }
 
-    func testListTraversalPrefersVisibleChildrenAndReadsContents() {
+    func testListTraversalDoesNotReintroduceFullContentsAlongsideVisibleChildren() {
         let attributes = childTraversalAttributes(
             role: kAXListRole as String,
             hasRows: false,
@@ -2338,7 +2347,7 @@ final class OpenComputerUseKitTests: XCTestCase {
         )
 
         XCTAssertFalse(attributes.contains(kAXChildrenAttribute))
-        XCTAssertTrue(attributes.contains("AXContents"))
+        XCTAssertFalse(attributes.contains("AXContents"))
         XCTAssertTrue(attributes.contains("AXVisibleChildren"))
     }
 

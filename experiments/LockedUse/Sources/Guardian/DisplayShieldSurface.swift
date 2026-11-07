@@ -55,8 +55,12 @@ final class DisplayShieldSurface {
         guard !screens.isEmpty else { throw GuardianError.message("No display available") }
         topology = displayTopology()
         for (id, screen) in screens {
+            // The screen initializer takes screen-local coordinates. setFrame
+            // below takes global Cocoa coordinates and can correct a misplaced
+            // initial window, but creation should not rely on that correction.
             let frame = LockedUseShieldCoverage.surfaceFrame(for: screen.frame)
-            let window = ShieldWindow(contentRect: frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false, screen: screen)
+            let local = LockedUseShieldCoverage.screenLocalRect(frame, screenOrigin: screen.frame.origin)
+            let window = ShieldWindow(contentRect: local, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false, screen: screen)
             window.animationBehavior = .none
             window.hidesOnDeactivate = false
             window.isFloatingPanel = true

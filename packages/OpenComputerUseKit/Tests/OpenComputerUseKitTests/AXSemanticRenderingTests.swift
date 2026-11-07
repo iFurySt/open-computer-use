@@ -49,7 +49,7 @@ final class AXSemanticRenderingTests: XCTestCase {
         func node(_ element: AXUIElement) -> Node {
             nodes.values.first { CFEqual($0.element, element) }!
         }
-        func render(focused: Int? = nil) -> (lines: [String], records: [Int: ElementRecord]) {
+        func render(focused: Int? = nil, limits: AccessibilityTreeLimits = .defaults) -> (lines: [String], records: [Int: ElementRecord]) {
             let cache = AXSnapshotReadCache(batch: { element in
                 let node = self.node(element)
                 var values = node.attributes.mapValues { AXSnapshotReadCache.Attribute.value($0) }
@@ -61,7 +61,7 @@ final class AXSemanticRenderingTests: XCTestCase {
                 (.success, attribute == "AXValue" && self.node(element).settable)
             })
             return AXSnapshotReadCache.withCache(cache) {
-                renderAXSemanticFixture(root: nodes[0]!.element, focused: focused.flatMap { nodes[$0]?.element })
+                renderAXSemanticFixture(root: nodes[0]!.element, focused: focused.flatMap { nodes[$0]?.element }, limits: limits)
             }
         }
         func index(_ logicalID: Int, in records: [Int: ElementRecord]) -> Int? {
@@ -184,4 +184,62 @@ final class AXSemanticRenderingTests: XCTestCase {
         assertAgentTargets(fixture, output, expected: [0, 1, 3, 4, 5])
         XCTAssertNotEqual(fixture.index(3, in: output.records), fixture.index(5, in: output.records))
     }
+    func testLargeEarlyCollectionCannotStarveLaterNestedButtons() {
+        let fixture = Fixture()
+        let list = fixture.add(10, role: "AXList", title: "Files")
+        list.children = Array(100..<2100)
+        for id in list.children { fixture.add(id, role: "AXRow", title: "File \(id)") }
+        let footer = fixture.add(11, role: "AXGroup", title: "Actions")
+        footer.children = [12]
+        let wrapper = fixture.add(12, role: "AXGroup")
+        wrapper.children = [13, 14]
+        fixture.add(13, role: "AXButton", title: "Cancel").actions = ["AXPress"]
+        fixture.add(14, role: "AXButton", title: "Open").actions = ["AXPress"]
+        fixture.nodes[0]!.children = [10, 11]
+        let output = fixture.render(limits: .init(maxNodeCount: 20, maxDepth: 64))
+        XCTAssertLessThanOrEqual(output.records.count, 20)
+        XCTAssertNotNil(fixture.index(13, in: output.records))
+        XCTAssertNotNil(fixture.index(14, in: output.records))
+        XCTAssertTrue(output.lines.contains { $0.contains("tree truncated") })
+        XCTAssertEqual(output.records.keys.sorted(), Array(0..<output.records.count))
+    }
+
+    func testVisibilityUnknownFramesAndCycleRemainSafeUnderSmallBudget() {
+        let fixture = Fixture()
+        let hidden = fixture.add(10, role: "AXButton", title: "Offscreen")
+        var point = CGPoint(x: 10000, y: 10000)
+        hidden.attributes["AXPosition"] = AXValueCreate(.cgPoint, &point)
+        let unknown = fixture.add(11, role: "AXButton", title: "Unknown geometry")
+        unknown.attributes.removeValue(forKey: "AXPosition")
+        unknown.attributes.removeValue(forKey: "AXSize")
+        fixture.nodes[0]!.children = [10, 11, 0]
+        let output = fixture.render(limits: .init(maxNodeCount: 2, maxDepth: 64))
+        XCTAssertNotNil(fixture.index(11, in: output.records))
+        XCTAssertNil(fixture.index(10, in: output.records))
+        XCTAssertEqual(output.records.count, 2)
+        let depth = fixture.render(limits: .init(maxNodeCount: 20, maxDepth: 1))
+        XCTAssertEqual(depth.records.count, 1)
+        XCTAssertTrue(depth.lines.contains { $0.contains("tree truncated") })
+    }
+    func testRepeatedReferencesCannotSpendReservedControlBudgetTwice() {
+        let fixture = Fixture()
+        fixture.nodes[0]!.children = [10, 11, 12]
+        fixture.add(10, role: "AXGroup", title: "First").children = [13]
+        fixture.add(11, role: "AXGroup", title: "Second").children = [13]
+        fixture.add(12, role: "AXButton", title: "Footer").actions = ["AXPress"]
+        fixture.add(13, role: "AXButton", title: "Shared").actions = ["AXPress"]
+        let output = fixture.render(limits: .init(maxNodeCount: 5, maxDepth: 64))
+        XCTAssertNotNil(fixture.index(12, in: output.records))
+        XCTAssertEqual(output.records.values.filter { $0.element.map { CFEqual($0, fixture.nodes[13]!.element) } == true }.count, 1)
+    }
+    func testDuplicateChildEntriesStillConsumeDiscoveryBudget() {
+        let fixture = Fixture()
+        fixture.add(10, role: "AXButton", title: "Beyond discovery limit")
+        fixture.nodes[0]!.children = Array(repeating: 0, count: 10000) + [10]
+        let output = fixture.render(limits: .init(maxNodeCount: 20, maxDepth: 64))
+        XCTAssertEqual(output.records.count, 1)
+        XCTAssertNil(fixture.index(10, in: output.records))
+        XCTAssertTrue(output.lines.contains { $0.contains("tree truncated") })
+    }
+
 }

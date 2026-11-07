@@ -331,9 +331,7 @@ func TestWindowsRuntimeTreeBudgetDefaultsMatchMacOS(t *testing.T) {
 	if !strings.Contains(windowsRuntimeScript, "$AccessibilityTreeMaxDepth = 64") {
 		t.Fatal("Windows runtime should default to the shared 64 level tree depth")
 	}
-	if !strings.Contains(windowsRuntimeScript, "$script:nextIndex -ge $script:MaxTreeNodes -or $depth -gt $script:MaxTreeDepth") {
-		t.Fatal("Windows runtime should use shared tree budget constants while rendering")
-	}
+	// Traversal bounds are exercised by windows-tree-budget.test.ps1 against production functions.
 }
 
 func TestWindowsScreenshotValidationRejectsDegenerateImages(t *testing.T) {
@@ -503,5 +501,27 @@ func TestDoctorJSONRejectsUnsupportedPermissionDiagnostics(t *testing.T) {
 	}
 	if out.Len() != 0 {
 		t.Fatal("unsupported JSON mode must not emit text on stdout")
+	}
+}
+
+func TestSetValuePreservesLiteralPayloadAndRejectsNonStrings(t *testing.T) {
+	for _, value := range []string{"", " \t中文🙂\n", "0015"} {
+		svc := newService()
+		svc.snapshots["fixture"] = &appSnapshot{App: appDescriptor{Name: "fixture", PID: 42}, Elements: []elementRecord{{Index: 0}}}
+		var captured psRequest
+		svc.runBridge = func(request psRequest) (*psResponse, error) {
+			captured = request
+			return &psResponse{OK: true, Snapshot: &appSnapshot{App: appDescriptor{Name: "fixture", PID: 42}}}, nil
+		}
+		result := svc.callTool("set_value", map[string]any{"app": "fixture", "element_index": "0", "value": value})
+		if result.IsError || captured.Value != value {
+			t.Fatalf("literal payload lost: %#v / %#v", result, captured)
+		}
+	}
+	for _, value := range []any{nil, 1, true} {
+		result := newService().callTool("set_value", map[string]any{"app": "fixture", "element_index": "0", "value": value})
+		if !result.IsError || !strings.Contains(result.Content[0].Text, "must be a string") {
+			t.Fatalf("invalid value accepted: %#v", result)
+		}
 	}
 }

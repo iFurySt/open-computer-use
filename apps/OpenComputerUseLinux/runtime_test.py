@@ -87,6 +87,39 @@ class RuntimeInterfaceDetectionTests(unittest.TestCase):
         self.assertTrue(self.runtime.set_element_value(node, "hello"))
 
 
+class SetValueVerificationTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load_runtime()
+        self.clock = 0.0
+        def sleep(seconds): self.clock += seconds
+        self.patch = mock.patch.multiple(self.runtime.time, monotonic=lambda: self.clock, sleep=sleep)
+        self.patch.start()
+        self.addCleanup(self.patch.stop)
+
+    def test_literal_text_and_typed_numbers(self):
+        for text in ["", " \t中文🙂\n", "0015", "e\u0301"]:
+            self.runtime.verify_set_value(text, lambda: text)
+        for requested, actual in [("0015", "15"), (" x ", "x"), ("e\u0301", "é"), ("true", "1"), ("x", None)]:
+            with self.assertRaisesRegex(RuntimeError, "could not verify"):
+                self.runtime.verify_set_value(requested, lambda: actual)
+        self.runtime.verify_set_value("15.0", lambda: 15.0, numeric=True)
+        with self.assertRaisesRegex(RuntimeError, "could not verify"):
+            self.runtime.verify_set_value("9007199254740993", lambda: 9007199254740992.0, numeric=True)
+
+    def test_delayed_success_and_unreadable_failure(self):
+        self.runtime.verify_set_value("new", lambda: "new" if self.clock >= 0.15 else "old")
+        self.assertLessEqual(self.clock, 0.6)
+        with self.assertRaisesRegex(RuntimeError, "could not verify"):
+            self.runtime.verify_set_value("new", lambda: (_ for _ in ()).throw(RuntimeError("gone")))
+
+    def test_ignored_text_write_is_attempted_once_without_numeric_fallback(self):
+        node = InterfaceOnlyAccessible(["Accessible", "Text", "EditableText"])
+        with mock.patch.object(self.runtime.Atspi.EditableText, "set_text_contents", return_value=True) as write:
+            with self.assertRaisesRegex(RuntimeError, "could not verify"):
+                self.runtime.set_element_value(node, "ignored")
+            self.assertEqual(write.call_count, 1)
+
+
 class FakeKeySynthType:
     PRESS = "PRESS"
     RELEASE = "RELEASE"
@@ -468,6 +501,80 @@ class RuntimeActionReadBackTests(unittest.TestCase):
             self.runtime.perform_operation({"tool": "press_key", "app": "Editor", "key": "Return", "skip_read_back": True})
         self.snapshot.assert_not_called()
 
+
+
+
+class TreeBudgetTests(unittest.TestCase):
+    class Node:
+        def __init__(self, role, name, children=(), showing=True):
+            self.role, self.name, self.children, self.showing = role, name, list(children), showing
+            self.child_reads = 0
+        def get_role_name(self): return self.role
+        def get_name(self): return self.name
+        def get_child_count(self): return len(self.children)
+        def get_child_at_index(self, index):
+            self.child_reads += 1
+            return self.children[index]
+        def get_state_set(self): return self
+        def contains(self, state):
+            if self.showing is None: raise RuntimeError("unknown")
+            return self.showing
+        def get_interfaces(self): return []
+
+    def test_later_nested_buttons_survive_large_collection_with_original_paths(self):
+        runtime = load_runtime()
+        runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)
+        rows = [self.Node("table cell", str(i)) for i in range(2000)]
+        collection = self.Node("table", "Files", rows)
+        cancel = self.Node("push button", "Cancel")
+        root = self.Node("dialog", "Open", [collection, self.Node("panel", "footer", [cancel])])
+        selected, truncated = runtime.prioritized_tree_nodes(root, [4, 2], 20, 64)
+        self.assertTrue(truncated)
+        self.assertLessEqual(len(selected), 20)
+        self.assertIn(((4, 2, 1, 0), cancel, 2), selected)
+        self.assertLessEqual(collection.child_reads, 80)
+        self.assertEqual([path for path, _, _ in selected], sorted(path for path, _, _ in selected))
+
+    def test_hidden_unknown_visibility_depth_and_cycles(self):
+        runtime = load_runtime()
+        runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)
+        hidden = self.Node("push button", "Hidden", showing=False)
+        unknown = self.Node("push button", "Unknown", showing=None)
+        root = self.Node("dialog", "Root", [hidden, unknown])
+        root.children.append(root)
+        selected, truncated = runtime.prioritized_tree_nodes(root, [0], 2, 64)
+        self.assertEqual([node for _, node, _ in selected], [root, unknown])
+        self.assertTrue(truncated)
+        selected, truncated = runtime.prioritized_tree_nodes(root, [0], 20, 0)
+        self.assertEqual(len(selected), 1)
+        self.assertTrue(truncated)
+
+    def test_duplicate_and_invalid_children_still_consume_discovery_budget(self):
+        runtime = load_runtime()
+        runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)
+        for invalid in (False, True):
+            root = self.Node("dialog", "Root")
+            root.children = [None if invalid else root] * 10000
+            selected, truncated = runtime.prioritized_tree_nodes(root, [0], 20, 64)
+            self.assertEqual(len(selected), 1)
+            self.assertTrue(truncated)
+            self.assertLessEqual(root.child_reads, 79)
+            root.child_reads = 0
+            runtime.prioritized_tree_nodes(root, [0], 20, 0)
+            self.assertEqual(root.child_reads, 0)
+
+    def test_gtk_showing_flag_does_not_override_offscreen_cell_geometry(self):
+        runtime = load_runtime()
+        runtime.Atspi.StateType = types.SimpleNamespace(SHOWING=1)
+        hidden = self.Node("table cell", "Old first", showing=True)
+        visible = self.Node("table cell", "Visible last", showing=True)
+        root = self.Node("table", "Files", [hidden, visible])
+        bounds = dict(x=0, y=0, width=600, height=300)
+        def geometry(node):
+            return dict(x=-2147483648, y=-2147483648, width=600, height=20) if node is hidden else bounds
+        with mock.patch.object(runtime, "extents", side_effect=geometry):
+            selected, _ = runtime.prioritized_tree_nodes(root, [0], 2, 64, bounds)
+        self.assertEqual([node for _, node, _ in selected], [root, visible])
 
 if __name__ == "__main__":
     unittest.main()

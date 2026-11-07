@@ -172,7 +172,7 @@ public enum ToolDefinitions {
         ),
         ToolDefinition(
             name: "set_value",
-            description: "Set the value of a settable accessibility element. This tool is part of plugin `Computer Use`.",
+            description: "Set the value of a settable accessibility element and verify the actual value. Text is compared exactly, including whitespace; an empty string clears it. Unverified writes return an error, even when full action read-back is disabled. This tool is part of plugin `Computer Use`.",
             annotations: defaultAnnotations(),
             inputSchema: objectSchema(
                 properties: [

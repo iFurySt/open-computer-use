@@ -291,16 +291,72 @@ def record_for(node, index, path, window_bounds, text_limit=DEFAULT_TEXT_LIMIT, 
     }
 
 
+def prioritized_tree_nodes(root, root_path, max_nodes, max_depth, window_bounds=None):
+    """Bound discovery separately; retain ancestors and original AT-SPI paths."""
+    import heapq
+    pending, selected, seen = [], [], set()
+    scanned, sequence, truncated = 0, 0, False
+    scan_limit = max(64, min(max_nodes, 2500) * 4)
+    collections = {"table", "tree", "tree table", "list", "list box", "scroll pane"}
+    controls = {"push button", "check box", "radio button", "toggle button", "entry",
+                "password text", "combo box", "slider", "spin button"}
+
+    def enqueue(node, depth, path, in_collection, viewport):
+        nonlocal scanned, sequence, truncated
+        if depth > max_depth or scanned >= scan_limit:
+            truncated = True
+            return
+        scanned += 1
+        if node is None or node in seen:
+            return
+        seen.add(node)
+        role = node_role(node).lower()
+        collection = in_collection or role in collections
+        showing = safe(lambda: node.get_state_set().contains(Atspi.StateType.SHOWING))
+        geometry = safe(lambda: extents(node)) if collection else None
+        hidden = showing is not None and not showing
+        if geometry is not None and viewport is not None:
+            hidden = hidden or (geometry["x"] + geometry["width"] <= viewport["x"] or
+                geometry["y"] + geometry["height"] <= viewport["y"] or
+                geometry["x"] >= viewport["x"] + viewport["width"] or
+                geometry["y"] >= viewport["y"] + viewport["height"])
+        if role == "scroll pane" and geometry is not None:
+            if viewport is None:
+                viewport = geometry
+            else:
+                x, y = max(viewport["x"], geometry["x"]), max(viewport["y"], geometry["y"])
+                viewport = frame(x, y, max(0, min(viewport["x"]+viewport["width"], geometry["x"]+geometry["width"])-x),
+                                 max(0, min(viewport["y"]+viewport["height"], geometry["y"]+geometry["height"])-y))
+        control = role in controls or (role == "text" and supports_interface(node, "EditableText"))
+        rank = 4 if hidden else (2 if control else 3) if collection else 0 if control else 1
+        sequence += 1
+        heapq.heappush(pending, (rank, sequence, node, depth, path, collection, viewport))
+
+    enqueue(root, 0, tuple(root_path), False, window_bounds)
+    while pending and len(selected) < max_nodes:
+        _, _, node, depth, path, collection, viewport = heapq.heappop(pending)
+        selected.append((path, node, depth))
+        count = child_count(node)
+        if depth >= max_depth:
+            truncated = truncated or count > 0
+            continue
+        for index in range(count):
+            if scanned >= scan_limit:
+                truncated = True
+                break
+            enqueue(child_at(node, index), depth + 1, path + (index,), collection, viewport)
+    return sorted(selected, key=lambda item: item[0]), truncated or bool(pending)
+
+
 def render_tree(root, window_bounds, root_path, text_limit=DEFAULT_TEXT_LIMIT, max_tree_nodes=MAX_ELEMENTS, max_tree_depth=MAX_DEPTH):
     records = []
     lines = []
     lightweight_hidden = os.environ.get("OPEN_COMPUTER_USE_LINUX_LIGHTWEIGHT_HIDDEN", "").strip().lower() in {"1", "true", "yes", "on"}
 
-    def visit(node, depth, path):
-        if len(records) >= max_tree_nodes or depth > max_tree_depth or node is None:
-            return
+    selected, truncated = prioritized_tree_nodes(root, root_path, max_tree_nodes, max_tree_depth, window_bounds)
+    for path, node, depth in selected:
         index = len(records)
-        record = record_for(node, index, path, window_bounds, text_limit=text_limit, lightweight_hidden=lightweight_hidden)
+        record = record_for(node, index, list(path), window_bounds, text_limit=text_limit, lightweight_hidden=lightweight_hidden)
         records.append(record)
 
         role = record["localizedControlType"] or record["controlType"] or "element"
@@ -330,11 +386,8 @@ def render_tree(root, window_bounds, root_path, text_limit=DEFAULT_TEXT_LIMIT, m
             ).rstrip()
         )
 
-        for child_index in range(child_count(node)):
-            child = child_at(node, child_index)
-            visit(child, depth + 1, path + [child_index])
-
-    visit(root, 0, root_path)
+    if truncated:
+        lines.append("[Accessibility tree truncated: prioritized visible controls; some nodes were omitted.]")
     return records, lines
 
 
@@ -753,22 +806,55 @@ def insert_text(root, text):
     )
 
 
+def verify_set_value(requested, read, numeric=False):
+    from decimal import Decimal, InvalidOperation
+    import re
+    def matches(actual):
+        if not numeric:
+            return isinstance(actual, str) and actual == requested
+        try:
+            if re.fullmatch(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?", requested) is None:
+                return False
+            expected, observed = Decimal(requested), Decimal(str(actual))
+            return expected.is_finite() and observed.is_finite() and expected == observed
+        except (InvalidOperation, ValueError):
+            return False
+    deadline = time.monotonic() + 0.6
+    while True:
+        if matches(safe(read)):
+            return
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("set_value could not verify the requested value. Read the current value before retrying; the write may have changed the control.")
+        time.sleep(min(0.05, remaining))
+
+
 def set_element_value(node, value):
+    value = str(value)
     if node is not None and supports_interface(node, "EditableText"):
         editable = safe(node.get_editable_text_iface)
         if editable is not None:
-            return bool(
-                safe(
-                    lambda: Atspi.EditableText.set_text_contents(editable, str(value)),
-                    False,
-                )
-            )
+            # A failed text write must not be retried through the numeric interface.
+            if not Atspi.EditableText.set_text_contents(editable, value):
+                raise RuntimeError("set_value was rejected; read the current value before retrying")
+            text = safe(node.get_text_iface) if supports_interface(node, "Text") else None
+            def read():
+                if text is None:
+                    return None
+                count = Atspi.Text.get_character_count(text)
+                return Atspi.Text.get_text(text, 0, count)
+            verify_set_value(value, read)
+            return True
     value_iface = safe(node.get_value_iface) if node is not None else None
     if value_iface is not None:
-        try:
-            return bool(Atspi.Value.set_current_value(value_iface, float(value)))
-        except Exception:
-            pass
+        import math
+        number = float(value)
+        if not math.isfinite(number):
+            raise RuntimeError("set_value requires a finite numeric value")
+        if not Atspi.Value.set_current_value(value_iface, number):
+            raise RuntimeError("set_value was rejected; read the current value before retrying")
+        verify_set_value(value, lambda: Atspi.Value.get_current_value(value_iface), numeric=True)
+        return True
     return False
 
 

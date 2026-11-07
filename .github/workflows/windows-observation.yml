@@ -6,6 +6,12 @@ on:
       - 'apps/OpenComputerUseWindows/**'
       - 'scripts/tests/windows-observation*'
       - 'scripts/tests/windows-input*'
+      - 'scripts/tests/windows-target*'
+      - 'scripts/tests/fixtures/WindowsTargetFixture.ps1'
+      - 'scripts/tests/windows-tree-budget*'
+      - 'scripts/tests/windows-set-value*'
+      - 'scripts/tests/fixtures/WindowsSetValueFixture.ps1'
+      - 'scripts/tests/fixtures/WindowsTreeBudgetFixture.ps1'
       - 'scripts/tests/windows-fixture-state.ps1'
       - 'scripts/tests/fixtures/WindowsInputFixture.ps1'
       - 'scripts/tests/fixtures/WindowsObservationFixture.ps1'
@@ -50,7 +56,40 @@ jobs:
         run: |
           powershell.exe -NoProfile -NonInteractive -File ./scripts/tests/windows-input.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Set value verification unit tests
+        run: ./scripts/tests/windows-set-value.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+      - name: Real WPF set value verification
+        run: ./scripts/tests/windows-set-value-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
       - name: Real WPF and native MCP
         run: ./scripts/tests/windows-observation-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
       - name: Real Windows scroll, DPI and physical input
         run: ./scripts/tests/windows-input-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
+      - name: Production tree budget regression
+        run: ./scripts/tests/windows-tree-budget.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+      - name: Real WPF tree budget and visibility
+        run: ./scripts/tests/windows-tree-budget-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"
+      - name: Posted click delivery regression
+        run: |
+          powershell.exe -NoProfile -NonInteractive -File ./scripts/tests/windows-target.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Occluded target capture and child input through MCP
+        run: ./scripts/tests/windows-target-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe" -EvidencePath "$env:RUNNER_TEMP/target-patched.png"
+      - name: Check out known-broken capture baseline
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        with:
+          ref: 97a8810182a2d09fbccd15387f4628aa1916e7d7 # v1.1.4
+          path: .baseline
+          sparse-checkout: apps/OpenComputerUseWindows
+          persist-credentials: false
+      - name: Reproduce original capture and child delivery defects
+        run: |
+          go -C .baseline/apps/OpenComputerUseWindows build -o "$env:RUNNER_TEMP/ocu-baseline.exe" .
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./scripts/tests/windows-target-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-baseline.exe" -ExpectOriginal -EvidencePath "$env:RUNNER_TEMP/target-original.png"
+      - name: Upload fixture-only capture comparison
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-target-captures
+          path: ${{ runner.temp }}/target-*.png
+          if-no-files-found: ignore

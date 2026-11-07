@@ -1077,7 +1077,11 @@ public final class ComputerUseService {
                 throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
             }
 
-            pauseBeforeReadBack(0.1)
+            try verifySetValueReadBack(requested: value, elementIndex: elementIndex, read: {
+                // Direct AX reads: never verify against a cached snapshot value.
+                var actual: CFTypeRef?
+                return AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &actual) == .success ? actual : nil
+            }, validate: { try requireUsableComputerUseSession() })
         } catch {
             settleVisualCursor(at: cursorTarget)
             throw error
@@ -2126,7 +2130,9 @@ public final class ComputerUseService {
             positionResult == .success,
             sizeResult == .success,
             let positionValue,
-            let sizeValue
+            let sizeValue,
+            CFGetTypeID(positionValue) == AXValueGetTypeID(),
+            CFGetTypeID(sizeValue) == AXValueGetTypeID()
         else {
             return nil
         }
@@ -2139,12 +2145,7 @@ public final class ComputerUseService {
             return nil
         }
 
-        let frame = CGRect(origin: position, size: size)
-        guard let windowBounds else {
-            return frame
-        }
-
-        return windowRelativeFrame(elementFrame: frame, windowBounds: windowBounds)
+        return validatedAXFrame(position: position, size: size, windowBounds: windowBounds)
     }
 
     private func globalPoint(for record: ElementRecord, snapshot: AppSnapshot) throws -> CGPoint? {
