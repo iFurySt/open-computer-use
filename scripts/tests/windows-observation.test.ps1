@@ -17,7 +17,7 @@ foreach ($function in $functions) { Invoke-Expression $function.Extent.Text }
 $DefaultTextLimit = 500
 $AccessibilityTreeMaxNodeCount = 1200
 $AccessibilityTreeMaxDepth = 64
-function Resolve-App($query) { [pscustomobject]@{ ProcessName = $query; Id = 42; MainWindowTitle = "Fixture" } }
+function Resolve-App($query) { [pscustomobject]@{ ProcessName = $query; Id = 42; MainWindowTitle = "Fixture"; MainWindowHandle = 123 } }
 function Get-MainElement($process) { "window" }
 function Get-WindowBounds($process, $element) { [pscustomobject]@{ x = 0; y = 0; width = 300; height = 200 } }
 function Limit-Text($text, $limit) { $text }
@@ -27,7 +27,7 @@ function Render-Tree($element, $bounds, $limit, $nodes, $depth) {
 }
 function Get-FocusedSummary($processId, $limit) { $script:calls.focus += 1; "focus" }
 function Get-SelectedText($processId, $limit) { $script:calls.selection += 1; "selection" }
-function Capture-WindowPngBase64($bounds) { $script:calls.capture += 1; "png" }
+function Capture-WindowPngBase64($bounds, [IntPtr]$hwnd) { Assert ($hwnd -eq [IntPtr]123) "Capture did not receive target HWND"; $script:calls.capture += 1; "png" }
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 
 foreach ($mode in @(
@@ -65,3 +65,23 @@ $failed = $false
 try { $null = Build-Snapshot "Fixture" -IncludeAX $false -IncludeScreenshot $false } catch { $failed = $true }
 Assert $failed "Empty snapshot accepted"
 Write-Output "PowerShell production functions: parse, defaults, strict booleans and all collection modes passed (instrumented dependencies)."
+
+# Exercise the actual smoke helpers under both Windows PowerShell and pwsh.
+$smokePath = Join-Path $PSScriptRoot "windows-observation-smoke.ps1"
+$smokeAst = [System.Management.Automation.Language.Parser]::ParseFile($smokePath, [ref]$tokens, [ref]$errors)
+if ($errors.Count) { throw ($errors | Out-String) }
+$helpers = $smokeAst.FindAll({ param($node)
+    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+    $node.Name -in @("Images", "Text", "Input-Index")
+}, $true)
+Assert ($helpers.Count -eq 3) "Observation smoke helpers missing"
+foreach ($helper in $helpers) { Invoke-Expression $helper.Extent.Text }
+foreach ($count in @(0, 1, 2)) {
+    $result = [pscustomobject]@{ content = @(for ($i = 0; $i -lt $count; $i++) { [pscustomobject]@{ type = "image"; data = "fixture" } }) }
+    Assert ((Images $result).Count -eq $count) "Smoke image count lost array shape"
+}
+foreach ($role in @("edit", "editable text", ([string][char]0x7F16 + [char]0x8F91))) {
+    $result = [pscustomobject]@{ content = @([pscustomobject]@{ type = "text"; text = "  7 $role Observation input Value: fixture" }) }
+    Assert ((Input-Index $result) -eq "7") "Smoke index lookup depends on the UI language"
+}
+Write-Output "Observation smoke helpers: zero/single/multiple images and localized control roles passed."

@@ -24,8 +24,11 @@ function Read-State { Read-WindowsFixtureState $stateFile }
 function Send-Request($method, $parameters) {
     $script:requestId += 1
     $message = @{ jsonrpc = "2.0"; id = $script:requestId; method = $method; params = $parameters }
-    $native.StandardInput.WriteLine(($message | ConvertTo-Json -Depth 20 -Compress))
-    $native.StandardInput.Flush()
+    # .NET Framework's redirected writer may use the system ANSI encoding.
+    # Write UTF-8 explicitly so the Unicode value reaches native MCP intact.
+    $bytes = [Text.Encoding]::UTF8.GetBytes(($message | ConvertTo-Json -Depth 20 -Compress) + "`n")
+    $native.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length)
+    $native.StandardInput.BaseStream.Flush()
     $read = $native.StandardOutput.ReadLineAsync()
     Assert ($read.Wait(40000)) "MCP timed out"
     Assert (-not [string]::IsNullOrWhiteSpace($read.Result)) "MCP exited"
@@ -38,9 +41,11 @@ function Call-Tool($tool, $arguments) {
     Send-Request "tools/call" @{ name = $tool; arguments = $arguments }
 }
 function Text($result) { ($result.content | Where-Object type -eq "text" | ForEach-Object text) -join "`n" }
-function Images($result) { @($result.content | Where-Object type -eq "image") }
+# Preserve the array through the pipeline: a single PSCustomObject has no Count
+# property in Windows PowerShell 5.1, even though the MCP image is present.
+function Images($result) { ,@($result.content | Where-Object type -eq "image") }
 function Input-Index($result) {
-    $matches = [regex]::Matches((Text $result), '(?m)^\s*(\d+)\s+edit Observation input(?:\s|$)')
+    $matches = [regex]::Matches((Text $result), '(?m)^\s*(\d+)\s+[^\r\n]+? Observation input(?:\s|$)')
     Assert ($matches.Count -eq 1) (Text $result)
     $matches[0].Groups[1].Value
 }
