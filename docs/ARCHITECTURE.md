@@ -154,6 +154,8 @@
 
 ## macOS Locked Use 实验
 
+- Guardian / watchdog 的 HID 监控使用独立设备枚举与逐设备生命周期；独占设备可以跳过，但已枚举输入类别必须有可观察来源。拓扑变化或输入错误使当前监控失效；不以一个无关设备可打开代替键盘覆盖。Karabiner / Secure Input 验证边界见 [输入监控](locked-use-input-monitor.md)。
+
 - 主 Guardian 与 watchdog 共用的遮罩在初始化时使用屏幕局部坐标，后续 `setFrame` 使用 Cocoa 全局坐标；WindowServer 覆盖仍以 Quartz 全局边界严格检查。旧版的后续定位可掩盖初始偏移，实测差异与复现见 [副屏遮罩坐标](locked-use-shield-placement.md)。
 
 - Guardian 在重连后先处理握手回复中的指令，再发送普通报告；两类回复共用效果处理入口。Broker 回到 idle 后仍允许已认证 Guardian 完成清理。见 [事故回放](locked-use-incident-replay.md)。
