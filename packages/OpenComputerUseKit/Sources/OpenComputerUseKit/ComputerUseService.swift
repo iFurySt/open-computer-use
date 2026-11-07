@@ -1072,6 +1072,10 @@ public final class ComputerUseService {
 
         do {
             try requireUsableComputerUseSession()
+            if try setNumericValue(value, on: element, record: record) {
+                settleVisualCursor(at: cursorTarget)
+                return try actionResult(for: query)
+            }
             let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString)
             guard result == .success else {
                 throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
@@ -1089,6 +1093,102 @@ public final class ComputerUseService {
 
         settleVisualCursor(at: cursorTarget)
         return try actionResult(for: query)
+    }
+
+    /// 滑块 / 滚动条 / 步进器的 AXValue 是数值：写 CFString 得到 -25201；SwiftUI 的滑块（系统设置的音量）
+    /// 还会无视直接写入，只认 AXIncrement / AXDecrement。先按数值写并核实，不行就按步进逼近到最接近的可达值，
+    /// 最终值由 action 结果里的状态回读给模型。非数值控件返回 false，走原来的字符串路径。
+    private func setNumericValue(_ requested: String, on element: AXUIElement, record: ElementRecord) throws -> Bool {
+        func read() -> (value: Double, isFloat: Bool)? {
+            var raw: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &raw) == .success, let raw,
+                  CFGetTypeID(raw) == CFNumberGetTypeID() else { return nil }
+            let number = unsafeDowncast(raw, to: CFNumber.self)
+            return ((number as NSNumber).doubleValue, CFNumberIsFloatType(number))
+        }
+        guard let current = read() else { return false }
+        guard let target = Self.parseNumericValue(requested, current: current.value) else {
+            throw ComputerUseError.invalidArguments(
+                "element \(record.index) holds a number (\(current.value)); value must be numeric, got '\(requested)'"
+            )
+        }
+        let number: NSNumber = current.isFloat ? NSNumber(value: target) : NSNumber(value: Int(target.rounded()))
+        let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, number)
+        Thread.sleep(forTimeInterval: 0.1)
+        let tolerance = max(1e-6, abs(target) * 1e-3)
+        let increment = kAXIncrementAction as String
+        let decrement = kAXDecrementAction as String
+        let canIncrement = record.rawActions.contains { $0.caseInsensitiveCompare(increment) == .orderedSame }
+        let canDecrement = record.rawActions.contains { $0.caseInsensitiveCompare(decrement) == .orderedSame }
+        if result == .success, let value = read()?.value, abs(value - target) <= tolerance {
+            // 直接写 AXValue 有些控件只改显示、不触发动作（Music 的音量滑块：AX 读回 0.5，应用仍是 100%）。
+            // 有步进动作就来回各走一步，让应用按新值真正处理一次；净值不变，最后再核对一遍。
+            if canIncrement, canDecrement { nudge(element, increment: increment, decrement: decrement, target: target, tolerance: tolerance, read: { read()?.value }) }
+            return true
+        }
+        guard canIncrement || canDecrement, var value = read()?.value else {
+            if result == .success {
+                throw ComputerUseError.message(
+                    "set_value could not verify the requested value \(requested) for element \(record.index); the control still reports \(current.value)"
+                )
+            }
+            throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
+        }
+        var moved = false
+        for _ in 0..<200 {
+            let distance = abs(value - target)
+            if distance <= tolerance { return true }
+            let forward = value < target
+            guard forward ? canIncrement : canDecrement,
+                  AXUIElementPerformAction(element, (forward ? increment : decrement) as CFString) == .success
+            else { break }
+            Thread.sleep(forTimeInterval: 0.03)
+            guard let next = read()?.value, next != value else { break }
+            moved = true
+            if abs(next - target) > distance {
+                // 这一步跨过了目标且离得更远：退回上一步，停在更近的一侧。
+                _ = AXUIElementPerformAction(element, (forward ? decrement : increment) as CFString)
+                Thread.sleep(forTimeInterval: 0.03)
+                break
+            }
+            value = next
+        }
+        guard moved else {
+            throw ComputerUseError.message(
+                "set_value could not change element \(record.index): direct write was rejected and Increment/Decrement had no effect (value \(value))"
+            )
+        }
+        return true
+    }
+
+    /// 先 Increment 再 Decrement；顶到上限时 Increment 不动，就改成先 Decrement 再 Increment。
+    /// 最后读回不在目标附近时，再用步进拉回去（最多两步）。
+    private func nudge(_ element: AXUIElement, increment: String, decrement: String, target: Double, tolerance: Double, read: () -> Double?) {
+        func step(_ action: String) -> Double? {
+            guard AXUIElementPerformAction(element, action as CFString) == .success else { return nil }
+            Thread.sleep(forTimeInterval: 0.05)
+            return read()
+        }
+        guard let before = read() else { return }
+        if let up = step(increment), up != before {
+            _ = step(decrement)
+        } else if let down = step(decrement), down != before {
+            _ = step(increment)
+        }
+        for _ in 0..<2 {
+            guard let value = read(), abs(value - target) > tolerance else { return }
+            guard step(value < target ? increment : decrement) != nil else { return }
+        }
+    }
+
+    /// "0.25"、"25%"（当前值在 0…1 区间时按比例）、"3" 都接受。
+    static func parseNumericValue(_ requested: String, current: Double) -> Double? {
+        var text = requested.trimmingCharacters(in: .whitespacesAndNewlines)
+        var percent = false
+        if text.hasSuffix("%") { percent = true; text.removeLast(); text = text.trimmingCharacters(in: .whitespaces) }
+        guard let number = Double(text), number.isFinite else { return nil }
+        if percent { return (0 ... 1).contains(abs(current)) ? number / 100 : number }
+        return number
     }
 
     public func selectText(
