@@ -109,7 +109,7 @@ enum MacOSAppAgentProxy {
         NSWorkspace.shared.openApplication(at: appURL, configuration: configuration) { _, _ in }
 
         let deadline = Date().addingTimeInterval(10)
-        while Date() < deadline {
+        while Date().isBefore(deadline) {
             if let client = AppAgentSocketClient.connect(path: socketPath) {
                 return client
             }
