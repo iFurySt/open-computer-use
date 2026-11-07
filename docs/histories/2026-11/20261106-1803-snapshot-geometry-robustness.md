@@ -22,3 +22,11 @@
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/WindowCaptureGeometry.swift`
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/AccessibilitySnapshot.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
+
+### 2026-11-07 维护者补充验证
+
+- 基于最新 main 解决发布记录冲突，保留贡献者原提交。
+- 补齐快照、query 与点击重读的 AX 几何校验；过滤负尺寸和相对坐标溢出，保护窗口面积及截图尺寸整数转换。
+- 新增截图路径选择 / 非法 frame 回归与真实 AppKit fixture。v1.1.4 同一 fixture 复现左右出屏裁剪及 NaN 位置 / 尺寸导致 MCP SIGTRAP；修复后 8 个实测场景全部通过，验证完整色块、缩图、坐标点击、query 和非法几何出现后的正常读取与点击。
+- `swift test`：442 项，9 跳过，0 失败；现有真实点击命中与误点保护 smoke 通过。
+- 验证方式与限制见 [macOS 截图几何](../../macos-snapshot-geometry.md)。

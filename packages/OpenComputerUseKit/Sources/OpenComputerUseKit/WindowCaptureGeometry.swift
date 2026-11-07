@@ -4,8 +4,9 @@ import CoreGraphics
 /// 且结果像素尺寸要和窗口 bounds 等比，否则宁可不给图，也不能让模型按裁剪图算坐标。
 enum WindowCaptureGeometry {
     static func isValid(_ bounds: CGRect) -> Bool {
-        [bounds.origin.x, bounds.origin.y, bounds.width, bounds.height].allSatisfy(\.isFinite)
-            && bounds.width > 0 && bounds.height > 0
+        !bounds.isInfinite && !bounds.isNull
+            && [bounds.origin.x, bounds.origin.y, bounds.width, bounds.height, bounds.maxX, bounds.maxY].allSatisfy(\.isFinite)
+            && bounds.size.width > 0 && bounds.size.height > 0
     }
 
     static func matchesFullWindow(pixelSize: CGSize, bounds: CGRect) -> Bool {
