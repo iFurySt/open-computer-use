@@ -21,3 +21,7 @@
 
 ### 📁 Files Modified
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
+
+### 追加（2026-11-07 17:00）：直接写入后来回步进一次
+
+Music 迷你播放器的音量滑块：直接写 AXValue 只改显示、不触发动作，应用音量不变。直接写入核实后，有步进动作就来回各走一步（顶到上限则先减后加），净值不变，最后再核对。本地复核：Music 音量 100 → 51，系统设置音量滑块不受影响。

@@ -1116,12 +1116,16 @@ public final class ComputerUseService {
         let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, number)
         Thread.sleep(forTimeInterval: 0.1)
         let tolerance = max(1e-6, abs(target) * 1e-3)
-        if result == .success, let value = read()?.value, abs(value - target) <= tolerance { return true }
-
         let increment = kAXIncrementAction as String
         let decrement = kAXDecrementAction as String
         let canIncrement = record.rawActions.contains { $0.caseInsensitiveCompare(increment) == .orderedSame }
         let canDecrement = record.rawActions.contains { $0.caseInsensitiveCompare(decrement) == .orderedSame }
+        if result == .success, let value = read()?.value, abs(value - target) <= tolerance {
+            // 直接写 AXValue 有些控件只改显示、不触发动作（Music 的音量滑块：AX 读回 0.5，应用仍是 100%）。
+            // 有步进动作就来回各走一步，让应用按新值真正处理一次；净值不变，最后再核对一遍。
+            if canIncrement, canDecrement { nudge(element, increment: increment, decrement: decrement, target: target, tolerance: tolerance, read: { read()?.value }) }
+            return true
+        }
         guard canIncrement || canDecrement, var value = read()?.value else {
             if result == .success {
                 throw ComputerUseError.message(
@@ -1155,6 +1159,26 @@ public final class ComputerUseService {
             )
         }
         return true
+    }
+
+    /// 先 Increment 再 Decrement；顶到上限时 Increment 不动，就改成先 Decrement 再 Increment。
+    /// 最后读回不在目标附近时，再用步进拉回去（最多两步）。
+    private func nudge(_ element: AXUIElement, increment: String, decrement: String, target: Double, tolerance: Double, read: () -> Double?) {
+        func step(_ action: String) -> Double? {
+            guard AXUIElementPerformAction(element, action as CFString) == .success else { return nil }
+            Thread.sleep(forTimeInterval: 0.05)
+            return read()
+        }
+        guard let before = read() else { return }
+        if let up = step(increment), up != before {
+            _ = step(decrement)
+        } else if let down = step(decrement), down != before {
+            _ = step(increment)
+        }
+        for _ in 0..<2 {
+            guard let value = read(), abs(value - target) > tolerance else { return }
+            guard step(value < target ? increment : decrement) != nil else { return }
+        }
     }
 
     /// "0.25"、"25%"（当前值在 0…1 区间时按比例）、"3" 都接受。
