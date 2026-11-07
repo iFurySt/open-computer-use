@@ -201,6 +201,8 @@ gh run view -R iFurySt/open-computer-use <run-id> --log-failed
   - v1.1.2 曾出现 tarball 已返回 HTTP 200，但版本元数据仍返回 404 的传播窗口。可只读核对带唯一查询参数的完整 packument 辅助定位，最终仍以普通 `npm view` 与实际安装确认，不能用单个缓存响应判断需要重发。
 - `gh attestation verify` 提示 `unsupported tlog public key type: PKIX_ED25519`
   - 先用新版官方 GitHub CLI 复验。此次本机 `gh 2.49.0` 无法读取新的 Sigstore trusted root，而临时下载并核对官方 archive digest 的 `gh 2.102.0` 验证同一制品成功；旧验证器的不兼容不能据此判定 Release 签名失效。复验应同时限制 `--repo iFurySt/open-computer-use` 与 `--signer-workflow iFurySt/open-computer-use/.github/workflows/release.yml`。
+- attestation 的 `bundle_url` 下载遇到 TLS 超时
+  - 可读取 `gh api repos/iFurySt/open-computer-use/attestations/sha256:<制品摘要>`。如果响应中含有内联 `attestations[].bundle`，将各 bundle 保存为 JSONL，再用 `gh attestation verify <制品> --bundle <JSONL>` 校验；仍须指定上述仓库和 workflow 身份。此方法只更换下载路径，不跳过签名验证；不要把临时签名下载 URL 写进仓库。
 - 构建阶段失败
   - 优先看 `Build npm release artifacts`、`package-github-release-assets.sh` 的架构/归档校验、`Build Cursor Motion DMG` 或 Swift 编译错误。
 - GitHub Release 资产上传失败
