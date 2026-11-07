@@ -35,3 +35,14 @@
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/LockedUseBrokerCoordinatorTests.swift`
 - `docs/releases/feature-release-notes.md`
 - `docs/exec-plans/active/20261107-guardian-cleanup-after-idle.md`
+
+### Maintainer reproduction
+
+用户要求在工程层面复现 issue 并确认修复有效。新增
+`LockedUseIncidentReplayTests.swift`，将生产 Broker 与 Guardian 策略组合，
+以真实 idleTimeout、双保护、两种 ACK 顺序和 IPC JSON 编解码回放。
+正常连接修复后通过；只撤回生产一行修复则复现 clientUnauthorized。
+额外注入释放前重连，证实忽略握手 effects 仍会造成主 Guardian 重锁、
+watchdog 已释放和新租约被拒绝。该用例记录已知故障，不代表重连成功。
+完整 Locked Use 128 项通过；边界和复现方式见
+[事故回放](../../locked-use-incident-replay.md)。没有安装组件或操作真实锁屏。

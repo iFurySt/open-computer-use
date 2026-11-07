@@ -35,3 +35,20 @@ Preserve peer/lease checks, permit revocation, action drainage, lock observation
 and guard acknowledgements. Do not install unsigned development components.
 The offline proof does not establish signed desktop recovery or remote-input
 compatibility.
+
+## Maintainer reproduction (2026-11-07)
+
+- Replay the issue with the production coordinator and Guardian policy together,
+  including the real idle timer, dual guards and release acknowledgements.
+- Compare the PR with its one-line fix reverted in an isolated source copy.
+- Inject reconnect before the release reply to bound what this patch fixes.
+- Keep system locking, credential use and component installation outside this
+  deterministic replay; report those untested boundaries explicitly.
+
+Replay completed: both ACK orders and the production idle timer pass with #158;
+reverting only its production line fails with clientUnauthorized. The reconnect
+fault still reproduces relocking after an unlock observation while the watchdog
+has acknowledged release. Full Locked Use suite: 128 tests pass, including the
+explicit known-bug diagnostic. See [incident replay](../../locked-use-incident-replay.md).
+Remaining: consume recovery hello effects in the actual Guardian adapter and
+validate the signed desktop path before claiming complete incident recovery.
