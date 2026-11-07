@@ -1366,6 +1366,14 @@ public final class ComputerUseService {
                 return true
             }
 
+            if clickCount <= 1, Self.isTextEntryRole(record.role), try focusTextEntry(element) {
+                return true
+            }
+
+            if clickCount <= 1, !hasAncestorRole("AXWebArea", of: element), try selectContainingRow(for: element) {
+                return true
+            }
+
             if try performAction(named: kAXPressAction as String, on: element, availableActions: record.rawActions, repeatCount: clickCount) {
                 return true
             }
@@ -1435,6 +1443,25 @@ public final class ComputerUseService {
         default:
             throw ComputerUseError.message("AXUIElementSetAttributeValue(\(kAXSelectedChildrenAttribute)) failed with \(result.rawValue)")
         }
+    }
+
+    /// outline / table 的行（Contacts 侧栏实测）没有 AXPress，父级也不是 AXList；点击一行的语义就是选中它。
+    /// 对最近的 AXRow 设 AXSelected=true 并读回核实；行本身不可设时不算成功，交给后面的动作链。
+    private func selectContainingRow(for element: AXUIElement) throws -> Bool {
+        var current = element
+        for _ in 0..<8 {
+            if stringValue(of: current, attribute: kAXRoleAttribute) == kAXRowRole as String {
+                guard isSettable(element: current, attribute: kAXSelectedAttribute),
+                      try setBoolAttribute(named: kAXSelectedAttribute, on: current) else { return false }
+                pauseBeforeReadBack(0.15)
+                var value: CFTypeRef?
+                return AXUIElementCopyAttributeValue(current, kAXSelectedAttribute as CFString, &value) == .success
+                    && (value as? Bool) == true
+            }
+            guard let parent = copyParent(of: current) else { return false }
+            current = parent
+        }
+        return false
     }
 
     private func selectableListItem(containing element: AXUIElement) -> (list: AXUIElement, item: AXUIElement)? {
@@ -1579,6 +1606,27 @@ public final class ComputerUseService {
         }
 
         return true
+    }
+
+    /// 点击文本输入框的语义是把键盘焦点放进去。SwiftUI 的搜索框（Contacts 实测）没有 AXPress，
+    /// 只有 AXConfirm / AXShowMenu：按 AXConfirm 等于提交搜索，焦点仍留在列表上，随后 type_text 必然失败。
+    /// 所以先设 AXFocused，并核实应用的焦点元素确实换成了它；失败再走原来的动作链。
+    private func focusTextEntry(_ element: AXUIElement) throws -> Bool {
+        guard isSettable(element: element, attribute: kAXFocusedAttribute),
+              try setBoolAttribute(named: kAXFocusedAttribute, on: element) else { return false }
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(element, &pid) == .success else { return false }
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.3
+        repeat {
+            if let focused = Self.focusedElement(pid: pid), CFEqual(focused, element) { return true }
+            Thread.sleep(forTimeInterval: 0.03)
+        } while ProcessInfo.processInfo.systemUptime < deadline
+        return false
+    }
+
+    static func isTextEntryRole(_ role: String?) -> Bool {
+        guard let role else { return false }
+        return role == kAXTextFieldRole as String || role == kAXTextAreaRole as String
     }
 
     private func activateClickTarget(element: AXUIElement, availableActions: [String]) throws -> Bool {
