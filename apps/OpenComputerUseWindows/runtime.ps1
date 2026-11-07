@@ -52,6 +52,47 @@ public static class OCUWin32 {
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int valueSize);
 
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetClientRect(IntPtr hwnd, out RECT rect);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr ChildWindowFromPointEx(IntPtr hwnd, POINT point, uint flags);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowEnabled(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsChild(IntPtr parent, IntPtr child);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    // Hit-test inside the requested window, never against the desktop occluder.
+    public static IntPtr ClickTarget(IntPtr root, int x, int y) {
+        uint rootPid; GetWindowThreadProcessId(root, out rootPid);
+        IntPtr current = root;
+        for (int depth = 0; depth < 64; depth++) {
+            uint pid; GetWindowThreadProcessId(current, out pid);
+            if (rootPid == 0 || pid != rootPid || (current != root && !IsChild(root, current)))
+                throw new InvalidOperationException("Click target process/window changed; observe again.");
+            if (!IsWindowEnabled(current))
+                throw new InvalidOperationException("Click target is disabled.");
+            POINT point = new POINT { X = x, Y = y }; RECT client;
+            if (!ScreenToClient(current, ref point) || !GetClientRect(current, out client) ||
+                point.X < client.Left || point.Y < client.Top || point.X >= client.Right || point.Y >= client.Bottom)
+                throw new InvalidOperationException("Posted click is outside the target client area; use accessibility for window chrome.");
+            // Skip hidden children, but keep disabled controls so they are refused,
+            // rather than delivering their click to the parent underneath them.
+            IntPtr child = ChildWindowFromPointEx(current, point, 1);
+            if (child == IntPtr.Zero || child == current) return current;
+            current = child;
+        }
+        throw new InvalidOperationException("Click target hierarchy is too deep.");
+    }
+
     [DllImport("user32.dll")]
     public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
 
@@ -392,11 +433,15 @@ function Send-GlobalMouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [str
     }
 }
 
-function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count) {
+function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$button, [int]$count, $bounds) {
+    Assert-CurrentWindowBounds $hwnd $bounds
+    if ($button -notin @("", "left", "right", "middle")) { throw "Unsupported posted mouse button '$button'." }
+    if ($count -lt 1 -or $count -gt 3) { throw "Click count must be between 1 and 3." }
+    $target = [OCUWin32]::ClickTarget($hwnd, $screenX, $screenY)
     $point = New-Object OCUWin32+POINT
     $point.X = $screenX
     $point.Y = $screenY
-    [void][OCUWin32]::ScreenToClient($hwnd, [ref]$point)
+    if (-not [OCUWin32]::ScreenToClient($target, [ref]$point)) { throw "ScreenToClient failed for click target." }
     $lParam = ConvertTo-LParam $point.X $point.Y
 
     $down = $WM_LBUTTONDOWN
@@ -414,10 +459,23 @@ function Send-MouseClick([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$b
 
     $repeat = [math]::Max(1, $count)
     for ($i = 0; $i -lt $repeat; $i++) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)
-        [void][OCUWin32]::PostMessage($hwnd, $down, [IntPtr]$downFlag, $lParam)
-        Start-Sleep -Milliseconds 35
-        [void][OCUWin32]::PostMessage($hwnd, $up, [IntPtr]::Zero, $lParam)
+        Assert-CurrentWindowBounds $hwnd $bounds
+        if ([OCUWin32]::ClickTarget($hwnd, $screenX, $screenY) -ne $target) { throw "Click target changed; observe again." }
+        # A child can move inside an unchanged top-level window, retaining its HWND.
+        $currentPoint = New-Object OCUWin32+POINT
+        $currentPoint.X = $screenX
+        $currentPoint.Y = $screenY
+        if (-not [OCUWin32]::ScreenToClient($target, [ref]$currentPoint) -or
+            $currentPoint.X -ne $point.X -or $currentPoint.Y -ne $point.Y) {
+            throw "Click target geometry changed; observe again."
+        }
+        if (-not [OCUWin32]::PostMessage($target, $WM_MOUSEMOVE, [IntPtr]::Zero, $lParam)) { throw "PostMessage mouse move delivery failed." }
+        try {
+            if (-not [OCUWin32]::PostMessage($target, $down, [IntPtr]$downFlag, $lParam)) { throw "PostMessage mouse down delivery failed." }
+            Start-Sleep -Milliseconds 35
+        } finally {
+            if (-not [OCUWin32]::PostMessage($target, $up, [IntPtr]::Zero, $lParam)) { throw "PostMessage mouse up delivery failed." }
+        }
         Start-Sleep -Milliseconds 50
     }
 }
@@ -965,7 +1023,7 @@ function Render-Tree($element, $windowBounds, $TextLimit = $script:DefaultTextLi
     }
 }
 
-function Capture-WindowPngBase64($bounds) {
+function Capture-WindowPngBase64($bounds, [IntPtr]$hwnd) {
     if (-not (Test-CapturableFrame $bounds)) {
         return $null
     }
@@ -975,7 +1033,15 @@ function Capture-WindowPngBase64($bounds) {
     try {
         $bitmap = New-Object System.Drawing.Bitmap ([int][math]::Round($bounds.width)), ([int][math]::Round($bounds.height))
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-        $graphics.CopyFromScreen([int][math]::Round($bounds.x), [int][math]::Round($bounds.y), 0, 0, $bitmap.Size)
+        Assert-CurrentWindowBounds $hwnd $bounds
+        # PW_RENDERFULLCONTENT captures the requested HWND even when occluded.
+        # Never substitute desktop pixels on failure: they may belong to another app.
+        # The bridge process has a 30-second timeout for unresponsive renderers.
+        $hdc = $graphics.GetHdc()
+        try {
+            if (-not [OCUWin32]::PrintWindow($hwnd, $hdc, 2)) { return $null }
+        } finally { $graphics.ReleaseHdc($hdc) }
+        Assert-CurrentWindowBounds $hwnd $bounds
         $stream = New-Object System.IO.MemoryStream
         $bitmap.Save($stream, [System.Drawing.Imaging.ImageFormat]::Png)
         $bytes = $stream.ToArray()
@@ -1053,7 +1119,7 @@ function Build-Snapshot([string]$query, $TextLimit = $script:DefaultTextLimit, [
         $focus = Get-FocusedSummary $process.Id $TextLimit
         $selection = Get-SelectedText $process.Id $TextLimit
     }
-    if ($IncludeScreenshot) { $image = Capture-WindowPngBase64 $bounds }
+    if ($IncludeScreenshot) { $image = Capture-WindowPngBase64 $bounds ([IntPtr]$process.MainWindowHandle) }
     [pscustomobject]@{
         app = [pscustomobject]@{
             name = $process.ProcessName
@@ -1397,7 +1463,8 @@ try {
                             y = [int][math]::Round($windowBounds.y + [double]$operation.y)
                         }
                     }
-                    Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+                    if ($null -ne $operation.element) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
+                    Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                 } elseif ($clickMethod -eq "global") {
                     if (-not (Test-GlobalPointerFallbackEnabled)) {
                         throw "click_method 'global' requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 because it may move the system pointer and change foreground focus"
@@ -1434,7 +1501,8 @@ try {
                             if ($null -ne $operation.element) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
                             Send-GlobalMouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                         } else {
-                            Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count)
+                            if ($null -ne $operation.element) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
+                            Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                         }
                     }
                 } else {

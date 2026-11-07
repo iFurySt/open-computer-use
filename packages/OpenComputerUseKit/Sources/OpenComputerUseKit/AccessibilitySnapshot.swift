@@ -559,7 +559,7 @@ private struct WindowCapture {
                 let ownerPID = info[kCGWindowOwnerPID as String] as? pid_t, ownerPID == pid,
                 let layer = info[kCGWindowLayer as String] as? Int,
                 let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
-                let bounds = CGRect(dictionaryRepresentation: boundsDictionary), !bounds.isEmpty
+                let bounds = CGRect(dictionaryRepresentation: boundsDictionary), WindowCaptureGeometry.isValid(bounds)
             else {
                 continue
             }
@@ -589,13 +589,14 @@ private struct WindowCapture {
                 let number = info[kCGWindowNumber as String] as? NSNumber,
                 let layer = info[kCGWindowLayer as String] as? Int,
                 let boundsDictionary = info[kCGWindowBounds as String] as? NSDictionary,
-                let bounds = CGRect(dictionaryRepresentation: boundsDictionary)
+                let bounds = CGRect(dictionaryRepresentation: boundsDictionary),
+                WindowCaptureGeometry.isValid(bounds),
+                let area = Int(exactly: (bounds.width * bounds.height).rounded(.towardZero))
             else {
                 return nil
             }
 
             let title = info[kCGWindowName as String] as? String
-            let area = Int(bounds.width * bounds.height)
             return WindowCaptureCandidate(
                 windowID: CGWindowID(number.uint32Value),
                 layer: layer,
@@ -617,13 +618,22 @@ private struct WindowCapture {
     }
 
     /// WindowServer's hardware window capture first (any Space, covered or not,
-    /// ~10-40ms), ScreenCaptureKit when it is unavailable.
+    /// ~10-40ms), ScreenCaptureKit when it is unavailable or when the window is
+    /// partially off-screen or spans displays: the hardware path only yields the
+    /// on-screen part, which would silently shift every screenshot coordinate.
     private static func captureImage(windowID: CGWindowID, bounds: CGRect, config: ImageCaptureConfig) -> CGImage? {
-        if !LockedUseActionScope.requiresScreenCaptureKit,
-           let image = TimingLog.measure("snapshot.capture_hw", { SkyLightSPI.shared.hardwareCaptureWindow(windowID) }) {
-            return image
-        }
-        return TimingLog.measure("snapshot.capture_sck") { captureImageWithScreenCaptureKit(windowID: windowID, bounds: bounds, config: config) }
+        WindowCaptureGeometry.capture(
+            bounds: bounds, displayBounds: WindowCaptureGeometry.activeDisplayBounds(),
+            hardware: {
+                guard !LockedUseActionScope.requiresScreenCaptureKit else { return nil }
+                return TimingLog.measure("snapshot.capture_hw") { SkyLightSPI.shared.hardwareCaptureWindow(windowID) }
+            },
+            fullWindow: {
+                TimingLog.measure("snapshot.capture_sck") {
+                    captureImageWithScreenCaptureKit(windowID: windowID, bounds: bounds, config: config)
+                }
+            }
+        )
     }
 
     private static func captureImageWithScreenCaptureKit(windowID: CGWindowID, bounds: CGRect, config: ImageCaptureConfig) -> CGImage? {
@@ -635,9 +645,12 @@ private struct WindowCapture {
 
             let configuration = SCStreamConfiguration()
             let scaleFactor = bestEffortScaleFactor(for: bounds)
-            let captureSize = window.frame.isEmpty ? bounds.size : window.frame.size
-            configuration.width = max(1, Int(ceil(captureSize.width * scaleFactor)))
-            configuration.height = max(1, Int(ceil(captureSize.height * scaleFactor)))
+            // 出屏窗口的 SCWindow.frame 仍是完整几何，但以 CG bounds 为准可和坐标映射保持同一来源。
+            guard let width = Int(exactly: ceil(bounds.width * scaleFactor)),
+                  let height = Int(exactly: ceil(bounds.height * scaleFactor)),
+                  width > 0, height > 0 else { return nil }
+            configuration.width = width
+            configuration.height = height
             configuration.showsCursor = false
             configuration.scalesToFit = false
             configuration.ignoreShadowsSingleWindow = true
@@ -1698,17 +1711,23 @@ private func resolveLocalFrame(of element: AXUIElement, windowBounds: CGRect?) -
     let sizeAXValue = sizeValue as! AXValue
     var position = CGPoint.zero
     var size = CGSize.zero
-    guard AXValueGetValue(positionAXValue, .cgPoint, &position), AXValueGetValue(sizeAXValue, .cgSize, &size) else {
+    guard AXValueGetValue(positionAXValue, .cgPoint, &position), AXValueGetValue(sizeAXValue, .cgSize, &size),
+          [position.x, position.y, size.width, size.height].allSatisfy(\.isFinite) else {
+        // AX 偶尔给出 NaN / 无穷的 frame（Contacts 新建卡片的编辑态实测）；当作没有几何信息。
         return nil
     }
 
-    let frame = CGRect(origin: position, size: size)
+    return validatedAXFrame(position: position, size: size, windowBounds: windowBounds)
+}
 
-    guard let windowBounds else {
-        return frame
-    }
-
-    return windowRelativeFrame(elementFrame: frame, windowBounds: windowBounds)
+/// AX geometry is untrusted. Validate again after translating into window coordinates.
+func validatedAXFrame(position: CGPoint, size: CGSize, windowBounds: CGRect? = nil) -> CGRect? {
+    guard [position.x, position.y, size.width, size.height].allSatisfy(\.isFinite),
+          size.width >= 0, size.height >= 0 else { return nil }
+    let global = CGRect(origin: position, size: size)
+    let frame = windowBounds.map { windowRelativeFrame(elementFrame: global, windowBounds: $0) } ?? global
+    guard [frame.origin.x, frame.origin.y, frame.maxX, frame.maxY].allSatisfy(\.isFinite) else { return nil }
+    return frame
 }
 
 func shouldElideNode(
@@ -2343,8 +2362,15 @@ private func quoted(_ value: String) -> String {
 
 private extension CGRect {
     var renderedLocalFrame: String {
-        "x=\(Int(origin.x)), y=\(Int(origin.y)), w=\(Int(width)), h=\(Int(height))"
+        "x=\(renderedCoordinate(origin.x)), y=\(renderedCoordinate(origin.y)), "
+            + "w=\(renderedCoordinate(width)), h=\(renderedCoordinate(height))"
     }
+}
+
+/// `Int(Double)` 遇到 NaN / 无穷会直接 trap 并带崩整个 helper；渲染时用 "?" 代替，不信任上游几何。
+func renderedCoordinate(_ value: CGFloat) -> String {
+    guard value.isFinite, abs(value) < CGFloat(Int32.max) else { return "?" }
+    return String(Int(value))
 }
 
 enum TargetedAX {
@@ -2598,7 +2624,7 @@ extension SnapshotBuilder {
               extent.width >= 0, extent.height >= 0 else {
             return nil
         }
-        return CGRect(origin: point, size: extent)
+        return validatedAXFrame(position: point, size: extent)
     }
 
     private static func makeRecord(_ element: AXUIElement, scan: NodeScan, windowBounds: CGRect?, index: Int = 0) -> ElementRecord {
@@ -2606,7 +2632,7 @@ extension SnapshotBuilder {
         // Reuse the frame from the batched scan; window-relative when we have bounds.
         let localFrame: CGRect?
         if let frame = scan.globalFrame {
-            localFrame = windowBounds.map { windowRelativeFrame(elementFrame: frame, windowBounds: $0) } ?? frame
+            localFrame = validatedAXFrame(position: frame.origin, size: frame.size, windowBounds: windowBounds)
         } else {
             localFrame = resolveLocalFrame(of: element, windowBounds: windowBounds)
         }
