@@ -214,6 +214,41 @@ public static class OCUWin32 {
 
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int returned);
+    [DllImport("advapi32.dll")]
+    private static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+    [DllImport("advapi32.dll")]
+    private static extern IntPtr GetSidSubAuthority(IntPtr sid, uint index);
+
+    // The process's mandatory integrity level (0x2000 medium, 0x3000 high, 0x4000 system), or -1 if unreadable.
+    public static int IntegrityLevel(uint processId) {
+        IntPtr process = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, processId);
+        if (process == IntPtr.Zero) return -1;
+        IntPtr token = IntPtr.Zero, buffer = IntPtr.Zero;
+        try {
+            if (!OpenProcessToken(process, 0x0008 /* TOKEN_QUERY */, out token)) return -1;
+            int length;
+            GetTokenInformation(token, 25 /* TokenIntegrityLevel */, IntPtr.Zero, 0, out length);
+            if (length <= 0) return -1;
+            buffer = Marshal.AllocHGlobal(length);
+            if (!GetTokenInformation(token, 25, buffer, length, out length)) return -1;
+            IntPtr sid = Marshal.ReadIntPtr(buffer); // TOKEN_MANDATORY_LABEL.Label.Sid
+            int count = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
+            return count == 0 ? -1 : Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(count - 1)));
+        } finally {
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            if (token != IntPtr.Zero) CloseHandle(token);
+            CloseHandle(process);
+        }
+    }
 }
 "@
 
@@ -700,6 +735,17 @@ function Send-Key([IntPtr]$hwnd, [string]$key, [string]$method = "auto") {
     try { Start-Sleep -Milliseconds 25 }
     finally {
         if (-not [OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)) { throw "PostMessage key release failed." }
+    }
+}
+
+# Windows drops window messages and SendInput aimed at a process with a higher integrity level (UIPI): an elevated
+# app gets nothing while SendInput still reports success, and UI Automation sees little more than its frame. A level
+# that cannot be read is not refused.
+function Assert-InputAllowed($process) {
+    $target = [OCUWin32]::IntegrityLevel([uint32]$process.Id)
+    $own = [OCUWin32]::IntegrityLevel([uint32]$PID)
+    if ($target -ge 0 -and $own -ge 0 -and $target -gt $own) {
+        throw "$($process.ProcessName) runs elevated, at a higher integrity level than Open Computer Use, so Windows drops the input sent to it. Run the app without elevation, or run Open Computer Use elevated."
     }
 }
 
@@ -1494,6 +1540,7 @@ try {
             ($operation.windowHandle -gt 0 -and [long]$hwnd -ne $operation.windowHandle)) {
             throw "Target process/window changed; run get_app_state before acting."
         }
+        Assert-InputAllowed $process
         $windowBounds = $operation.windowBounds
         $element = Find-Element $process $operation.element
 
