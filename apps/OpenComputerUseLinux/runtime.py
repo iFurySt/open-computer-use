@@ -615,6 +615,18 @@ def find_element(app, record):
     return None
 
 
+def gtk3_text_field(node):
+    # GTK 3 names a text field's Enter key "activate" ("Activates the entry"): running it submits
+    # the field instead of focusing it. GTK 4 uses the same name, but its pointer fallback has no
+    # usable extents on X11; Gecko and Chromium focus the field on "activate".
+    if node_role(node).lower() not in {"text", "entry", "password text", "spin button"}:
+        return False
+    return (
+        str(safe(node.get_toolkit_name, "") or "").lower() == "gtk"
+        and str(safe(node.get_toolkit_version, "") or "").startswith("3.")
+    )
+
+
 def preferred_action_index(node):
     preferred_exact = {
         "click",
@@ -627,11 +639,14 @@ def preferred_action_index(node):
         "open",
     }
     count = int(safe(node.get_n_actions, 0) or 0)
+    enter_key = count > 0 and gtk3_text_field(node)
     fallback = None
     for index in range(count):
         name = str(safe(lambda i=index: node.get_action_name(i), "") or "")
         description = str(safe(lambda i=index: node.get_action_description(i), "") or "")
         lower = (name or description).lower()
+        if enter_key and "activate" in lower:
+            continue
         if lower in preferred_exact:
             return index
         if fallback is None and (
