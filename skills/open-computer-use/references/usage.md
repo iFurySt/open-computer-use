@@ -306,8 +306,10 @@ JavaScript they are `await cua.readClipboard()` and `await cua.writeClipboard(te
 - Both are refused when the Mac is locked without a Locked Use lease, like every other GUI
   action.
 - macOS may ask the user before the app reads the clipboard; if clipboard access is set
-  to deny in System Settings, `read_clipboard` reports that.
-- `write_clipboard` replaces what the user copied. Use it only when they asked.
+  to deny in System Settings, `read_clipboard` returns a permission error saying where to
+  allow it, without touching the clipboard.
+- `write_clipboard` replaces what the user copied. Use it only when they asked. It reads the
+  clipboard back and returns an error when another copy replaced the text during the write.
 
 Linux and Windows do not implement the clipboard tools and return `unsupportedTool`.
 
