@@ -730,6 +730,19 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(skyMenuKeyEquivalent(for: parsed), SkyMenuKeyEquivalent(character: "?", modifiers: 0))
     }
 
+    func testKeyPressParserReadsPlusAsAKey() throws {
+        // `+` also separates keys, so `+` alone or a trailing `++` names the plus key.
+        let current = try XCTUnwrap(TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue())
+        let plus = try XCTUnwrap(KeyPressParser.characterKeys(in: current)["+"])
+        let shift: [CGEventFlags] = plus.shift ? [.maskShift] : []
+        for (specification, flags) in [("+", shift), ("cmd++", [.maskCommand] + shift), ("cmd + +", [.maskCommand] + shift)] {
+            let parsed = try KeyPressParser.parse(specification)
+            XCTAssertEqual(parsed.keyCode, plus.code, specification)
+            XCTAssertEqual(parsed.modifiers.map(\.flag), flags, specification)
+        }
+        XCTAssertThrowsError(try KeyPressParser.parse("cmd+"), "a dangling separator is not the plus key")
+    }
+
     func testInitializeResponseContainsToolsCapability() throws {
         let server = StdioMCPServer(service: ComputerUseService())
         let response = server.handle(line: #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","clientInfo":{"name":"test","version":"1.1.4"},"capabilities":{}}}"#)

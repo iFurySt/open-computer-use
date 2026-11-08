@@ -14,6 +14,7 @@
 **Key Actions:**
 - **[布局字符]**: `KeyPressParser` 在具名键表之外，用 `UCKeyTranslate` 读取当前键盘布局：能用一个主键盘按键打出的字符（直接或按住 shift）映射到该按键，需要 shift 时自动加上，已显式写了 shift 时不重复添加。具名键优先，`a`–`z`、`0`–`9` 等原有映射不变。
 - **[按需读取]**: 只在 token 不是具名键时读取布局（一次约 0.02 ms），会话中途切换键盘布局也能跟上，不缓存过期的表。
+- **[加号]**: `+` 同时是组合键分隔符，单独的 `+` 或结尾的 `++`（如 `cmd++`）表示加号键本身，按布局映射（US 布局为 shift+=）；`cmd+` 这种结尾悬空的写法仍报错。此前 `+` 报 `key specification is empty`。
 - **[小键盘]**: 构表时跳过小键盘按键，`*` 映射到主键盘的 shift+8；小键盘仍用 `kp_*` 名称。
 - **[sky_key 菜单匹配]**: `ParsedKeyPress` 新增 `shiftedCharacter`。sky_key 把 cmd 组合键换成菜单快捷键时不计字符隐含的 shift：菜单把 `cmd+?` 记为字符 `?` 加 cmd（Finder 帮助菜单项的 `AXMenuItemCmdChar` 为 `?`，`AXMenuItemCmdModifiers` 为 0）。
 - **[测试]**: 用显式加载的 US 布局校验字符表，与机器当前布局无关；再按当前布局校验解析结果：自动加 shift、不重复 shift、sky_key 菜单快捷键为 `?` 加 cmd。
@@ -32,5 +33,6 @@
 
 ### ✅ Validation
 - Swift 384 项测试通过（7 项跳过），`make check-docs` 通过。
+- 2026-11-08 rebase 到 main 后：Swift 456 项测试通过（8 项跳过），新增 `testKeyPressParserReadsPlusAsAKey` 在改动前失败。
 - 真机（ABC 布局，与 US 相同）：用一个只记录按键事件的临时 AppKit 窗口接收，auto 下 `?`、`@`、`{`、`*` 分别到达 key code 44 / 19 / 33 / 28，均带 shift，shift 在按键之后释放；TextEdit 新文档中依次得到 `?@{*`，测试后关闭文档、不保存。
 - sky_key：该窗口位于终端之后，`?`、`{` 带 shift 送达，前台 app 不变；窗口没有对应菜单项时，`cmd+?` 回落为 cmd+shift+/ 按键事件。菜单匹配依据 Finder 帮助菜单项的 AX 属性（只读取，未按下菜单）。
