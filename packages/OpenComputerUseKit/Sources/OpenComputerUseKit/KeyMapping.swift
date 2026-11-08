@@ -18,10 +18,15 @@ public struct ParsedKeyPress: Sendable {
 
 public enum KeyPressParser {
     public static func parse(_ specification: String) throws -> ParsedKeyPress {
-        let tokens = specification
+        // `+` also separates keys, so `+` alone or a trailing `++` names the plus key itself.
+        var keys = specification.filter { !$0.isWhitespace }
+        let plusKey = keys == "+" || keys.hasSuffix("++")
+        if plusKey { keys.removeLast() }
+        var tokens = keys
             .split(separator: "+")
             .map { normalize(String($0)) }
             .filter { !$0.isEmpty }
+        if plusKey { tokens.append("+") }
 
         guard let keyToken = tokens.last else {
             throw ComputerUseError.invalidArguments("key specification is empty")
