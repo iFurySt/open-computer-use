@@ -33,6 +33,33 @@ final class TargetedQuerySafetyTests: XCTestCase {
         XCTAssertEqual(absent.primaryText, "appNotFound(\"NoSuchReviewApp\")")
     }
 
+    func testANamedWindowIsThatWindowOrAnErrorNeverAnother() throws {
+        let me = RunningAppDescriptor(name: "Tests", bundleIdentifier: nil, pid: getpid(), runningApplication: .current)
+        let element = AXUIElementCreateApplication(getpid())
+        XCTAssertThrowsError(try SnapshotBuilder.namedWindow(0x7FFF_FFF0, app: me, appElement: element)) { error in
+            guard case .stateUnavailable(let message) = error as? ComputerUseError else { return XCTFail("\(error)") }
+            XCTAssertTrue(message.contains("is gone"), message)
+        }
+        let onScreen = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]] ?? []
+        if let other = onScreen.first(where: { ($0[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value != getpid() }),
+           let id = (other[kCGWindowNumber as String] as? NSNumber)?.uint32Value {
+            XCTAssertThrowsError(try SnapshotBuilder.namedWindow(id, app: me, appElement: element)) { error in
+                guard case .invalidArguments = error as? ComputerUseError else { return XCTFail("\(error)") }
+            }
+        }
+
+        // Without a window number, the one AX window with that frame (within 2 pt) and title is it.
+        let bounds = CGRect(x: 100, y: 80, width: 600, height: 400)
+        let main = (frame: CGRect?(CGRect(x: 0, y: 25, width: 800, height: 600)), title: String?("Main"))
+        let named = (frame: CGRect?(CGRect(x: 101.5, y: 79, width: 600, height: 401)), title: String?("Inspector"))
+        XCTAssertEqual(SnapshotBuilder.uniqueWindowMatch(bounds: bounds, title: "Inspector", candidates: [main, named]), 1)
+        XCTAssertEqual(SnapshotBuilder.uniqueWindowMatch(bounds: bounds, title: nil, candidates: [main, named]), 1)
+        XCTAssertNil(SnapshotBuilder.uniqueWindowMatch(bounds: bounds, title: "Other", candidates: [main, named]))
+        XCTAssertNil(SnapshotBuilder.uniqueWindowMatch(bounds: bounds.offsetBy(dx: -1, dy: 0), title: nil, candidates: [main, named]))
+        // Two windows with the same frame and no title to tell them apart: neither is picked.
+        XCTAssertNil(SnapshotBuilder.uniqueWindowMatch(bounds: bounds, title: nil, candidates: [named, (named.frame, nil)]))
+    }
+
     func testQueryStringsAndExactRejectSilentCoercion() throws {
         XCTAssertEqual(try validatedQueryString("Send", key: "text"), "Send")
         XCTAssertThrowsError(try validatedQueryString(3, key: "text"))
