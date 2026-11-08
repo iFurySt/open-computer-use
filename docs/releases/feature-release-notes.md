@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-08 | Windows app 与窗口解析 | 计算器、设置等 UWP app 可以按自己的进程名或标题找到；弹出“是否保存”这类模态对话框时，快照和动作落在对话框上。 | 用 `EnumWindows` 的可见无 owner 顶层窗口代替 `Process.MainWindowHandle`，UWP 框架窗口归到其 CoreWindow 进程；先按 pid、进程名，再按标题匹配；主窗口被禁用时以其拥有的已启用对话框为根；`list_apps` 同步。补 `windows-app-resolution.test.ps1` 并接入 Windows CI。 |
 | 2026-11-07 | Windows 控制台窗口 | MCP 服务没有控制台时，每次 Windows 工具调用不再弹出 PowerShell 控制台窗口并抢走前台焦点。 | `powershell.exe` 以 `CREATE_NO_WINDOW` 启动，标准输出管道和 JSON 协议不变；非 Windows 构建为空操作。 |
 | 2026-11-08 | Windows 动作结果 | 点击等动作已经送达、只是之后读不到窗口时（例如窗口被关闭），不再报成失败，避免模型重试造成重复动作。 | 动作后的快照单独捕获错误，返回非错误结果并说明读取失败原因，同时作废旧索引；动作超时提示可能已送达。补 `windows-action-observation.test.ps1`（直接运行生产 dispatch）与 Go 回归，并接入 Windows CI。 |
 | 2026-11-08 | Windows 键盘输入目标 | 后台窗口里 `press_key` 送到有焦点的控件，`type_text` 写进有焦点的文本框而不是第一个；`ctrl+a` 不再被当成 `a` 输入。 | auto 方式按 `GetGUIThreadInfo` 的焦点控件投递，检查投递结果；组合键拒绝并提示 `key_method=global`；`type_text` 只读焦点框拒绝，焦点未知且有多个文本框时拒绝。补 `windows-keyboard-focus.test.ps1` 并接入 Windows CI。 |

@@ -53,6 +53,44 @@ public static class OCUWin32 {
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int valueSize);
 
+    public class TopWindow {
+        public IntPtr Handle, Owner;
+        public uint ProcessId;
+        public bool Enabled;
+        public string Title;
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr parameter);
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hwnd, System.Text.StringBuilder text, int size);
+
+    // Visible top-level windows in z-order, topmost first. A UWP app's window is an ApplicationFrameWindow that
+    // belongs to ApplicationFrameHost.exe; it is reported under the pid of the app whose CoreWindow it hosts.
+    public static System.Collections.Generic.List<TopWindow> TopLevelWindows() {
+        System.Collections.Generic.List<TopWindow> windows = new System.Collections.Generic.List<TopWindow>();
+        EnumWindows(delegate(IntPtr hwnd, IntPtr parameter) {
+            if (!IsWindowVisible(hwnd)) return true;
+            TopWindow window = new TopWindow();
+            window.Handle = hwnd;
+            window.Owner = GetWindow(hwnd, 4 /* GW_OWNER */);
+            window.Enabled = IsWindowEnabled(hwnd);
+            IntPtr core = FindWindowEx(hwnd, IntPtr.Zero, "Windows.UI.Core.CoreWindow", null);
+            GetWindowThreadProcessId(core != IntPtr.Zero ? core : hwnd, out window.ProcessId);
+            System.Text.StringBuilder title = new System.Text.StringBuilder(512);
+            GetWindowText(hwnd, title, title.Capacity);
+            window.Title = title.ToString();
+            windows.Add(window);
+            return true;
+        }, IntPtr.Zero);
+        return windows;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
 
@@ -709,22 +747,33 @@ function Resolve-App([string]$query) {
     if ($processQuery.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)) {
         $processQuery = $processQuery.Substring(0, $processQuery.Length - 4)
     }
-    $processes = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 })
+    $windows = @(Get-AppWindows)
     $pidValue = 0
-    if ([int]::TryParse($normalized, [ref]$pidValue)) {
-        $match = $processes | Where-Object { $_.Id -eq $pidValue } | Select-Object -First 1
+    $isPid = [int]::TryParse($normalized, [ref]$pidValue)
+    $match = $null
+    # A pid, then a process name, then a window title, each tried over every app window in z-order.
+    foreach ($test in @(
+        { $isPid -and $_.Id -eq $pidValue },
+        { $_.ProcessName -ieq $processQuery -or "$($_.ProcessName).exe" -ieq $normalized },
+        { $_.MainWindowTitle -ieq $normalized },
+        { $_.MainWindowTitle -ilike "*$normalized*" })) {
+        $match = $windows | Where-Object $test | Select-Object -First 1
         if ($null -ne $match) {
-            return $match
+            break
         }
     }
-
-    $match = $processes | Where-Object {
-        $_.ProcessName -ieq $processQuery -or
-        "$($_.ProcessName).exe" -ieq $normalized -or
-        $_.MainWindowTitle -ieq $normalized -or
-        $_.MainWindowTitle -ilike "*$normalized*"
-    } | Select-Object -First 1
     if ($null -ne $match) {
+        # A modal dialog disables the window it belongs to; the dialog is what can take input, so it is the root.
+        $dialog = $null
+        if (-not $match.Enabled) {
+            $dialog = [OCUWin32]::TopLevelWindows() | Where-Object {
+                $_.Owner -eq $match.MainWindowHandle -and $_.ProcessId -eq $match.Id -and $_.Enabled
+            } | Select-Object -First 1
+        }
+        if ($null -ne $dialog) {
+            $match.MainWindowHandle = $dialog.Handle
+            $match.MainWindowTitle = $dialog.Title
+        }
         return $match
     }
 
@@ -733,8 +782,8 @@ function Resolve-App([string]$query) {
             $started = Start-Process -FilePath $normalized -PassThru
             for ($i = 0; $i -lt 20; $i++) {
                 Start-Sleep -Milliseconds 250
-                $candidate = Get-Process -Id $started.Id -ErrorAction SilentlyContinue
-                if ($null -ne $candidate -and $candidate.MainWindowHandle -ne 0) {
+                $candidate = Get-AppWindows | Where-Object { $_.Id -eq $started.Id } | Select-Object -First 1
+                if ($null -ne $candidate) {
                     return $candidate
                 }
             }
@@ -743,6 +792,28 @@ function Resolve-App([string]$query) {
     }
 
     throw "appNotFound(`"$query`")"
+}
+
+# The apps' windows as (process, window) records, topmost first: every visible top-level window without an owner.
+# Process.MainWindowHandle names one window per process and misses UWP apps, whose window belongs to
+# ApplicationFrameHost.exe, so another app's title could match that frame instead.
+function Get-AppWindows {
+    $names = @{}
+    foreach ($process in (Get-Process)) {
+        $names[[uint32]$process.Id] = $process.ProcessName
+    }
+    foreach ($window in [OCUWin32]::TopLevelWindows()) {
+        if ($window.Owner -ne [IntPtr]::Zero -or -not $names.ContainsKey($window.ProcessId)) {
+            continue
+        }
+        [pscustomobject]@{
+            ProcessName = $names[$window.ProcessId]
+            Id = [int]$window.ProcessId
+            MainWindowHandle = $window.Handle
+            MainWindowTitle = $window.Title
+            Enabled = $window.Enabled
+        }
+    }
 }
 
 function Get-MainElement($process) {
@@ -1215,7 +1286,9 @@ function Build-Snapshot([string]$query, $TextLimit = $script:DefaultTextLimit, [
 
 function List-Apps {
     $lines = New-Object System.Collections.Generic.List[string]
-    foreach ($process in (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object ProcessName, Id)) {
+    # Each app with its topmost window, as Resolve-App picks it.
+    $apps = @(Get-AppWindows | Group-Object Id | ForEach-Object { $_.Group[0] })
+    foreach ($process in ($apps | Sort-Object ProcessName, Id)) {
         if ($null -eq (Get-CapturableWindowFrame ([IntPtr]$process.MainWindowHandle))) {
             continue
         }
