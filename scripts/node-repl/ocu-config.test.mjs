@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync, readFileSync, writeFileSync, statSync, cpSync, mkdirSync } from "node:fs";
@@ -76,7 +76,7 @@ test("staged npm launcher includes config module and persists without a native l
   const build = spawnSync(process.execPath, [path.join(root, "scripts/npm/build-packages.mjs"), "--configuration", "debug", "--skip-build"], { encoding: "utf8" });
   assert.equal(build.status, 0, build.stderr);
   const pluginAdapter = path.join(root, "dist/npm/open-computer-use/plugins/open-computer-use/scripts/open-computer-use-repl.mjs");
-  const imported = spawnSync(process.execPath, ["--input-type=module", "-e", "await import(process.argv[1])", pluginAdapter], { encoding: "utf8" });
+  const imported = spawnSync(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(pluginAdapter).href)})`], { encoding: "utf8" });
   assert.equal(imported.status, 0, imported.stderr);
   const launcher = path.join(root, "dist/npm/open-computer-use/bin/open-computer-use");
   const run = spawnSync(process.execPath, [launcher, "config", "set", "image.format", "jpg"], { env: { ...process.env, ...env }, encoding: "utf8" });
