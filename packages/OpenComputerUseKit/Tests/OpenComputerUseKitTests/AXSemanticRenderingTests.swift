@@ -149,6 +149,18 @@ final class AXSemanticRenderingTests: XCTestCase {
         }
     }
 
+    func testPasswordFieldValueNeverReachesTheSnapshot() {
+        let fixture = Fixture()
+        let password = fixture.add(5, role: "AXTextField", title: "Password")
+        password.attributes["AXSubrole"] = "AXSecureTextField" as CFString
+        password.attributes["AXValue"] = "hunter2-planted" as CFString
+        password.settable = true
+        fixture.nodes[2]!.children.append(5)
+        let output = fixture.render(focused: 5)
+        assertAgentTargets(fixture, output, expected: [0, 1, 3, 4, 5])
+        XCTAssertFalse(output.lines.joined(separator: "\n").contains("hunter2"))
+    }
+
     func testNamedCompactActionTargetKeepsItsFrameText() {
         let fixture = Fixture()
         let node = fixture.nodes[2]!
