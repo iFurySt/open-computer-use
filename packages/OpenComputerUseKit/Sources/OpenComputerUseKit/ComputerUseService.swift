@@ -1583,7 +1583,13 @@ public final class ComputerUseService {
                 return true
             }
 
-            if try performAction(named: kAXConfirmAction as String, on: element, availableActions: record.rawActions, repeatCount: clickCount) {
+            // AXConfirm on a text field in a table row starts editing the cell and selects
+            // nothing, where a click selects the row; the row selection in
+            // `performAXClickSequence` does that instead.
+            if record.rawActions.contains(where: { $0.caseInsensitiveCompare(kAXConfirmAction as String) == .orderedSame }),
+               !hasAncestorRole(kAXRowRole as String, of: element),
+               try performAction(named: kAXConfirmAction as String, on: element, availableActions: record.rawActions, repeatCount: clickCount)
+            {
                 return true
             }
 
