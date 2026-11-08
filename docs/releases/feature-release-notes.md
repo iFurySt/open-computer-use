@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-08 | Windows 元素重新定位 | 控件重建后，点击、设值等动作不再落到另一个同名控件（同名按钮、共用 AutomationId 的列表行）。 | RuntimeId 失效后要求类型、AutomationId、名称同时一致且唯一，多个匹配时拒绝并要求重新观察；按 `text_limit` 截断的名称也能匹配。补 `windows-element-resolution.test.ps1` 并接入 Windows CI。 |
 | 2026-11-07 | Locked Use 输入监控 | 兼容独占设备时仍检查键盘、指针等输入类别，避免误报健康。 | 逐设备管理回调与清理，热插拔 / 输入错误使当前监控失效；现有回归通过，按维护者决定先合并，Karabiner / Secure Input 接管实测留待发版后贡献者复测。见 [说明](../locked-use-input-monitor.md)。 |
 | 2026-11-07 | Locked Use 副屏遮罩 | 遮罩从创建时就放在目标屏幕上，避免依赖后续定位修正。 | 初始化改用屏幕局部坐标，保留严格覆盖检查；补物理双屏与左侧虚拟屏的真实前后对照。报告者锁屏环境的最终失败尚未完整复现，见 [验证说明](../locked-use-shield-placement.md)。 |
 | 2026-11-06 | macOS 截图与几何健壮性 | 部分出屏的窗口截图完整、坐标不偏移；AX 给出 NaN frame 时不再崩溃。 | 出屏时改走 ScreenCaptureKit 整窗捕获并校验尺寸；快照、查询与点击重读过滤非法 frame，补真实 AppKit 修复前后对照。见 [验证记录](../macos-snapshot-geometry.md)。 |

@@ -1181,8 +1181,8 @@ function Find-Element($process, $record) {
     if ($null -eq $record) {
         return $null
     }
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
+    $elements = Get-AllElements (Get-MainElement $process)
+    foreach ($element in $elements) {
         try {
             if (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId)) {
                 return $element
@@ -1190,16 +1190,33 @@ function Find-Element($process, $record) {
         } catch {
         }
     }
-    foreach ($element in (Get-AllElements $root)) {
+    # The RuntimeId is gone (the provider rebuilt the control), so take the one control left with the same type,
+    # AutomationId and name. Several such controls ("OK", "Delete", list rows) are refused: the first of them
+    # may not be the one observed. Snapshot names are cut at text_limit and end in "...".
+    if ([string]::IsNullOrWhiteSpace($record.automationId) -and [string]::IsNullOrWhiteSpace($record.name)) {
+        return $null
+    }
+    $name = [string]$record.name
+    $cut = if ($name.EndsWith("...")) { $name.Substring(0, $name.Length - 3) } else { $null }
+    $twins = @($elements | Where-Object {
         try {
-            $sameAutomationId = -not [string]::IsNullOrWhiteSpace($record.automationId) -and $element.Current.AutomationId -eq $record.automationId
-            $sameName = -not [string]::IsNullOrWhiteSpace($record.name) -and $element.Current.Name -eq $record.name
-            $sameType = $element.Current.ControlType.ProgrammaticName -eq $record.controlType
-            if (($sameAutomationId -or $sameName) -and $sameType) {
-                return $element
+            $current = $_.Current
+            if ($current.ControlType.ProgrammaticName -ne $record.controlType -or
+                ([string]$current.AutomationId) -cne ([string]$record.automationId)) {
+                return $false
             }
+            $currentName = [string]$current.Name
+            $currentName -ceq $name -or ($null -ne $cut -and $currentName.Length -gt $cut.Length -and
+                $currentName.StartsWith($cut, [StringComparison]::Ordinal))
         } catch {
+            $false
         }
+    })
+    if ($twins.Count -gt 1) {
+        throw "Element $($record.index) now matches $($twins.Count) controls with the same type, AutomationId and name, so acting could hit the wrong one. Run get_app_state and use the new index."
+    }
+    if ($twins.Count -eq 1) {
+        return $twins[0]
     }
     return $null
 }
