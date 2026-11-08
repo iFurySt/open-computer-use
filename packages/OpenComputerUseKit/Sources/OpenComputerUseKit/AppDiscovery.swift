@@ -36,7 +36,7 @@ struct ListedAppDescriptor {
     }
 }
 
-private struct SpotlightAppRecord {
+struct SpotlightAppRecord {
     let name: String
     let bundleIdentifier: String
     let lastUsed: Date?
@@ -49,7 +49,11 @@ private struct ResolvedAppInfo {
 }
 
 enum AppDiscovery {
-    private static let listAppsQuery = #"kMDItemContentType == "com.apple.application-bundle" && kMDItemFSName == "*.app""#
+    private static let recentUsageDays = 13
+    // No `kMDItemFSName == "*.app"` clause: Spotlight matches that wildcard against every bundle's name, about 120 ms a
+    // query against 5 ms without it; the name is checked for `.app` below instead. The date clause leaves out the bundles not
+    // used in the window, so they are never read; the cutoff is still checked exactly below.
+    private static let listAppsQuery = #"kMDItemContentType == "com.apple.application-bundle" && (kMDItemLastUsedDate >= $time.today(-\#(recentUsageDays)) || kMDItemLastUsedDate_Ranking >= $time.today(-\#(recentUsageDays)))"#
     private static let lastUsedDateRankingAttribute = "kMDItemLastUsedDate_Ranking"
     private static let useCountAttribute = "kMDItemUseCount"
     private static let maxRecentNonRunningApps = 10
@@ -403,10 +407,10 @@ enum AppDiscovery {
         var error: Error?
     }
 
-    private static func recentUsageCutoff(referenceDate: Date = Date()) -> Date {
+    static func recentUsageCutoff(referenceDate: Date = Date()) -> Date {
         let calendar = Calendar(identifier: .gregorian)
         let startOfToday = calendar.startOfDay(for: referenceDate)
-        return calendar.date(byAdding: .day, value: -13, to: startOfToday) ?? startOfToday
+        return calendar.date(byAdding: .day, value: -recentUsageDays, to: startOfToday) ?? startOfToday
     }
 
     private static func blockedBundleIdentifier(forQuery query: String) -> String? {
@@ -451,9 +455,19 @@ enum AppDiscovery {
             ?? "pid-\(app.processIdentifier)"
     }
 
-    private enum SpotlightAppIndex {
+    enum SpotlightAppIndex {
         static func recentApps(cutoffDate: Date) -> [SpotlightAppRecord] {
             let sortingAttributes = [
+                lastUsedDateRankingAttribute as CFString,
+                useCountAttribute as CFString,
+            ] as CFArray
+            // Fetched with the results: read one by one through MDItemCopyAttribute they cost about 1 ms per item.
+            // kMDItemPath is not one the query returns, so it is read from the item, once the cheap checks pass.
+            let valueListAttributes = [
+                kMDItemCFBundleIdentifier,
+                kMDItemFSName,
+                kMDItemDisplayName,
+                kMDItemLastUsedDate,
                 lastUsedDateRankingAttribute as CFString,
                 useCountAttribute as CFString,
             ] as CFArray
@@ -461,7 +475,7 @@ enum AppDiscovery {
             guard let query = MDQueryCreate(
                 kCFAllocatorDefault,
                 listAppsQuery as CFString,
-                nil,
+                valueListAttributes,
                 sortingAttributes
             ) else {
                 return []
@@ -479,14 +493,10 @@ enum AppDiscovery {
             var records: [SpotlightAppRecord] = []
 
             for index in 0..<MDQueryGetResultCount(query) {
-                guard let rawResult = MDQueryGetResultAtIndex(query, index) else {
-                    continue
-                }
-
-                let item = unsafeBitCast(rawResult, to: MDItem.self)
                 guard
-                    let bundleIdentifier = stringAttribute(kMDItemCFBundleIdentifier, item: item),
-                    !bundleIdentifier.isEmpty
+                    let bundleIdentifier: String = value(kMDItemCFBundleIdentifier, query: query, index: index),
+                    !bundleIdentifier.isEmpty,
+                    (value(kMDItemFSName, query: query, index: index) as String?)?.hasSuffix(".app") == true
                 else {
                     continue
                 }
@@ -496,7 +506,16 @@ enum AppDiscovery {
                     continue
                 }
 
-                guard let path = stringAttribute(kMDItemPath, item: item) else {
+                let lastUsed: Date? = value(lastUsedDateRankingAttribute as CFString, query: query, index: index)
+                    ?? value(kMDItemLastUsedDate, query: query, index: index)
+                guard let lastUsed, lastUsed >= cutoffDate else {
+                    continue
+                }
+
+                guard
+                    let rawResult = MDQueryGetResultAtIndex(query, index),
+                    let path = MDItemCopyAttribute(unsafeBitCast(rawResult, to: MDItem.self), kMDItemPath) as? String
+                else {
                     continue
                 }
 
@@ -509,15 +528,9 @@ enum AppDiscovery {
                     continue
                 }
 
-                let lastUsed = dateAttribute(lastUsedDateRankingAttribute as CFString, item: item)
-                    ?? dateAttribute(kMDItemLastUsedDate, item: item)
-                guard let lastUsed, lastUsed >= cutoffDate else {
-                    continue
-                }
-
-                let uses = numberAttribute(useCountAttribute as CFString, item: item)?.intValue
+                let uses = (value(useCountAttribute as CFString, query: query, index: index) as NSNumber?)?.intValue
                 let displayName = bundleDisplayName(bundle)
-                    ?? stringAttribute(kMDItemDisplayName, item: item).map(stripAppSuffix(from:))
+                    ?? (value(kMDItemDisplayName, query: query, index: index) as String?).map(stripAppSuffix(from:))
                     ?? stripAppSuffix(from: appURL.lastPathComponent)
 
                 records.append(
@@ -548,16 +561,9 @@ enum AppDiscovery {
             return scopes as [CFString]
         }
 
-        private static func stringAttribute(_ name: CFString, item: MDItem) -> String? {
-            MDItemCopyAttribute(item, name) as? String
-        }
-
-        private static func numberAttribute(_ name: CFString, item: MDItem) -> NSNumber? {
-            MDItemCopyAttribute(item, name) as? NSNumber
-        }
-
-        private static func dateAttribute(_ name: CFString, item: MDItem) -> Date? {
-            MDItemCopyAttribute(item, name) as? Date
+        private static func value<T>(_ name: CFString, query: MDQuery, index: CFIndex) -> T? {
+            MDQueryGetAttributeValueOfResultAtIndex(query, name, index)
+                .map { Unmanaged<CFTypeRef>.fromOpaque($0).takeUnretainedValue() } as? T
         }
     }
 }
