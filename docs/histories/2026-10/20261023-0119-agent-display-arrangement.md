@@ -13,7 +13,7 @@
 
 **Key Actions:**
 - **[显示器排列]**: macOS 把新显示器放在主屏旁边，并会把用户的其他显示器挤开（fork 在 2026-10-16 观察到：内建屏、agent 显示器、被推到右边的外接屏），鼠标在用户两块显示器之间移动时会穿过看不见的 agent 显示器。`ensureDisplay` 在显示器就绪后比较用户显示器创建前后的 bounds：有变化就按原位置放回（`kCGConfigureForSession`），agent 显示器放到最右侧显示器的右边、与其顶边对齐；没有变化时不调用任何显示器配置 API，所以单屏机器行为不变。镜像中的显示器不设 origin，避免把它移出镜像组。
-- **[被 macOS 移来的窗口]**: shim 给 agent 显示器固定的 vendor / product / serial，macOS 把它当成同一块显示器。上一块 agent 显示器消失时还在上面的窗口（进程被强杀、来不及 restore），在下一块 agent 显示器出现时会被 macOS 移回去，停靠期间从用户屏幕上消失。`ensureDisplay` 记录创建前的屏上窗口，就绪后把“创建前在用户显示器上、现在在 agent 显示器上”的未停靠窗口用 AX 移回原位置。
+- **[被 macOS 移来的窗口]**: shim 给 agent 显示器固定的 vendor / product / serial，macOS 把它当成同一块显示器。上一块 agent 显示器消失时还在上面的窗口（进程被强杀、来不及 restore），在下一块 agent 显示器出现时会被 macOS 移回去，停靠期间从用户屏幕上消失。`ensureDisplay` 记录创建前全部 Space 上的窗口，就绪后把“创建前在用户显示器上、之后被移到 agent 显示器上”的未停靠窗口用 AX 移回原位置；原位置伸进 agent 显示器区域的窗口拉回到它所在的用户显示器内。
 - **[纯函数与测试]**: 判定逻辑抽成 `agentDisplayOrigin(displaysBefore:displaysNow:)` 和 `windowsMovedOntoAgentDisplay(_:userDisplays:before:now:)`，新增两项单元测试覆盖被挤开、左侧外接屏、未移动 / 单屏、空列表，以及被移来、未移动、原本就伸进该区域、已关闭和 Space 切换途中读到的偏移 frame。
 - **[文档]**: 更新 agent display 参考文档里的排列、副作用与未解决项，补功能发布记录。
 
@@ -31,6 +31,8 @@ fork 后续提交里只移植上游代码路径上存在的部分。上游的 te
 - 被移来的窗口在单屏上实机复现（GUI 锁内，用自建的不激活探针窗口）：进程 A 停靠窗口 P 后 `_exit`，P 回到 `(300,268)`；进程 B 停靠另一个窗口时，修复前 P 被 macOS 移到 agent 显示器 `(1552,40)` 并一直留在那里；修复后 P 被移回 `(300,268)`，同一身份的显示器再次创建时 macOS 不再移动 P。
 - `OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LIVE_TEST=1 swift test --filter AgentDisplayLiveTests` 通过；显示器排列在测试前、停靠中（agent 显示器 `1512,0 1920x1080`）、测试后一致，内建屏始终是 `0,0 1512x982`，前台 app 不变。
 - `swift test`：384 项测试，7 项跳过，0 失败。
+- 2026-11-08 rebase 到 main 后实机复跑（内建屏 `0,0 1512x982`，外接屏 `-187,-1080 1920x1080`，fixture app 两份）：进程 1 停靠 A 后被 SIGKILL，macOS 把 A 放到 `(1343,57)`（大半伸出主屏右边缘）。用户在内建屏上开着全屏 app，A 与 B 不在当前 Space（`kCGWindowIsOnscreen` 为 0）。原实现只读屏上窗口，且排除原位置伸进 agent 区域的窗口，进程 2 停靠 B 时 A 被移到 agent 显示器 `(1552,40)` 并留到显示器销毁；改为读取全部 Space 并拉回显示器内后，A 回到 `(872,57)`，B 停靠在 `(1552,40)`、恢复到 `(160,150)`，两块用户显示器始终未动。全部 Space 的窗口列表（182 个窗口）p50 1.9 ms，每次创建显示器读两次。
+- 2026-11-08：`swift test` 455 项测试，8 项跳过，0 失败。
 
 ### Files Modified
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/AgentDisplay.swift`

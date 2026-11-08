@@ -44,7 +44,7 @@ agent 第一次接触时就已经被遮挡或已在其他 Space 的 Chromium 窗
 - 一个此前被完全遮挡、页面 `hidden`、没有 `AXWebArea` 的 Chrome 窗口，放到 virtual display 上后页面立刻 `visible`；生产 `SnapshotBuilder` 返回网页内容与截图，`sky_click` / `sky_key` 正常；结束后把窗口移回原位置与原 Space，进程退出后显示器消失。
 - spike 里用 Swift KVC / IMP 直接驱动这些类会在 dealloc 崩溃；正式实现放在 ObjC shim 里，ARC 管理对象生命周期，`AgentDisplayLiveTests` 验证创建、停靠、点击输入、恢复与销毁全程无崩溃，显示器数量恢复。
 - 多显示器时 macOS 会把新显示器放在主屏旁边，并把用户的其他显示器挤开，agent 显示器夹在用户两块显示器之间，鼠标跨屏会穿过它。创建后若用户的显示器被移动过，`AgentDisplay` 把它们放回原位（`kCGConfigureForSession`），agent 显示器放到最右侧显示器的右边；用户显示器没动（单屏总是如此）时不改排列，镜像中的显示器不设 origin。
-- agent 显示器每次的身份相同（vendor / product / serial 固定）。上一块 agent 显示器消失时还在它上面的窗口（进程被强杀、未恢复），macOS 会在下一块创建时把它移回去，用户屏幕上看不到。单屏实测可复现；现在创建后把这类窗口按创建前的位置移回，之后再创建 macOS 不再移动它。创建前 frame 不在任何用户显示器上的窗口（例如切换 Space 途中读到的偏移 frame）不移动。
+- agent 显示器每次的身份相同（vendor / product / serial 固定）。上一块 agent 显示器消失时还在它上面的窗口（进程被强杀、未恢复），macOS 会在下一块创建时把它移回去，用户屏幕上看不到。单屏实测可复现；现在创建后把这类窗口按创建前的位置移回，之后再创建 macOS 不再移动它。用户没在看的 Space 上的窗口（例如在全屏 app 后面）也会被移过去，所以创建前后读取全部 Space 的窗口。macOS 把从上一块 agent 显示器撤下的窗口放在主屏右边缘、大半伸出屏外，原位置会落进新 agent 显示器的区域；这类窗口拉回到它所在的用户显示器内。创建前 frame 不在任何用户显示器上的窗口（例如切换 Space 途中读到的偏移 frame）不移动。
 - 已知副作用：agent 显示器在最右侧显示器（单屏时为主屏）右边，鼠标可能从右边缘滑入；停靠期间窗口不在用户桌面上。所以它是显式 opt-in，不进入默认路径。
 
 ## 实测耗时（macOS 27.0，M 系列，2026-09-09）

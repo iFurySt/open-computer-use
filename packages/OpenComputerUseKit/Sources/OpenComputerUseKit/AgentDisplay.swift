@@ -51,15 +51,24 @@ func agentDisplayOrigin(displaysBefore: [CGRect], displaysNow: [CGRect]) -> CGPo
 }
 
 /// Windows macOS moved onto a new agent display: on one of the user's displays
-/// before the agent display was created and on the agent display now. Each maps
-/// to the origin it had before. A frame on none of the user's displays is not a
-/// place to return to (frames read while Spaces switch are shifted off them).
+/// before the agent display was created, and moved onto the agent display since.
+/// Each maps to the origin it had before. A window that reached into the agent
+/// display's area is pulled onto its own display instead (macOS leaves a window
+/// it took off the last agent display hanging past the main display's edge, so
+/// back at its origin most of it would still be on the agent display). A frame
+/// on none of the user's displays is not a place to return to (frames read while
+/// Spaces switch are shifted off them).
 func windowsMovedOntoAgentDisplay(_ displayBounds: CGRect, userDisplays: [CGRect], before: [CGWindowID: CGRect], now: [CGWindowID: CGRect]) -> [CGWindowID: CGPoint] {
     before.reduce(into: [:]) { moved, window in
-        if !displayBounds.intersects(window.value), userDisplays.contains(where: { $0.intersects(window.value) }),
-           let frame = now[window.key], displayBounds.intersects(frame) {
-            moved[window.key] = window.value.origin
-        }
+        let old = window.value
+        let area = { (display: CGRect) in display.intersection(old).width * display.intersection(old).height }
+        guard let home = userDisplays.filter({ $0.intersects(old) }).max(by: { area($0) < area($1) }),
+              let frame = now[window.key], frame.origin != old.origin, displayBounds.intersects(frame)
+        else { return }
+        moved[window.key] = !displayBounds.intersects(old) ? old.origin : CGPoint(
+            x: max(home.minX, min(old.minX, home.maxX - old.width)),
+            y: max(home.minY, min(old.minY, home.maxY - old.height))
+        )
     }
 }
 
@@ -258,7 +267,7 @@ final class AgentDisplay: @unchecked Sendable {
         let spi = SkyLightSPI.shared
         let spacesBefore = Set((spi.managedDisplaySpaces() ?? [:]).values.flatMap { $0 })
         let displaysBefore = Self.activeDisplays().map { (id: $0, bounds: CGDisplayBounds($0)) }
-        let windowsBefore = Self.onScreenWindows()
+        let windowsBefore = Self.appWindows()
         let start = TimingLog.now()
         var newHandle: UnsafeMutableRawPointer?
         let id = ocu_virtual_display_create("Open Computer Use", UInt32(Self.displaySize.width), UInt32(Self.displaySize.height), 60, &newHandle)
@@ -322,7 +331,7 @@ final class AgentDisplay: @unchecked Sendable {
             bounds,
             userDisplays: userDisplays,
             before: before.filter { parked[$0.key] == nil }.mapValues(\.frame),
-            now: Self.onScreenWindows().mapValues(\.frame)
+            now: Self.appWindows().mapValues(\.frame)
         )
         for (windowID, origin) in moved {
             var windows: CFTypeRef?
@@ -342,9 +351,11 @@ final class AgentDisplay: @unchecked Sendable {
         return Array(ids.prefix(Int(count)))
     }
 
-    /// On-screen app windows and their frames, keyed by window ID.
-    private static func onScreenWindows() -> [CGWindowID: (pid: pid_t, frame: CGRect)] {
-        let infoList = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    /// App windows and their frames, keyed by window ID, on every Space: macOS
+    /// also moves a window on a Space the user is not looking at (behind a
+    /// full-screen app) onto the agent display.
+    private static func appWindows() -> [CGWindowID: (pid: pid_t, frame: CGRect)] {
+        let infoList = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         var windows: [CGWindowID: (pid: pid_t, frame: CGRect)] = [:]
         for info in infoList where (info[kCGWindowLayer as String] as? Int) == 0 {
             guard let number = info[kCGWindowNumber as String] as? NSNumber,
