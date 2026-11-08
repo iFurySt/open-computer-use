@@ -69,9 +69,8 @@ enum OpenComputerUseMain {
             let service = ComputerUseService()
             print(try service.getAppState(app: app, textLimit: textLimit, treeLimits: treeLimits, observation: observation).textContent)
         case let .call(invocation):
-            if VisualCursorSupport.isEnabled {
-                _ = NSApplication.shared.setActivationPolicy(.accessory)
-            }
+            // No NSApplication here, so no drawn cursor: it would vanish with this
+            // process, and playing it inline held every click for its glide.
             let output = try runOpenComputerUseCall(invocation)
             print(try output.jsonText())
             if output.hasToolError {

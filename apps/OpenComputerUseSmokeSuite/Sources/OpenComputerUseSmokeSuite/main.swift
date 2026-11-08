@@ -321,6 +321,19 @@ enum OpenComputerUseSmokeSuite {
         environment["OPEN_COMPUTER_USE_VISUAL_CURSOR"] = "1"
         environment["OPEN_COMPUTER_USE_VISUAL_CURSOR_OBSERVATION_FILE"] = observationURL.path
 
+        print("1a. one-shot call clicks without drawing the cursor")
+        let oneShot = Process()
+        oneShot.executableURL = serverURL
+        oneShot.arguments = ["call", "click", "--args", #"{"app":"\#(appName)","element_index":"1"}"#]
+        oneShot.environment = environment
+        let oneShotOutput = Pipe()
+        oneShot.standardOutput = oneShotOutput
+        try oneShot.run()
+        let oneShotText = String(decoding: oneShotOutput.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        oneShot.waitUntilExit()
+        try expect(oneShot.terminationStatus == 0 && oneShotText.contains("Counter:"), "one-shot click should return fixture state")
+        try expect(!FileManager.default.fileExists(atPath: observationURL.path), "a one-shot call has no app to draw the cursor in")
+
         let client = try MCPClient(executableURL: serverURL, arguments: ["mcp"], environment: environment)
         defer {
             client.terminate()

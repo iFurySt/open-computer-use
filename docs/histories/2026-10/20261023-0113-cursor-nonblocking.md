@@ -44,3 +44,10 @@
 - 注册顺序单测在改回立即注册时失败，排队注册时通过。
 - `swift test`：387 项，9 项跳过（opt-in live 测试），0 失败；`CursorWindowFollowTests` 8 项全部实际运行并通过，包括真实 AX 窗口跟随和 service click 集成。
 - 只在单块显示器上测量，未做双屏拖动。
+
+### Update 2026-11-08: one-shot `call` draws no cursor
+
+- 上面的改动只让工具线程不等光标；一次性 `open-computer-use call` 在主线程上调用，仍内联播完滑动和点击反馈，画出的光标随进程退出消失。现在 `call` 不再设置 activation policy（不建 NSApplication），`SoftwareCursorOverlay.canPresentOverlay` 要求进程已有 `NSApp`，所以一次性调用不建 panel、不画光标；MCP server 和 app agent 照旧绘制。
+- Smoke（`--cursor-idle-only`）新增一步：开着 observation file 跑一次性 `call click`，计数器加一且不写 observation file；在改动前该步失败。
+- 测量：fixture（headless，`OPEN_COMPUTER_USE_DISABLE_APP_AGENT_PROXY=1`，debug build，9 轮去掉首轮）一次性 `call click` 从 exec 到退出 p50：origin/main 1859 ms，本 PR 改动前 1859 ms，改动后 210 ms（min 201，max 221）。
+- `swift test`：458 项，10 项跳过，0 失败；`scripts/run-tool-smoke-tests.sh` 通过。

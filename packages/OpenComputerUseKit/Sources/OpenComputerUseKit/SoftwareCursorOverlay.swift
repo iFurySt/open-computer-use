@@ -12,8 +12,8 @@ public enum VisualCursorSupport {
     /// not wait for them. The main queue plays them in order: it does not start
     /// the next block while an animation pumps the run loop inside the current
     /// one. A backlog reaches `adaptiveCursorTempo` as a zero gap, so the cursor
-    /// speeds up to catch up. On the main thread (one-shot CLI) nothing would
-    /// drain a queue before exit, so the action plays inline.
+    /// speeds up to catch up. A main-thread caller plays inline; the one-shot
+    /// CLI, which calls on the main thread, draws nothing (`canPresentOverlay`).
     static func performOnMain(_ body: @escaping @MainActor () -> Void) {
         if Thread.isMainThread {
             MainActor.assumeIsolated {
@@ -392,8 +392,12 @@ enum SoftwareCursorOverlay {
         return true
     }
 
+    /// Only a process that made an NSApplication (MCP server, app agent) draws
+    /// the cursor. A one-shot `call` makes none: its cursor would vanish when it
+    /// exits, and played inline on the main thread it held the click until the
+    /// glide ended.
     private static var canPresentOverlay: Bool {
-        !NSScreen.screens.isEmpty
+        NSApp != nil && !NSScreen.screens.isEmpty
     }
 
     private static func prepareWindowIfNeeded() {
