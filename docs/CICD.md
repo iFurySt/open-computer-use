@@ -31,6 +31,12 @@ workflow 显示名为 `locked-use-distribution-tests`，只是测试入口，不
 
 `.github/workflows/windows-observation.yml` 在相关 PR 上运行 Windows Go 测试、PowerShell 生产采集函数测试，以及独立 WPF / native MCP smoke，也支持手动触发。工作流仅需 `contents: read`，沿用固定 SHA 的 checkout / setup-node / setup-go，不发布制品。桌面 smoke 使用自己的窗口，验证采集开关、索引与 UIA 设值，以及正常 / 1x1 / 最小化 / cloaked 窗口的截图边界。输入回归另外验证默认窗口消息滚动、四向物理滚轮、点击 / 拖拽 / 组合键和 stale / 遮挡拒绝，并运行 PowerShell 故障注入测试检查释放保护。复现命令见 [按需观察](selective-observation.md)与 [Windows 输入](windows-input.md)。
 
+## Secret 与隐私扫描
+
+`.github/workflows/secret-scan.yml` 在每个 PR、main push 和手动触发时完整检出历史，运行 `scripts/check-secrets.sh`：下载 gitleaks 8.30.1，sha256 与脚本里固定的值不符就拒绝运行（exit 2），然后扫描 HEAD 可达的每个 commit。规则在 `.gitleaks.toml`：gitleaks 默认的凭据规则，加上 [协作约定](REPO_COLLAB_GUIDE.md)和 [history 规范](HISTORY_GUIDE.md)禁止写进仓库的 home 目录路径、个人邮箱、机器名和 Tailscale 地址。本地运行同一命令即可复现，只需 `curl` 和网络。
+
+真实泄露要从源头删掉，必要时轮换凭据。已在历史里、判定无害的发现按 fingerprint 记在 `.gitleaksignore`，每条写明原因。PR 会被 squash 合并，PR 里 commit 的 fingerprint 合并后会变，所以 PR 中新出现的无害匹配改用行内 `gitleaks:allow` 注释或 `.gitleaks.toml` 的规则 allowlist。
+
 ## 推荐接入顺序
 
 1. 保留 `ci.yml`，作为仓库的基础门禁。
