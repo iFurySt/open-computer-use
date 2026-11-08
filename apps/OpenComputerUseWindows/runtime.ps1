@@ -1071,7 +1071,26 @@ function Get-FocusedSummary($processId, $TextLimit = $script:DefaultTextLimit) {
     return $null
 }
 
+function Test-ChromiumWindow($processId) {
+    try {
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($null -eq $process -or $process.MainWindowHandle -eq [IntPtr]::Zero) {
+            return $false
+        }
+        $window = [Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
+        return $window.Current.ClassName -like "Chrome_*"
+    } catch {
+        return $false
+    }
+}
+
 function Get-SelectedText($processId, $TextLimit = $script:DefaultTextLimit) {
+    # Chromium and Electron UIA providers raise an uncatchable AccessViolationException
+    # inside TextPatternRange.GetText, which terminates the PowerShell runspace and
+    # fails every observation/action for that app. Skip the selection read for them.
+    if (Test-ChromiumWindow $processId) {
+        return $null
+    }
     try {
         $focused = [Windows.Automation.AutomationElement]::FocusedElement
         if ($null -eq $focused -or $focused.Current.ProcessId -ne $processId) {
