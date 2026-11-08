@@ -143,13 +143,21 @@ enum InputSimulation {
         try postMouseEventToPid(type: .mouseMoved, source: source, point: start, button: .left, clickState: 1, pid: pid)
         try postMouseEventToPid(type: .leftMouseDown, source: source, point: start, button: .left, clickState: 1, pid: pid)
 
-        for step in 1...10 {
-            let progress = CGFloat(step) / 10
-            let point = CGPoint(
-                x: start.x + ((end.x - start.x) * progress),
-                y: start.y + ((end.y - start.y) * progress)
-            )
-            try postMouseEventToPid(type: .leftMouseDragged, source: source, point: point, button: .left, clickState: 1, pid: pid)
+        var position = start
+        do {
+            for step in 1...10 {
+                let progress = CGFloat(step) / 10
+                let point = CGPoint(
+                    x: start.x + ((end.x - start.x) * progress),
+                    y: start.y + ((end.y - start.y) * progress)
+                )
+                try postMouseEventToPid(type: .leftMouseDragged, source: source, point: point, button: .left, clickState: 1, pid: pid)
+                position = point
+            }
+        } catch {
+            // The button is down: release it where the drag stopped, or the app stays in the drag.
+            try? postMouseEventToPid(type: .leftMouseUp, source: source, point: position, button: .left, clickState: 1, pid: pid)
+            throw error
         }
 
         try postMouseEventToPid(type: .leftMouseUp, source: source, point: end, button: .left, clickState: 1, pid: pid)
@@ -167,15 +175,21 @@ enum InputSimulation {
 
         var previous = start
         let steps = dragStepCount(from: start, to: end)
-        for step in 1...steps {
-            let progress = CGFloat(step) / CGFloat(steps)
-            let point = CGPoint(
-                x: start.x + ((end.x - start.x) * progress),
-                y: start.y + ((end.y - start.y) * progress)
-            )
-            let delta = CGSize(width: point.x - previous.x, height: point.y - previous.y)
-            try postMouseEvent(type: .leftMouseDragged, source: nil, point: point, button: .left, clickState: 1, delta: delta, eventNumber: gesture)
-            previous = point
+        do {
+            for step in 1...steps {
+                let progress = CGFloat(step) / CGFloat(steps)
+                let point = CGPoint(
+                    x: start.x + ((end.x - start.x) * progress),
+                    y: start.y + ((end.y - start.y) * progress)
+                )
+                let delta = CGSize(width: point.x - previous.x, height: point.y - previous.y)
+                try postMouseEvent(type: .leftMouseDragged, source: nil, point: point, button: .left, clickState: 1, delta: delta, eventNumber: gesture)
+                previous = point
+            }
+        } catch {
+            // The real button is down: release it where the drag stopped, or the whole desktop stays in the drag.
+            try? postMouseEvent(type: .leftMouseUp, source: nil, point: previous, button: .left, clickState: 1, eventNumber: gesture)
+            throw error
         }
 
         try postMouseEvent(type: .leftMouseUp, source: nil, point: end, button: .left, clickState: 1, eventNumber: gesture)
@@ -270,7 +284,7 @@ enum InputSimulation {
     }
 
     private static func postMouseEvent(type: CGEventType, source: CGEventSource?, point: CGPoint, button: CGMouseButton, clickState: Int, delta: CGSize? = nil, eventNumber: Int64? = nil) throws {
-        try requireUsableComputerUseSession()
+        if !isButtonRelease(type) { try requireUsableComputerUseSession() }
         guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
             throw ComputerUseError.message("Failed to create mouse event \(type.rawValue).")
         }
@@ -323,8 +337,14 @@ enum InputSimulation {
         return min(max(Int((distance / 4).rounded(.up)), 10), 60)
     }
 
+    /// A button release is never refused: the session check failing between a press and its release (the Mac locking,
+    /// a Locked Use lease ending) left the button held down.
+    private static func isButtonRelease(_ type: CGEventType) -> Bool {
+        type == .leftMouseUp || type == .rightMouseUp || type == .otherMouseUp
+    }
+
     private static func postMouseEventToPid(type: CGEventType, source: CGEventSource, point: CGPoint, button: CGMouseButton, clickState: Int, pid: pid_t) throws {
-        try requireUsableComputerUseSession()
+        if !isButtonRelease(type) { try requireUsableComputerUseSession() }
         guard let event = CGEvent(mouseEventSource: source, mouseType: type, mouseCursorPosition: point, mouseButton: button) else {
             throw ComputerUseError.message("Failed to create mouse event \(type.rawValue).")
         }
