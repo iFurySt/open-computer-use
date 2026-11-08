@@ -50,3 +50,9 @@
 - 单元测试：路径切分（含无空格写法）与 6 种不完整路径的报错；标题匹配的大小写、首尾空格、`...` / `…`；dispatcher 对单段路径直接报参数错误；撤销租约时 `press_menu` 在解析 app 之前抛出；工具数量 / 名称 / schema 与 MCP instructions；Node REPL 32 项测试通过（Persistent / Worker 两种 session）。
 - 真机，TextEdit 以隐藏方式在后台启动，经进程内 CLI 调用，前台 app 全程不变：`file > new`（小写）新建一个窗口，开启回读时返回该隐藏窗口的 AX 与截图；`File > Nope` 列出 File 菜单的 17 项；`Nope > New` 列出菜单栏标题；`Format > Font` 报告会打开子菜单并列出其 16 项。
 - 第一轮未检查禁用状态时，`Edit > Undo`（无可撤销）与隐藏 app 中的 `File > Close`（无 key window）都返回 `ok` 却没有效果，据此加入禁用项检查；第二轮两者均报告禁用且未按下。测试新建的窗口均已通过窗口关闭按钮关掉，未保存任何内容。
+
+### Update 2026-11-08: 应用忙时的回答
+- 用临时加了慢菜单项（先计数加一，再让主线程忙 8 秒）的 fixture 测：第一次 `AXPress` 立即成功（菜单命令延后执行）；app 忙时第二次 `AXPress` 1.5 秒后返回 `kAXErrorCannotComplete`（-25204），但 app 空下来后仍执行了它，计数器到 2。原来这里报 "Could not press"，调用方重试就会执行两次。
+- 现在 `menuPressError` 把 cannot-complete / failure / attributeUnsupported / noValue 报为“已发出、可能仍会执行，先读再按”，其余错误照旧报未按下。
+- 同一场景下 `press_menu` 读菜单栏也得到 -25204，原来报 "The app has no menu bar."；现在菜单栏或某级菜单读不到且 app 回答 cannot-complete 时，报 app 没及时回答、未按下任何东西。
+- `swift test`：456 项，8 项跳过，0 失败；Node 56 项通过；`make check-docs` 通过。正常路径（按下、找不到、路径过短）在 fixture 上复测不变。

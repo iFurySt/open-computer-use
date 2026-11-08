@@ -2026,6 +2026,18 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertFalse(menuTitleMatches("Save", nil))
     }
 
+    func testMenuPressThatMayHaveRunIsNotReportedAsFailed() {
+        XCTAssertNil(menuPressError(.success, path: "File > New"))
+        for result in [AXError.cannotComplete, .failure, .attributeUnsupported, .noValue] {
+            let text = menuPressError(result, path: "File > New")?.localizedDescription ?? ""
+            XCTAssertTrue(text.contains("may still run"), "\(result.rawValue): \(text)")
+        }
+        for result in [AXError.actionUnsupported, .invalidUIElement, .apiDisabled] {
+            let text = menuPressError(result, path: "File > New")?.localizedDescription ?? ""
+            XCTAssertTrue(text.hasPrefix("Could not press File > New"), "\(result.rawValue): \(text)")
+        }
+    }
+
     func testSkyKeyWindowValidationAllowsOffScreenWindowsOfTheSameOwner() {
         let offScreen: [String: Any] = [
             kCGWindowNumber as String: NSNumber(value: UInt32(321)),

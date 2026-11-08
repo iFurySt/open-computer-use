@@ -74,6 +74,21 @@ func menuTitleMatches(_ requested: String, _ title: String?) -> Bool {
     return normalized(requested) == normalized(title)
 }
 
+/// What `press_menu`'s AXPress answer proves. A busy app (a long command, a modal dialog)
+/// answers kAXErrorCannotComplete and still runs the queued press once it gets to it, so that
+/// answer, like the others an app can give after acting, is not a failure: a retry could run
+/// the command twice.
+func menuPressError(_ result: AXError, path: String) -> ComputerUseError? {
+    switch result {
+    case .success:
+        return nil
+    case .cannotComplete, .failure, .attributeUnsupported, .noValue:
+        return .stateUnavailable("\(path) was sent, but the app did not confirm it (AXError \(result.rawValue)); it may still run. Read the app before pressing again: a repeat could run it twice.")
+    default:
+        return .message("Could not press \(path) (AXError \(result.rawValue)).")
+    }
+}
+
 /// Owner check for keyboard targets. Unlike `sky_click`, the window does not
 /// need to be on-screen: keyboard delivery is process-addressed, so a window on
 /// another Space or hidden app is a valid target as long as it still exists
@@ -286,8 +301,10 @@ enum SkyKeyboardDispatcher {
     /// title is looked up among the items of the menu named before it; a miss lists them.
     static func pressMenuItem(path: [String], pid: pid_t) throws {
         let application = AXUIElementCreateApplication(pid)
-        guard let menuBar = copyValue(application, kAXMenuBarAttribute) else {
-            throw ComputerUseError.stateUnavailable("The app has no menu bar.")
+        var menuBar: CFTypeRef?
+        let read = AXUIElementCopyAttributeValue(application, kAXMenuBarAttribute as CFString, &menuBar)
+        guard read == .success, let menuBar else {
+            throw read == .cannotComplete ? appNotAnswering : ComputerUseError.stateUnavailable("The app has no menu bar.")
         }
         var item = menuBar as! AXUIElement
         for (depth, title) in path.enumerated() {
@@ -295,6 +312,7 @@ enum SkyKeyboardDispatcher {
             guard let next = firstMenuItem(in: menu, levels: 2, where: {
                 isMenuItem($0) && menuTitleMatches(title, copyValue($0, kAXTitleAttribute) as? String)
             }) else {
+                try requireAnswering(menu)
                 let place = depth == 0 ? "the menu bar" : path[..<depth].joined(separator: " > ")
                 throw ComputerUseError.message(
                     "No menu item '\(title)' in \(place). Items: \(menuItemTitles(in: menu).joined(separator: ", "))"
@@ -318,11 +336,23 @@ enum SkyKeyboardDispatcher {
         }
 
         try requireUsableComputerUseSession()
-        let result = AXUIElementPerformAction(item, kAXPressAction as CFString)
-        guard result == .success else {
-            throw ComputerUseError.message("Could not press \(joined) (AXError \(result.rawValue)).")
+        if let error = menuPressError(AXUIElementPerformAction(item, kAXPressAction as CFString), path: joined) {
+            throw error
         }
         Thread.sleep(forTimeInterval: 0.1)
+    }
+
+    /// A busy app answers reads with kAXErrorCannotComplete, which would otherwise read as a
+    /// missing menu bar or item.
+    private static let appNotAnswering = ComputerUseError.stateUnavailable(
+        "The app did not answer accessibility in time (it may be busy or showing a dialog), so nothing was pressed. Try again once it responds."
+    )
+
+    private static func requireAnswering(_ menu: AXUIElement) throws {
+        var children: CFTypeRef?
+        if AXUIElementCopyAttributeValue(menu, kAXChildrenAttribute as CFString, &children) == .cannotComplete {
+            throw appNotAnswering
+        }
     }
 
     private static func isMenuItem(_ element: AXUIElement) -> Bool {
