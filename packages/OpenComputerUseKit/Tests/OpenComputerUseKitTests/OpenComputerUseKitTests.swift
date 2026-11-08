@@ -2157,6 +2157,18 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(hold["maximum"] as? Int, 5000)
     }
 
+    func testKeyPressEventsAreAllMadeBeforeAnyIsPosted() throws {
+        // The releases exist before the first press goes out, so a held key is always released.
+        let parsed = try KeyPressParser.parse("cmd+shift+b")
+        let events = try InputSimulation.keyPressEvents(for: parsed)
+        let codes = { (list: [CGEvent]) in list.map { $0.getIntegerValueField(.keyboardEventKeycode) } }
+        let keys = (parsed.modifiers.map(\.keyCode) + [parsed.keyCode]).map(Int64.init)
+        XCTAssertEqual(codes(events.presses), keys)
+        XCTAssertEqual(codes(events.releases), keys.reversed())
+        XCTAssertEqual(events.presses.map(\.flags), [[.maskCommand], [.maskCommand, .maskShift], [.maskCommand, .maskShift]])
+        XCTAssertEqual(events.releases.map(\.flags), [[.maskCommand, .maskShift], [.maskCommand, .maskShift], [.maskCommand]])
+    }
+
     func testSkyLightRuntimeSPIProbeCanStampEventWithoutPosting() throws {
         let spi = SkyLightSPI.shared
         guard spi.capability.isAvailable else {

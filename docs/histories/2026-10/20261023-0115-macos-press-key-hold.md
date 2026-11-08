@@ -14,6 +14,7 @@
 **Key Actions:**
 - **[schema 与校验]**: `press_key` 新增可选整数 `hold_ms`（`minimum` 1、`maximum` 5000）。dispatcher 在 `press_key` 分支开头校验，非 1–5000 的整数（含小数、字符串、布尔、null）统一返回 `hold_ms must be an integer from 1 to 5000`，与 #106 相同；省略时调用与之前完全一致。
 - **[auto]**: `InputSimulation.pressKey` 在 `postToPid` 的 key down 与 key up 之间等待 `hold_ms`；修饰键在 key down 之前按下、key up 之后释放，整个按住期间保持按下。
+- **[释放]**: 2026-11-08 起，`InputSimulation.keyPressEvents` 在发出第一个事件前建好全部按下与释放事件；建不出来时什么都不发，按下与释放之间没有可能失败的步骤，按住多久都会释放。此前修饰键按下后若后续事件创建失败，修饰键会留在按下状态。
 - **[sky_key]**: 按键事件路径把同一个按住放进 `SkyKeyboardDispatcher.deliver`，目标窗口的 synthetic key 状态覆盖整个按住时长，之后照常恢复。带 `cmd` 的单字符组合键在 sky_key 下是菜单 `AXPress`，没有时长，带 `hold_ms` 时在改动目标焦点前直接拒绝，并提示改用 `auto`。
 - **[fixture]**: fixture app 走 `FixtureBridge`，无法按住，带 `hold_ms` 时明确拒绝。
 - **[布尔参数]**: JSON `true` 会被 Swift 桥接成 Int 1，原 `positiveInt` 的布尔检查排在 Int 之后从未生效。把检查提到最前，`hold_ms: true` 与 Linux 一样被拒绝；同一 helper 上的 `max_text` 等参数也不再把 `true` 当成 1。
@@ -36,5 +37,6 @@
 
 ### ✅ Validation
 - Swift 383 项测试通过（7 项跳过），`make check-docs` 通过。
+- 2026-11-08 rebase 到 main 后：Swift 455 项测试通过（8 项跳过）。
 - 真机，用一个只记录按键事件及接收时间的临时 AppKit 窗口：不带 `hold_ms` 时 key down / key up 在同一毫秒；`hold_ms: 1000` 时 key up 晚 1006 ms；`shift+b` 配 `hold_ms: 300` 时 shift 先于 b 按下，b 按住 309 ms，之后才释放 shift；sky_key 下 `c` 配 `hold_ms: 500` 按住 497 ms，窗口位于终端之后，前台 app 不变。`hold_ms: 0` 与 sky_key 的 `cmd+s` 配 `hold_ms` 均被拒绝，没有任何按键送达。
 - TextEdit 新文档中 `a` 按住 1000 ms 只得到一个 `a`：`postToPid` 事件不经过系统的按键重复，不会产生 auto-repeat（X11 上长按可能重复，见 #106）。测试后关闭文档、不保存。
