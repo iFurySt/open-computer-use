@@ -697,7 +697,7 @@ public final class ComputerUseService {
         if windowPlacement == .agentDisplay { try VirtualDisplayConfig.current.requireEnabled() }
         try observation.validate()
         if let settleMs {
-            let note = try waitForWindowToSettle(app: query, quiet: settleMs, maxNodes: treeLimits.maxNodeCount)
+            let note = try waitForWindowToSettle(app: query, timeoutMs: settleMs)
             let result = try getAppState(app: query, textLimit: textLimit, treeLimits: treeLimits,
                                          windowPlacement: windowPlacement, observation: observation)
             // After the state text and before the screenshot, so primaryText stays the state.
@@ -740,23 +740,21 @@ public final class ComputerUseService {
         return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation), style: .fullState)
     }
 
-    /// Waits until the app's window has looked the same to accessibility (roles, text, values,
-    /// layout) for `quiet` ms, at most 5 s. Read-only: no activation, no capture.
-    private func waitForWindowToSettle(app query: String, quiet: Int, maxNodes: Int) throws -> String {
-        let quiet = min(quiet, 2000)
+    /// Waits while the app's window shows a busy sign, for at most `timeoutMs` (capped at 5 s).
+    /// Read-only: no activation, no capture.
+    private func waitForWindowToSettle(app query: String, timeoutMs: Int) throws -> String {
         try requireUsableComputerUseSession()
         let start = ProcessInfo.processInfo.systemUptime
         guard let context = try? SnapshotBuilder.resolveTargetWindow(for: try AppDiscovery.resolve(query)) else {
             return "Settle skipped: no window to watch yet."
         }
-        let walk = TargetedAX.Criteria(text: nil, exact: false, role: nil, limit: 1, maxNodes: maxNodes, digestOnly: true)
-        let settled = try waitForStableDigest(quiet: TimeInterval(quiet) / 1000, timeout: 5) {
-            try TimingLog.measure("get_app_state.settle_digest") { try SnapshotBuilder.targetedSearch(walk, in: context).digest }
+        let settled = WindowSettle.wait(timeout: TimeInterval(min(timeoutMs, 5000)) / 1000) {
+            TimingLog.measure("get_app_state.settle_scan") { WindowSettle.busy(from: context.windowElement, read: WindowSettle.readAll) }
         }
         let waited = Int((ProcessInfo.processInfo.systemUptime - start) * 1000)
         return settled
-            ? "Settled: the window was unchanged for \(quiet) ms (waited \(waited) ms)."
-            : "Not settled: the window was still changing after \(waited) ms; this is its state at that point."
+            ? "Settled: the window shows no busy sign (waited \(waited) ms)."
+            : "Not settled: the window still showed a busy sign after \(waited) ms; this is its state at that point."
     }
 
     public func click(

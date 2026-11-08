@@ -39,7 +39,7 @@ The runtime exposes an asynchronous app-bound API:
 - \`await cua.listApps({ emit? })\`: list current apps.
 - \`await cua.getApp(nameOrBundleID, { initialState? })\`: bind an app; initialState defaults to true. Use false for a lightweight binding before query.
 - \`await app.query({ text?, role?, exact?, limit?, maxNodes?, windowId? })\`: macOS-only AX lookup; returns matches and truncation metadata, with indexes usable in this native session.
-- \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement?, settleMs? })\`: settleMs (macOS) first waits until the window has been unchanged that long (at most 5 s) instead of a fixed sleep after an action.
+- \`await app.getAXState({ emit?, textLimit?, maxTreeNodes?, maxTreeDepth?, windowPlacement?, settleMs? })\`: settleMs (macOS) first waits up to that long (at most 5000 ms) while the window shows a busy sign, instead of a fixed sleep after an action.
 - \`await app.getScreenshot({ emit? })\`
 - \`await app.getAXStateAndScreenshot(options?)\`
 - Optional observation on macOS, Windows and Linux: \`app.getScreenshot({ includeAX: false })\` skips AX/focus/selection and invalidates prior element indexes; refresh AX before element actions. \`app.getAXState({ includeScreenshot: false })\` skips capture; screenshot-coordinate actions require a fresh screenshot. Omitted options retain full native observation.
