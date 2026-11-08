@@ -312,6 +312,10 @@ windows. It does not need `get_app_state` first; an app with no window still has
   pressing it would open the menu on screen.
 - A disabled item is not pressed and returns an error. A hidden app has no key window, so
   commands that act on one, such as `File > Close`, are disabled there.
+- An app busy with a long command or a modal dialog does not answer in time. If that happens
+  before the press, the error says nothing was pressed. If it happens on the press itself, the
+  error says the command may still run: the app runs a queued press once it gets to it, so
+  read the app before pressing again.
 - The command runs as if chosen from the menu. Ask before commands that close, quit, delete
   or send.
 
