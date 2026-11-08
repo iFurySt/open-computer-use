@@ -195,7 +195,7 @@ open-computer-use snapshot --max-tree-nodes 3000 --max-tree-depth 96 "Google Chr
 
 `click_method` is optional. Omitting it uses `auto`, which preserves the platform's existing semantic-first behavior. Explicit methods never fall back to a different implementation:
 
-- `accessibility`: only invoke the element's accessibility action and require `element_index`. On macOS a table or outline row that has no press action (and the cell or text inside it) is selected by setting its `AXSelected`, as `auto` does before it falls back to a mouse event.
+- `accessibility`: only invoke the element's accessibility action and require `element_index`. On macOS a table or outline row that has no press action (and the cell or text inside it) is selected by setting its `AXSelected`, as `auto` does before it falls back to a mouse event. A text field in such a row is not confirmed, which would start editing the cell instead of selecting the row.
 - `app_post`: bypass accessibility and post a mouse event directly to the target app/window without moving the system pointer. Supported on macOS and Windows.
 - `sky_click`: use the macOS private SkyLight background-window path with target-only synthetic focus and a Chromium primer click. It supports left single/double click on a current, on-screen window in the same Space and does not move the system pointer, deactivate the foreground app, change its key/first-responder state, or raise the target window. Its action-result snapshot refresh is read-only. Supported on macOS only.
 - `global`: bypass accessibility and use the desktop's global pointer path. Supported on macOS, Windows and Linux, and requires `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` because it may move the real pointer or change foreground focus.

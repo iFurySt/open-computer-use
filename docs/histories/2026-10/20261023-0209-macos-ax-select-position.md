@@ -46,3 +46,9 @@
 - set_position：自由片段移到请求的截图点，探针记录的落点与请求一致，无附注；吸附片段返回成功并注明 `x=620, y=364`（请求 626, 374）；同时给尺寸时先变为 150×60 pt 再定位；窗口（元素 0）移动 (40, 20) px 即 (20, 10) pt；忽略写入的片段 0.6 s 后报错 `is still at ...`；行（位置不可设置）写前即拒绝；`include_screenshot=false` 后与坐标点击一样拒绝。main 上该工具为 `unsupportedTool("set_position")`。
 - 发现：AppKit 以动画移动窗口，未等待时下一次状态的窗口坐标是旧的（错误信息中的坐标偏了 (40, 20) px）；加 0.3 s 等待后正确。
 - 另一个与本改动无关的现有问题：点击路径的命中测试把窗口点当作截图像素再换算（`hitTestElement`），2x 截图下命中位置减半。探针里 `auto` 点 Sound 1 时命中到表头按钮并按下了它，行未选中；单独处理，不在本次范围。
+
+### Update 2026-11-08: 可编辑单元格的行
+- 复现：view-based `NSTableView` 的单元格是可编辑的 `NSTextField` 时，点该行（`accessibility` 或 `auto`）在 origin/main 和本 PR 原版上都走到子孙候选的文本框 `AXConfirm`：单元格进入编辑，行没有被选中，工具仍返回成功。真实点击是选中这一行。
+- 改动：`performPreferredClick` 对祖先里有 `AXRow` 的元素不再用 `AXConfirm`，点击落到本 PR 的行选择上。
+- 验证：新增 `RowClickSelectionTests`（测试进程里的真实表格，`clickMethod: .accessibility`）：改动前选中行为 0 且开始编辑，改动后选中第 2 行且未编辑。临时探针 app（accessory，窗口在所有窗口之后）上 cell-based / view-based / 可编辑 / SwiftUI 四种表格点行都选中对应行，前台应用不变。`swift test` 456 项，8 项跳过，0 失败；Node 56 项通过。
+- 探针里所有表格的行自己的 `AXSelected` 都可写，没有遇到只能通过容器 `AXSelectedRows` 选中的行，所以没有加容器写入。
