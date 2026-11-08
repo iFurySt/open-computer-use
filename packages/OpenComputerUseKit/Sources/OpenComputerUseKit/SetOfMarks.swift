@@ -67,7 +67,7 @@ func rescaledScreenshotMarks(_ marks: [ScreenshotMark], from region: CGRect, to 
 func drawingScreenshotMarks(_ marks: [ScreenshotMark], on image: CGImage) -> CGImage? {
     let picture = CGRect(x: 0, y: 0, width: image.width, height: image.height)
     guard let context = CGContext(data: nil, width: image.width, height: image.height, bitsPerComponent: 8, bytesPerRow: 0,
-                                  space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                                  space: pictureColorSpace, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
     else { return nil }
     context.draw(image, in: picture)
     // From here the origin is the top-left corner, as in the boxes.

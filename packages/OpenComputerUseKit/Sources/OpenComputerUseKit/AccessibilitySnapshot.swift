@@ -771,6 +771,13 @@ func boundedScreenshotData(for image: CGImage, config: ImageCaptureConfig) -> Da
     encodeScreenshot(for: image, config: config).data
 }
 
+/// Every picture a tool returns holds sRGB numbers and is tagged sRGB. A capture comes in the
+/// display's space: on a Display P3 screen, sRGB red 230,30,30 was returned as 211,55,46, tagged
+/// Display P3 in a PNG and untagged in a JPEG, so a reader that ignores the profile (as a model's
+/// vision input mostly does) saw other colours. Drawing into an sRGB context converts the pixels;
+/// a resize does it in the draw it makes anyway.
+let pictureColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+
 /// `marks` are in `image`'s pixels; they are drawn after any resize, at the delivered size.
 func encodeScreenshot(for image: CGImage, config: ImageCaptureConfig, marks: [ScreenshotMark] = []) -> ScreenshotEncodingResult {
     func omitted(_ reason: String) -> ScreenshotEncodingResult { .init(data: nil, note: "Screenshot omitted: " + reason) }
@@ -802,7 +809,7 @@ func encodeScreenshot(for image: CGImage, config: ImageCaptureConfig, marks: [Sc
     if isTiny(width, height) {
         return omitted("resizing would fall below discardBelowPixelCount \(config.discardBelowPixelCount)")
     }
-    guard let resized = scale == 1 ? image : resizedCGImage(image, scale: scale),
+    guard let resized = scale == 1 && image.colorSpace?.name == CGColorSpace.sRGB ? image : resizedCGImage(image, scale: scale),
           let marked = marks.isEmpty ? resized : drawingScreenshotMarks(
               rescaledScreenshotMarks(marks, from: CGRect(x: 0, y: 0, width: image.width, height: image.height),
                                       to: CGSize(width: resized.width, height: resized.height)), on: resized),
@@ -818,7 +825,6 @@ private func pngData(for image: CGImage) -> Data? {
 private func resizedCGImage(_ image: CGImage, scale: CGFloat) -> CGImage? {
     let width = max(1, Int((CGFloat(image.width) * scale).rounded(.down)))
     let height = max(1, Int((CGFloat(image.height) * scale).rounded(.down)))
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
     let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
 
     guard let context = CGContext(
@@ -827,7 +833,7 @@ private func resizedCGImage(_ image: CGImage, scale: CGFloat) -> CGImage? {
         height: height,
         bitsPerComponent: 8,
         bytesPerRow: 0,
-        space: colorSpace,
+        space: pictureColorSpace,
         bitmapInfo: bitmapInfo
     ) else {
         return nil
