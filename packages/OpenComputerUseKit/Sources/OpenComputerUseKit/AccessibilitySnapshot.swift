@@ -15,6 +15,8 @@ final class ElementRecord {
     let rawActions: [String]
     let prettyActions: [String]
     let isSyntheticText: Bool
+    /// What the snapshot showed at this index, checked before any action on it; nil where no check applies.
+    let identity: ElementIdentity?
 
     init(
         index: Int,
@@ -26,7 +28,8 @@ final class ElementRecord {
         value: String? = nil,
         rawActions: [String],
         prettyActions: [String],
-        isSyntheticText: Bool = false
+        isSyntheticText: Bool = false,
+        identity: ElementIdentity? = nil
     ) {
         self.index = index
         self.identifier = identifier
@@ -38,6 +41,7 @@ final class ElementRecord {
         self.rawActions = rawActions
         self.prettyActions = prettyActions
         self.isSyntheticText = isSyntheticText
+        self.identity = identity
     }
 }
 
@@ -1113,7 +1117,14 @@ private struct TreeRenderer {
             localFrame: localFrame,
             role: role,
             rawActions: actions,
-            prettyActions: prettyActions
+            prettyActions: prettyActions,
+            identity: ElementIdentity(
+                role: stringValue(of: root, attribute: kAXRoleAttribute), subrole: subrole,
+                title: stringValue(of: root, attribute: kAXTitleAttribute),
+                description: stringValue(of: root, attribute: kAXDescriptionAttribute),
+                identifier: stringValue(of: root, attribute: kAXIdentifierAttribute),
+                value: ElementIdentity.valueIsName.contains(role) ? stringValue(of: root, attribute: kAXValueAttribute) : nil
+            )
         )
         records[index] = record
 
