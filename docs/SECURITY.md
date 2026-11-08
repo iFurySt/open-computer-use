@@ -15,7 +15,7 @@
 - Windows runtime 对隐藏、最小化、DWM cloaked、离屏或退化小窗口 fail closed：保留可读的 UI Automation tree，但不返回 image block，也不允许在缺少有效截图时执行 coordinate click / drag；不会用放大、补边或占位图伪造可用截图。
 - Linux runtime 的 screenshot 是 best-effort；如果 GNOME Wayland 返回黑图，bridge 会省略 image block，避免把无效截图误当成真实画面。
 - fixture app 的合成状态只写到本地临时 JSON 文件，目的是支撑 deterministic smoke test；当前写入走原子替换，减少测试期间的读写竞争。
-- macOS `read_clipboard` 只在显式调用时返回剪贴板纯文本，不缓存、不持久化。带 nspasteboard.org concealed / transient / auto-generated 标记的条目（密码管理器复制的密码、一次性验证码等）直接拒绝，且不读取其内容；单次最多返回 100000 UTF-16 code units。系统对通用剪贴板的程序化读取可能先询问用户，用户在系统设置中拒绝时如实报错。`write_clipboard` 会覆盖用户已复制的内容，工具说明要求仅在用户要求时使用。两者与其他 GUI 动作一样受会话与 Locked Use 租约检查约束，锁屏且无租约时拒绝。
+- macOS `read_clipboard` 只在显式调用时返回剪贴板纯文本，不缓存、不持久化。带 nspasteboard.org concealed / transient / auto-generated 标记的条目（密码管理器复制的密码、一次性验证码等）直接拒绝，且不读取其内容；单次最多返回 100000 UTF-16 code units。系统对通用剪贴板的程序化读取可能先询问用户，用户在系统设置中拒绝时在读取任何内容前报权限错误。`write_clipboard` 会覆盖用户已复制的内容，工具说明要求仅在用户要求时使用。两者与其他 GUI 动作一样受会话与 Locked Use 租约检查约束，锁屏且无租约时拒绝。
 - 当前仓库不引入第三方服务，也不上传截图、AX tree 或输入内容。
 
 ## 授权与最小权限

@@ -648,11 +648,11 @@ let clipboardTextLimit = 100_000
 /// whose text the accessibility tree does not hold). The markers are checked before any text is
 /// requested, so a marked item's contents are never read.
 func clipboardText(in pasteboard: NSPasteboard) throws -> String {
+    if #available(macOS 15.4, *), pasteboard.accessBehavior == .alwaysDeny {
+        throw ComputerUseError.permissionDenied("Clipboard reads are denied for Open Computer Use. Set it to Allow in System Settings > Privacy & Security > Paste from Other Apps, then read again; nothing was read.")
+    }
     if pasteboard.types?.contains(where: { withheldPasteboardTypes.contains($0.rawValue) }) == true {
         throw ComputerUseError.stateUnavailable("The clipboard item is marked concealed, transient or auto-generated, so it is not returned.")
-    }
-    if #available(macOS 15.4, *), pasteboard.accessBehavior == .alwaysDeny {
-        throw ComputerUseError.stateUnavailable("Clipboard access for Open Computer Use is set to deny in System Settings.")
     }
     guard let text = pasteboard.string(forType: .string), !text.isEmpty else {
         throw ComputerUseError.stateUnavailable("The clipboard holds no text.")
@@ -722,9 +722,13 @@ public final class ComputerUseService {
 
     public func writeClipboard(text: String, pasteboard: NSPasteboard = .general) throws -> ToolCallResult {
         try requireUsableComputerUseSession()
-        pasteboard.clearContents()
+        let changeCount = pasteboard.clearContents()
         guard pasteboard.setString(text, forType: .string) else {
             throw ComputerUseError.stateUnavailable("The clipboard did not accept the text.")
+        }
+        // Another copy landing during the write leaves its item, not this text.
+        guard pasteboard.changeCount == changeCount, pasteboard.string(forType: .string) == text else {
+            throw ComputerUseError.stateUnavailable("The clipboard does not hold the text after the write; another app may have copied. Read it before writing again.")
         }
         return .text("ok")
     }

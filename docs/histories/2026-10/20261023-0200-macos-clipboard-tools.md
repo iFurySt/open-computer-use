@@ -49,3 +49,8 @@
 - 单元测试全部使用私有命名 pasteboard（`NSPasteboard(name:)`），不读写用户的通用剪贴板：纯文本与 Unicode 读回；三种标记逐一拒绝且错误中不含条目文字；多 item 中任一 item 带标记即拒绝；非文本 / 空文本报错；恰好 100000 与 100001 个 code unit 的边界；写入覆盖带标记的条目后读回。
 - 撤销租约的 validator 下，两个工具都在访问 pasteboard 前抛出，私有 pasteboard 内容不变。去掉过滤或会话检查后，对应测试失败。
 - 工具数量 / 名称、描述与 annotation、MCP instructions 测试通过；Node REPL 32 项测试通过（Persistent / Worker 两种 session）。
+
+### Update 2026-11-08
+- `write_clipboard` 写完后核对：`clearContents()` 返回的 change count 未变且读回的文字等于写入值才返回 ok，否则报错让调用方先读再写。私有 pasteboard 上另起进程不停复制（osascript JXA 交替写入），10 秒内：改动前 ok 56710 次，其中 9344 次（16.5%）返回时剪贴板已不是写入的文字；改动后 ok 46229 次，其中 1148 次（2.5%，核对之后才被覆盖），13828 次如实报错。
+- 系统设置拒绝剪贴板访问时，`read_clipboard` 在检查类型之前返回 `permissionDenied`，并指出 Privacy & Security > Paste from Other Apps。
+- 同一探针下也试了在类型检查与读取外夹 change count：不能减少带标记条目文字的泄漏（约每百万次读取 3–5 次，无论有没有），因为写入方在一次 clear 之后先声明文字、后声明标记，读取方看到的是同一个 change count，所以没有加。
