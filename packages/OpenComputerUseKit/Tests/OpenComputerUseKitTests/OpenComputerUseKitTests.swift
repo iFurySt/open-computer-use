@@ -2166,6 +2166,40 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testClickChainTriesAnotherWayOnlyWhenTheAppRanNothing() throws {
+        func ran(_ result: AXError, _ action: String = kAXPressAction) -> String {
+            do { return try clickActionRan(result, action: action) ? "ran" : "refused" } catch { return "stop" }
+        }
+        func set(_ result: AXError) -> String {
+            do { return try clickAttributeWasSet(result, attribute: kAXSelectedChildrenAttribute) ? "set" : "refused" } catch { return "stop" }
+        }
+
+        XCTAssertEqual(ran(.success), "ran")
+        for refused: AXError in [.actionUnsupported, .illegalArgument, .notImplemented, .invalidUIElement] {
+            XCTAssertEqual(ran(refused), "refused", "\(refused.rawValue)")
+        }
+        // An app busy past the AX timeout answers cannotComplete while the press runs.
+        for mayHaveActed: AXError in [.failure, .cannotComplete, .attributeUnsupported, .noValue, .apiDisabled] {
+            XCTAssertEqual(ran(mayHaveActed), "stop", "\(mayHaveActed.rawValue)")
+        }
+        XCTAssertEqual(ran(.attributeUnsupported, "AXOpen"), "ran")
+
+        XCTAssertEqual(set(.success), "set")
+        for refused: AXError in [.attributeUnsupported, .actionUnsupported, .illegalArgument, .noValue, .notImplemented, .invalidUIElement] {
+            XCTAssertEqual(set(refused), "refused", "\(refused.rawValue)")
+        }
+        for mayHaveApplied: AXError in [.failure, .cannotComplete] {
+            XCTAssertEqual(set(mayHaveApplied), "stop", "\(mayHaveApplied.rawValue)")
+        }
+
+        XCTAssertThrowsError(try clickActionRan(.cannotComplete, action: kAXPressAction)) { error in
+            XCTAssertEqual(
+                (error as? ComputerUseError)?.errorDescription,
+                "click: AXPress went out and the app did not answer in time; it may have acted, so no other click method was tried. Read the app state before retrying; a repeat could act twice."
+            )
+        }
+    }
+
     func testMakeVisualCursorTargetUsesWindowRelativeElementCenter() {
         let screenMappings = [
             VisualCursorScreenMapping(
