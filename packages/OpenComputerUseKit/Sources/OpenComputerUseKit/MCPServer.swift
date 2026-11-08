@@ -33,15 +33,13 @@ public final class StdioMCPServer {
 
     public func run() throws {
         defer { endSession() }
-        while let line = readLine(strippingNewline: true) {
-            guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
-
+        let requests = MCPStdinRequests()
+        while let request = requests.next() {
             // This thread's autorelease pool never drains on its own: each response's encoded
             // bytes (a screenshot's base64 among them) stayed alive for the whole session.
             autoreleasepool {
-                if let response = handle(line: line) {
+                let response = handle(line: request.line)
+                if requests.finish(), let response {
                     FileHandle.standardOutput.write((response + "\n").data(using: .utf8)!)
                 }
             }
@@ -55,7 +53,13 @@ public final class StdioMCPServer {
             }
 
             let method = payload["method"] as? String
-            let id = payload["id"]
+            // A message without an id is a notification, which JSON-RPC never answers.
+            guard let id = payload["id"] else {
+                if method == "notifications/turn-ended" {
+                    endSession()
+                }
+                return nil
+            }
             let params = payload["params"] as? [String: Any] ?? [:]
 
             switch method {
@@ -76,11 +80,6 @@ public final class StdioMCPServer {
                         "instructions": computerUseServerInstructions,
                     ]
                 )
-            case "notifications/initialized":
-                return nil
-            case "notifications/turn-ended":
-                endSession()
-                return nil
             case "ping":
                 return try encodeJSONRPCResult(id: id, result: [:])
             case "tools/list":
@@ -166,5 +165,81 @@ public final class StdioMCPServer {
         }
 
         return text
+    }
+}
+
+/// The requests of a stdio MCP session. Lines are read on their own thread, so a `notifications/cancelled` is seen while
+/// a request runs; the caller still handles requests one at a time, in order. A cancelled request that hasn't started
+/// never runs. One that is running finishes (an action can't be stopped halfway), but its answer is dropped, as MCP
+/// asks of a server.
+public final class MCPStdinRequests: @unchecked Sendable {
+    public struct Request {
+        public let line: String
+        let key: String?
+    }
+
+    private let condition = NSCondition()
+    private var waiting: [Request] = []
+    private var running: String?
+    private var runningCancelled = false
+    private var ended = false
+
+    public init(readLine: @escaping @Sendable () -> String? = { Swift.readLine(strippingNewline: true) }) {
+        Thread { [self] in
+            while let line = readLine() {
+                // No run loop drains this thread's autorelease pool either.
+                if !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { autoreleasepool { add(line) } }
+            }
+            condition.lock()
+            ended = true
+            condition.broadcast()
+            condition.unlock()
+        }.start()
+    }
+
+    /// The next request in order, waiting for one; nil once the input has ended and every request was handled.
+    public func next() -> Request? {
+        condition.lock()
+        defer { condition.unlock() }
+        while waiting.isEmpty && !ended { condition.wait() }
+        guard !waiting.isEmpty else { return nil }
+        let request = waiting.removeFirst()
+        running = request.key
+        runningCancelled = false
+        return request
+    }
+
+    /// Ends the request from `next`; false when it was cancelled while it ran, so its answer is dropped.
+    public func finish() -> Bool {
+        condition.lock()
+        defer { condition.unlock() }
+        running = nil
+        return !runningCancelled
+    }
+
+    private func add(_ line: String) {
+        let payload = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any]
+        condition.lock()
+        defer { condition.unlock() }
+        if payload?["method"] as? String == "notifications/cancelled" {
+            let key = Self.key((payload?["params"] as? [String: Any])?["requestId"])
+            if let key, let index = waiting.firstIndex(where: { $0.key == key }) {
+                waiting.remove(at: index)
+            } else if let key, key == running {
+                runningCancelled = true
+            }
+            return
+        }
+        waiting.append(Request(line: line, key: Self.key(payload?["id"])))
+        condition.signal()
+    }
+
+    /// A JSON-RPC id as a key: 7 and "7" are different ids.
+    private static func key(_ id: Any?) -> String? {
+        switch id {
+        case let text as String: "s:" + text
+        case let number as NSNumber: "n:" + number.stringValue
+        default: nil
+        }
     }
 }
