@@ -217,10 +217,7 @@ enum SnapshotBuilder {
         let recoveryPolicy = windowID == nil ? recoveryPolicy : .readOnly
         var focusedWindow: AXUIElement?
         if let windowID {
-            guard let named = windowElement(for: windowID, appElement: appElement) else {
-                throw ComputerUseError.stateUnavailable("window_id \(windowID) is not a current window of \(app.bundleIdentifier ?? app.name). Call list_windows for its current windows.")
-            }
-            focusedWindow = named
+            focusedWindow = try namedWindow(windowID, app: app, appElement: appElement)
         } else {
             focusedWindow = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
         }
@@ -242,7 +239,7 @@ enum SnapshotBuilder {
         // the tree, the capture and every element frame refer to the same window;
         // the title/area heuristics remain the fallback.
         var windowCapture = TimingLog.measure("snapshot.window_capture") {
-            WindowCapture.resolve(for: app.pid, exactWindowID: SkyLightSPI.shared.windowID(for: rootWindow), capture: observation.includeScreenshot)
+            WindowCapture.resolve(for: app.pid, exactWindowID: windowID ?? SkyLightSPI.shared.windowID(for: rootWindow), capture: observation.includeScreenshot)
                 ?? (windowID != nil ? nil : WindowCapture.resolve(for: app.pid, titleHint: windowTitle, capture: observation.includeScreenshot))
         }
         if windowCapture == nil,
@@ -2465,10 +2462,8 @@ extension SnapshotBuilder {
         let focusedApplication = copyElement(systemWide, attribute: kAXFocusedApplicationAttribute)
 
         let rootWindow: AXUIElement
-        if let windowID, let named = windowElement(for: windowID, appElement: appElement) {
-            rootWindow = named
-        } else if let windowID {
-            throw ComputerUseError.stateUnavailable("window_id \(windowID) is not a current window of \(app.bundleIdentifier ?? app.name).")
+        if let windowID {
+            rootWindow = try namedWindow(windowID, app: app, appElement: appElement)
         } else if let focused = preferredFocusedWindow(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide) {
             rootWindow = focused
         } else {
@@ -2476,7 +2471,7 @@ extension SnapshotBuilder {
         }
 
         AXUIElementSetMessagingTimeout(rootWindow, 0.1)
-        guard let axWindowID = SkyLightSPI.shared.windowID(for: rootWindow),
+        guard let axWindowID = windowID ?? SkyLightSPI.shared.windowID(for: rootWindow),
               let meta = WindowCapture.resolve(for: app.pid, exactWindowID: axWindowID, capture: false) else {
             throw ComputerUseError.stateUnavailable("query could not bind this AX window to its current window geometry")
         }
@@ -2563,6 +2558,50 @@ extension SnapshotBuilder {
             current = parent
         }
         return false
+    }
+
+    /// The AX window of the window a caller named by window_id, exactly: by its window number, else the one AX
+    /// window of the app with its frame (within 2 pt) and, when the window server gives one, its title. Never the
+    /// focused or main window in its place: a gone window, another app's window, or one with no AX window that
+    /// is it are errors.
+    static func namedWindow(_ windowID: CGWindowID, app: RunningAppDescriptor, appElement: AXUIElement) throws -> AXUIElement {
+        if let window = windowElement(for: windowID, appElement: appElement) { return window }
+        let name = app.bundleIdentifier ?? app.name
+        guard let info = windowInfo(windowID) else {
+            throw ComputerUseError.stateUnavailable("window_id \(windowID) is gone. Call list_windows for \(name)'s current windows.")
+        }
+        guard (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value == app.pid else {
+            throw ComputerUseError.invalidArguments("window_id \(windowID) is not a window of \(name)")
+        }
+        let bounds = (info[kCGWindowBounds as String] as? NSDictionary).flatMap { CGRect(dictionaryRepresentation: $0) }
+        let title = (info[kCGWindowName as String] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        let windows = copyArray(appElement, attribute: kAXWindowsAttribute) ?? []
+        let candidates = windows.map { window in
+            (frame: axFrame(position: attributeValue(of: window, attribute: kAXPositionAttribute),
+                            size: attributeValue(of: window, attribute: kAXSizeAttribute)),
+             title: stringValue(of: window, attribute: kAXTitleAttribute))
+        }
+        guard let bounds, let index = uniqueWindowMatch(bounds: bounds, title: title, candidates: candidates) else {
+            throw ComputerUseError.stateUnavailable("window_id \(windowID) of \(name) has no accessibility window that is it.")
+        }
+        return windows[index]
+    }
+
+    /// The index of the one candidate whose frame is within 2 pt of `bounds` and, when `title` is given, has
+    /// that title; nil when none or several do.
+    static func uniqueWindowMatch(bounds: CGRect, title: String?, candidates: [(frame: CGRect?, title: String?)]) -> Int? {
+        let matches = candidates.indices.filter { index in
+            guard let frame = candidates[index].frame,
+                  abs(frame.minX - bounds.minX) <= 2, abs(frame.minY - bounds.minY) <= 2,
+                  abs(frame.width - bounds.width) <= 2, abs(frame.height - bounds.height) <= 2 else { return false }
+            return title == nil || candidates[index].title == title
+        }
+        return matches.count == 1 ? matches[0] : nil
+    }
+
+    /// The window server's description of one window, nil once it is gone.
+    static func windowInfo(_ windowID: CGWindowID) -> [String: Any]? {
+        (CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]])?.first
     }
 
     private static func windowElement(for windowID: CGWindowID, appElement: AXUIElement) -> AXUIElement? {

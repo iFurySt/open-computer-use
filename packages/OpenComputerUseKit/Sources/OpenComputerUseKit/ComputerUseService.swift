@@ -1383,11 +1383,15 @@ public final class ComputerUseService {
     }
 
     /// A follow-up read: the window get_app_state bound with window_id, or the app's key window
-    /// when none is bound or the bound one has closed (an action can close it).
+    /// when none is bound or the bound one has closed (an action can close it). A bound window that
+    /// is still there but cannot be read is an error, not the key window's state in its place.
     private func refreshBoundSnapshot(for query: String, recoveryPolicy: SnapshotRecoveryPolicy) throws -> AppSnapshot {
-        if let pid = snapshotsByApp[query.lowercased()]?.app.pid, let windowID = boundWindows[pid],
-           let snapshot = try? refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy, windowID: windowID) {
-            return snapshot
+        if let pid = snapshotsByApp[query.lowercased()]?.app.pid, let windowID = boundWindows[pid] {
+            do {
+                return try refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy, windowID: windowID)
+            } catch where SnapshotBuilder.windowInfo(windowID) == nil {
+                // The bound window closed; read the key window below.
+            }
         }
         return try refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy)
     }

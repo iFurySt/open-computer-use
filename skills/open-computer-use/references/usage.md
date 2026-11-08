@@ -210,7 +210,9 @@ reads running apps and never launches, activates or raises them. `query` takes t
 With `window_id`, the tree, screenshot, focus and selection come from that window, which is not
 activated or raised. Element and coordinate actions then target it, and their read-back stays on it,
 until `get_app_state` is called without `window_id` or the window closes (the read-back then returns
-the key window). An id that is not a current window of the app returns an error. Keyboard input
+the key window). A named window is that window or an error, never the focused or main window in its
+place: a closed window, another app's window, or a window with no accessibility window that is it
+(matched by window number, else by frame within 2 pt and title) each return an error. Keyboard input
 follows the app's keyboard focus: `type_text` refuses when the focused field is in another window,
 and `key_method: "sky_key"` delivers keys to the bound window. A coordinate click on a part of the
 window covered by another window of the same app needs `click_method: "sky_click"`. In JavaScript:
