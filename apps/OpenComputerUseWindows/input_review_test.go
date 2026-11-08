@@ -37,3 +37,22 @@ func TestGlobalClickNeedsImageEvenWhenElementIndexExists(t *testing.T) {
 		t.Fatalf("%#v", result)
 	}
 }
+
+func TestDeliveredActionWithFailedObservationIsNotAnError(t *testing.T) {
+	svc := newService()
+	svc.rememberSnapshot("fixture", &appSnapshot{App: appDescriptor{Name: "fixture", PID: 42}, WindowHandle: 1234, Elements: []elementRecord{{Index: 0}}})
+	svc.runBridge = func(psRequest) (*psResponse, error) {
+		return &psResponse{OK: true, ObservationError: `appNotFound("fixture")`}, nil
+	}
+	result := svc.callTool("click", map[string]any{"app": "fixture", "element_index": "0"})
+	if result.IsError || !strings.Contains(result.Content[0].Text, "click action was delivered") || !strings.Contains(result.Content[0].Text, `appNotFound("fixture")`) {
+		t.Fatalf("delivered click reported as failed or without its observation error: %#v", result)
+	}
+	if svc.currentSnapshot("fixture") != nil || svc.currentSnapshot("42") != nil {
+		t.Fatal("indexes from before the action survived a failed observation")
+	}
+	next := svc.callTool("click", map[string]any{"app": "fixture", "element_index": "0"})
+	if !next.IsError || !strings.Contains(next.Content[0].Text, "Run get_app_state") {
+		t.Fatalf("stale index accepted after a failed observation: %#v", next)
+	}
+}

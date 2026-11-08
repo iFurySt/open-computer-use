@@ -250,6 +250,8 @@ type psResponse struct {
 	Text     string       `json:"text,omitempty"`
 	Error    string       `json:"error,omitempty"`
 	Snapshot *appSnapshot `json:"snapshot,omitempty"`
+	// ObservationError is set when an action was delivered but reading the window afterwards failed.
+	ObservationError string `json:"observationError,omitempty"`
 }
 
 type service struct {
@@ -572,7 +574,7 @@ func (s *service) actionResult(app string, request psRequest) toolCallResult {
 		request.WindowHandle = previous.WindowHandle
 	}
 	snapshot, result := s.refreshSnapshot(app, request)
-	if result.IsError {
+	if result.IsError || snapshot == nil {
 		return result
 	}
 	return snapshot.result()
@@ -589,6 +591,16 @@ func (s *service) refreshSnapshot(app string, request psRequest) (*appSnapshot, 
 	}
 	if !response.OK {
 		return nil, textResult(response.Error, true)
+	}
+	if response.Snapshot == nil && response.ObservationError != "" {
+		// The observed indexes describe a window that changed or closed; the next action has to observe it again.
+		previous := s.currentSnapshot(app)
+		for alias, cached := range s.snapshots {
+			if cached == previous || (previous != nil && cached.App.PID == previous.App.PID) {
+				delete(s.snapshots, alias)
+			}
+		}
+		return nil, textResult("The "+request.Tool+" action was delivered, but reading "+app+" afterwards failed: "+response.ObservationError+"\nRun get_app_state before the next action instead of repeating this one.", false)
 	}
 	if response.Snapshot == nil {
 		return nil, textResult("Windows runtime did not return an app snapshot.", true)
@@ -671,6 +683,9 @@ func runPowerShell(request psRequest) (*psResponse, error) {
 	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, operationPath)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
+		if request.Tool != "list_apps" && request.Tool != "get_app_state" {
+			return nil, errors.New("Windows runtime timed out after 30s; the " + request.Tool + " action may already have been delivered. Run get_app_state before retrying it.")
+		}
 		return nil, errors.New("Windows runtime timed out after 30s")
 	}
 	if err != nil {
