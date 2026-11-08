@@ -16,6 +16,7 @@
 - **zoom**：新增 `zoom: {x, y, width, height}`（窗口比例），按比例裁剪采集图、保留采集分辨率后再走既有编码；快照记录缩放区域，`click` / `drag` 的截图坐标按放大图换算回窗口坐标。需要 `include_screenshot`；越界、非数字或零尺寸在解析应用前拒绝。
 - **图片配置**：标记在缩放之后、编码之前按最终像素绘制，标签大小与图片尺寸无关；格式、`maxLongEdgePixels`、`scaleDownAfterMaxSize`、`discardBelowPixelCount` 照常生效，标记图与未标记图尺寸一致，坐标换算不变。标记图只编码一次。
 - **其他平台与 JS**：Linux / Windows 对 `marks: true` 或 `zoom` 明确返回 not supported；JS REPL 透传 `marks`（严格布尔）与 `zoom`。
+- **sRGB 图片（2026-11-08）**：返回的图片一律是 sRGB 数值并标为 sRGB。Display P3 屏幕上，采集图是 P3 数值：长边不超过 `maxLongEdgePixels` 不缩放时，PNG 标 Display P3、JPEG（实采）不带色彩配置，sRGB 红 230,30,30 被返回为 212,56,45，绿 30,200,60 为 94,197,81（R 偏 64）；不理会配置的读取方（模型视觉输入大多如此）看到的是别的颜色。缩放时原本画进 DeviceRGB 上下文，结果恰好已是 sRGB；WebP 同理。改为 `pictureColorSpace`（sRGB）：缩放在原有的那次绘制里转换，不缩放且不是 sRGB 时按原尺寸重画一次；标记的绘制上下文同样用 sRGB。
 - **测试**：新增 `SetOfMarksTests`（选元素、标签位置互不重叠、上下翻转方向、标记后尺寸不变、缩放区域与坐标换算、参数校验、dispatcher 解析、schema），Node REPL 转发测试，Linux / Windows Go 拒绝测试。
 
 ### 🧠 Design Intent (Why)
@@ -30,6 +31,7 @@
 - `node --test scripts/node-repl/*.test.mjs scripts/tests/*.test.mjs`：50 passed。
 - Windows `go test ./...` 通过；Linux 新增拒绝测试通过，其余 6 个需要 Linux python3 runtime 的测试在 macOS 上与 main 一样失败；两平台 `go vet` 通过。
 - `make check-docs`、`git diff --check` 通过。
+- 2026-11-08 sRGB 更新：`swift test` 462 tests，8 skipped，0 failures；新增 `PictureColorTests`（P3 采集图在 png / jpg / webp、缩放与不缩放下都返回 sRGB 数值并标为 sRGB；修复前不缩放的 png / jpg 失败）。编码耗时（25 次中位）：800×864 不缩放 PNG 3.68 → 4.08 ms、JPEG 1.58 → 1.97 ms（+0.4 ms 重画）；1600×1728 缩放到 1280 时 17.60 / 17.71 ms，无额外开销。实测（不激活的四色探针窗口）：修复前 PNG 标 Display P3、数值为 P3；修复后 PNG、JPEG 与 `zoom` 都标 sRGB，数值与绘制值相差不超过 1。
 - 后台实测见上，未在 Linux / Windows 桌面运行。
 
 ### 📁 Files Modified

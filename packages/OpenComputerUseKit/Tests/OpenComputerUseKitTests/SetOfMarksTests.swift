@@ -159,3 +159,35 @@ final class SetOfMarksTests: XCTestCase {
         XCTAssertEqual(((zoom["properties"] as? [String: [String: Any]])?["width"])?["maximum"] as? Int, 1)
     }
 }
+
+/// A returned picture holds sRGB numbers tagged sRGB, whatever space the capture came in, so a
+/// reader that ignores the profile and one that honours it see the same colours.
+final class PictureColorTests: XCTestCase {
+    /// A flat image of `rgb` in `space`, 32-bit like a window capture.
+    private func flat(_ rgb: [CGFloat], in space: CGColorSpace, width: Int = 64, height: Int = 48) throws -> CGImage {
+        let context = try XCTUnwrap(CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0, space: space,
+                                              bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue))
+        context.setFillColor(CGColor(colorSpace: space, components: rgb.map { $0 / 255 } + [1])!)
+        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        return try XCTUnwrap(context.makeImage())
+    }
+
+    func testADisplayP3CaptureIsReturnedInSRGBNumbersTaggedSRGB() throws {
+        let p3 = try XCTUnwrap(CGColorSpace(name: CGColorSpace.displayP3))
+        // The Display P3 numbers a P3 screen's capture holds for sRGB 230,30,30 / 30,200,60 / 30,60,230.
+        for (captured, wanted) in [([211, 55, 46] as [CGFloat], [230, 30, 30]), ([94, 197, 82], [30, 200, 60]), ([37, 59, 222], [30, 60, 230])] {
+            let capture = try flat(captured, in: p3)
+            for format in ["png", "jpg", "webp"] {
+                for maxDimension: CGFloat in [128, 32] {   // as captured, and resized
+                    let data = try XCTUnwrap(encodeScreenshot(for: capture, config: ImageCaptureConfig(format: format, maxDimension: maxDimension)).data)
+                    let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+                    let image = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+                    var pixel = [Int](repeating: 0, count: 4)
+                    NSBitmapImageRep(cgImage: image).getPixel(&pixel, atX: image.width / 2, y: image.height / 2)
+                    XCTAssertEqual(image.colorSpace?.name, CGColorSpace.sRGB, "\(format) at \(maxDimension)")
+                    XCTAssertTrue(zip(pixel, wanted).allSatisfy { abs($0 - $1) <= 3 }, "\(format) at \(maxDimension): \(pixel.prefix(3)) is not \(wanted)")
+                }
+            }
+        }
+    }
+}
