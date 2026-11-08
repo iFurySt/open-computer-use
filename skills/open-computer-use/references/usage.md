@@ -193,21 +193,22 @@ open-computer-use snapshot --max-tree-nodes 3000 --max-tree-depth 96 "Google Chr
 
 ## Waiting for the Window to Settle (macOS)
 
-`get_app_state` takes `settle_ms`: before reading, it waits until the window's accessibility
-tree (roles, text, values and window-relative layout) has stayed unchanged for that many
-milliseconds, for at most 5 seconds. `settle_ms` is capped at 2000. A window that is already
-still costs about `settle_ms`; one that keeps changing (a video, a ticking clock) returns its
-state after 5 seconds. A text note after the state says which happened and how long it waited:
+`get_app_state` takes `settle_ms`: before reading, it waits up to that many milliseconds
+(capped at 5000) while the window shows a busy sign: a busy or progress indicator, a web page
+that has not finished loading, or an element marked busy. A window showing none is read after
+one scan of a few milliseconds; a busy one is looked at again every 50 ms. A text note after
+the state says whether it settled and how long it waited:
 
 ```sh
 ocu call --calls '[
   {"tool":"click","args":{"app":"Safari","element_index":"12"}},
-  {"tool":"get_app_state","args":{"app":"Safari","settle_ms":400}}
+  {"tool":"get_app_state","args":{"app":"Safari","settle_ms":5000}}
 ]'
 ```
 
-The wait reads the same window `get_app_state` will read, without activating it or taking a
-screenshot, and polls about every 100 ms. In JavaScript: `await app.getAXState({ settleMs: 400 })`.
+The scan reads the same window `get_app_state` will read, breadth first to 100 nodes, without
+activating it or taking a screenshot. It does not wait for content that changes without a busy
+sign, such as a ticking clock. In JavaScript: `await app.getAXState({ settleMs: 5000 })`.
 Action results keep their fixed short pause before read-back. Linux and Windows reject `settle_ms`.
 
 ## Choosing a Click Method

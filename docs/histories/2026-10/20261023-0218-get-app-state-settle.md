@@ -22,6 +22,8 @@ Agent 在动作之后读取状态前只能猜一个 sleep。把 fork 里“轮�
 - Linux / Windows 收到 `settle_ms` 时明确报不支持。Node REPL 的状态读取接受 `settleMs`。
 - 更新 schema 测试、参数校验测试，以及 SKILL、usage、js-repl、ARCHITECTURE 和功能发布记录。
 
+- 2026-11-08 更新：去掉 AX 指纹与静止期，改为扫描忙碌迹象（与 Codex `waitForUIToSettle` 相同的判据：AXBusyIndicator、AXLoaded 为 false 的 AXWebArea、AXElementBusy 为 true）。新文件 `WindowSettle.swift`：广度优先最多 100 节点、25 层，读完已排队节点后把新排队的一批并发读取，访问的节点、顺序和答案与逐个读取相同；忙碌时每 50 ms 再看一次，`settle_ms` 变为等待上限（最多 5000）。静止窗口从约 `settle_ms` 降到一次扫描。`query` 的遍历恢复原样（不再有只算指纹的模式）。上游没有 AX 通知观察者，因此忙碌窗口不在 app 的下一条通知时提前重扫，只按 50 ms 再看。
+
 ### Design Intent
 
 等待放在 `get_app_state` 的一个可选参数上，因为它本来就是“动作之后读状态”的那一步，调用方已经在那里决定何时读取；新工具只会多一次往返。指纹选 AX 而不是截图：光标闪烁、视频和 CSS 动画会让像素永远在变，而加载、弹出 sheet、列表滚动都会体现在角色、文本、值或布局上。上限固定为 5 秒，与 `query` 固定 2 秒截止的做法一致，避免持续变化的窗口拖慢每次读取。动作回读不复用：那会改变每个动作的延迟，动画中的窗口每次动作都可能等满上限，而需要等待的调用方可以在下一次读取时明确提出。
@@ -39,13 +41,13 @@ Agent 在动作之后读取状态前只能猜一个 sleep。把 fork 里“轮�
   - 后台只读测量：TextEdit 单次指纹中位 18.2 ms（最大 30.8 ms），Finder 列表窗口中位 34.6 ms（最大 39.0 ms；前一轮最大 51.1 ms）。
   - 不带 `settle_ms` 的同一读取：97 ms，行为不变。前台 app 未被改动，探针已退出。
 - `make check-docs`、`git diff --check` 通过。
+- 2026-11-08 更新后：`swift test` 456 tests，8 skipped，0 failures；新增单测：假时钟下的等待（无迹象一次扫描、忙到 0.3 s 每 50 ms 再看、永不结束时在上限放弃）和 500 棵随机树上分批并发读取与逐个读取的答案和访问顺序一致。真机（不激活的 WKWebView 探针，本地页面）：100 节点扫描逐个读取中位 2.6 ms、并发 1.8 ms（各 25 次）；静止页面 1.2 ms 即 Settled（原实现 `settle_ms: 300` 时 367 ms）；正文停顿 2.5 s 的页面 2536 ms 时 Settled，48 次扫描。
 
 ### Files Modified
 
-- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/AccessibilitySnapshot.swift`
+- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/WindowSettle.swift`（新）
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseToolDispatcher.swift`
-- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/TargetedQuery.swift`
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ToolDefinitions.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/TargetedQuerySafetyTests.swift`

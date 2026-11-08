@@ -125,42 +125,68 @@ final class TargetedQuerySafetyTests: XCTestCase {
         }
     }
 
-    func testStableDigestWaitSettlesAfterChangesStopAndHoldsTheCeiling() {
-        // A fake clock: sleeping advances it, and every digest read costs 20 ms.
+    func testSettleWaitLooksAgainWhileBusyAndHoldsTheCeiling() {
+        // A fake clock: sleeping advances it, and every look costs 7 ms.
         var clock = 0.0
-        var polls: [Double] = []
-        func wait(quiet: Double, timeout: Double = 5, digest: @escaping (Double) -> Int) -> Bool {
+        var looks: [Double] = []
+        func wait(timeout: Double = 5, busy: @escaping (Double) -> Bool) -> Bool {
             clock = 0
-            polls = []
-            return waitForStableDigest(quiet: quiet, timeout: timeout, now: { clock }, sleep: { clock += $0 }) {
-                polls.append(clock)
-                defer { clock += 0.02 }
-                return digest(clock)
+            looks = []
+            return WindowSettle.wait(timeout: timeout, now: { clock }, sleep: { clock += $0 }) {
+                looks.append(clock)
+                defer { clock += 0.007 }
+                return busy(clock)
             }
         }
 
-        // Already still: costs the quiet period plus the first read.
-        XCTAssertTrue(wait(quiet: 0.3) { _ in 7 })
-        XCTAssertEqual(clock, 0.32, accuracy: 0.03)
+        // Showing no busy sign: one look, no wait.
+        XCTAssertTrue(wait { _ in false })
+        XCTAssertEqual(looks, [0])
 
-        // Loading until 2 s: settles one quiet period after the last change.
-        XCTAssertTrue(wait(quiet: 0.3) { t in t < 2 ? Int(t * 20) : -1 })
-        XCTAssertGreaterThanOrEqual(clock, 2.3)
-        XCTAssertLessThan(clock, 2.5)
+        // Loading until 0.3 s: looked at again every 50 ms, read on the first look after it ends.
+        XCTAssertTrue(wait { $0 < 0.3 })
+        XCTAssertEqual(looks.count, 7)
+        XCTAssertLessThan(clock, 0.36)
 
-        // A blip restarts the quiet period from the read that sees it end (at 0.36 s).
-        XCTAssertTrue(wait(quiet: 0.3) { t in (0.2..<0.3).contains(t) ? 1 : 0 })
-        XCTAssertGreaterThanOrEqual(clock, 0.66)
-        XCTAssertLessThan(clock, 0.8)
+        // Never done: gives up at the ceiling, and no look starts past it.
+        XCTAssertFalse(wait(timeout: 1) { _ in true })
+        XCTAssertLessThanOrEqual(looks.max() ?? 0, 1)
+        XCTAssertLessThan(clock, 1.01)
+    }
 
-        // Never still: gives up at the ceiling, and no read starts past it.
-        var tick = 0
-        XCTAssertFalse(wait(quiet: 0.3, timeout: 5) { _ in tick += 1; return tick })
-        XCTAssertLessThanOrEqual(polls.max() ?? 0, 5)
-        XCTAssertLessThan(clock, 5.1)
-
-        // A quiet period longer than the ceiling cannot be met.
-        XCTAssertFalse(wait(quiet: 2, timeout: 1) { _ in 7 })
-        XCTAssertLessThanOrEqual(clock, 1.05)
+    func testBusyScanReadsALevelAtOnceAndAnswersAsTheNodeByNodeWalk() {
+        typealias Signs = WindowSettle.Signs<Int>
+        // The walk as it would be one node at a time: breadth first, same caps, same signs.
+        func oneByOne(_ tree: [Int: Signs]) -> (Bool, [Int]) {
+            var nodes = [(0, 0)], visited: [Int] = [], next = 0
+            while next < nodes.count {
+                let (id, depth) = nodes[next]; next += 1; visited.append(id)
+                guard let node = tree[id] else { continue }
+                if node.role == "AXBusyIndicator" || (node.role == "AXWebArea" && node.loaded == false) || node.busy == true { return (true, visited) }
+                if depth < WindowSettle.scanDepth { nodes += node.children.prefix(max(0, WindowSettle.scanNodes - nodes.count)).map { ($0, depth + 1) } }
+            }
+            return (false, visited)
+        }
+        var generator = SystemRandomNumberGenerator()
+        for _ in 0..<500 {
+            var tree: [Int: Signs] = [:], parents = [0], nextID = 1
+            for _ in 0..<Int.random(in: 1...160, using: &generator) {
+                let parent = parents.randomElement(using: &generator)!
+                tree[parent] = Signs(role: tree[parent]?.role, children: (tree[parent]?.children ?? []) + [nextID], busy: tree[parent]?.busy, loaded: tree[parent]?.loaded)
+                let roll = Int.random(in: 0..<400, using: &generator)
+                tree[nextID] = Signs(role: roll == 0 ? "AXBusyIndicator" : roll == 1 ? "AXWebArea" : roll < 4 ? nil : "AXGroup",
+                                     children: [], busy: roll == 2 ? true : nil, loaded: roll == 1 ? false : roll == 5 ? true : nil)
+                if roll == 3 { tree[nextID] = nil }
+                parents.append(nextID); nextID += 1
+            }
+            var batched: [Int] = []
+            var reads = 0
+            let answer = WindowSettle.busy(from: 0) { ids in reads += 1; batched += ids; return ids.map { tree[$0] } }
+            let expected = oneByOne(tree)
+            XCTAssertEqual(answer, expected.0)
+            // Every node the node-by-node walk visits is read, in the same order; a batch may read the rest of a level past a busy node.
+            XCTAssertEqual(Array(batched.prefix(expected.1.count)), expected.1)
+            XCTAssertLessThanOrEqual(reads, WindowSettle.scanDepth + 1)
+        }
     }
 }
