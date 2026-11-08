@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -36,6 +37,9 @@ func TestActionReadBackEnabled(t *testing.T) {
 // Exercise the Go/bridge JSON boundary without requiring a live AT-SPI desktop.
 func fakePythonResponse(t *testing.T, response string) string {
 	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("runPython only runs the runtime on Linux")
+	}
 	dir := t.TempDir()
 	requestPath := filepath.Join(dir, "request.json")
 	script := "#!/bin/sh\ncat \"$2\" > \"$OCU_TEST_REQUEST\"\nprintf '%s\\n' \"$OCU_TEST_PYTHON_RESPONSE\"\n"
@@ -122,6 +126,9 @@ func TestActionWithoutReadBackPropagatesBridgeErrors(t *testing.T) {
 
 func observationPythonResponse(t *testing.T, response string) string {
 	t.Helper()
+	if runtime.GOOS != "linux" {
+		t.Skip("runPython only runs the runtime on Linux")
+	}
 	dir := t.TempDir()
 	requestPath := filepath.Join(dir, "request.json")
 	script := "#!/bin/sh\ncat \"$2\" > \"$OCU_TEST_OBSERVATION_REQUEST\"\nprintf '%s\\n' \"$OCU_TEST_OBSERVATION_RESPONSE\"\n"
