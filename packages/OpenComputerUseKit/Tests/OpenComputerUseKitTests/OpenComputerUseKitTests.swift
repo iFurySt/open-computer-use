@@ -2166,6 +2166,66 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testClickSequenceNeverFallsBackAfterPartialDelivery() throws {
+        for outcomes: [AXError] in [[.success, .actionUnsupported], [.success, .cannotComplete], [.cannotComplete]] {
+            var calls = 0
+            XCTAssertThrowsError(try performClickActionSequence(action: "AXPress", repeatCount: 3, send: {
+                defer { calls += 1 }
+                return outcomes[calls]
+            }, pause: {}))
+            XCTAssertEqual(calls, outcomes.count)
+        }
+        var calls = 0
+        XCTAssertFalse(try performClickActionSequence(action: "AXPress", repeatCount: 2, send: {
+            calls += 1; return .actionUnsupported
+        }, pause: {}))
+        XCTAssertEqual(calls, 1)
+        calls = 0
+        XCTAssertTrue(try performClickActionSequence(action: "AXPress", repeatCount: 2, send: {
+            calls += 1; return .success
+        }, pause: {}))
+        XCTAssertEqual(calls, 2)
+        calls = 0
+        XCTAssertTrue(try performClickActionSequence(action: "AXOpen", repeatCount: 2, send: {
+            calls += 1; return .attributeUnsupported
+        }, pause: {}))
+        XCTAssertEqual(calls, 1, "Legacy AXOpen handling must not open twice")
+    }
+
+    func testClickChainTriesAnotherWayOnlyWhenTheAppRanNothing() throws {
+        func ran(_ result: AXError, _ action: String = kAXPressAction) -> String {
+            do { return try clickActionRan(result, action: action) ? "ran" : "refused" } catch { return "stop" }
+        }
+        func set(_ result: AXError) -> String {
+            do { return try clickAttributeWasSet(result, attribute: kAXSelectedChildrenAttribute) ? "set" : "refused" } catch { return "stop" }
+        }
+
+        XCTAssertEqual(ran(.success), "ran")
+        for refused: AXError in [.actionUnsupported, .illegalArgument, .notImplemented, .invalidUIElement] {
+            XCTAssertEqual(ran(refused), "refused", "\(refused.rawValue)")
+        }
+        // An app busy past the AX timeout answers cannotComplete while the press runs.
+        for mayHaveActed: AXError in [.failure, .cannotComplete, .attributeUnsupported, .noValue, .apiDisabled] {
+            XCTAssertEqual(ran(mayHaveActed), "stop", "\(mayHaveActed.rawValue)")
+        }
+        XCTAssertEqual(ran(.attributeUnsupported, "AXOpen"), "ran")
+
+        XCTAssertEqual(set(.success), "set")
+        for refused: AXError in [.attributeUnsupported, .actionUnsupported, .illegalArgument, .noValue, .notImplemented, .invalidUIElement] {
+            XCTAssertEqual(set(refused), "refused", "\(refused.rawValue)")
+        }
+        for mayHaveApplied: AXError in [.failure, .cannotComplete] {
+            XCTAssertEqual(set(mayHaveApplied), "stop", "\(mayHaveApplied.rawValue)")
+        }
+
+        XCTAssertThrowsError(try clickActionRan(.cannotComplete, action: kAXPressAction)) { error in
+            XCTAssertEqual(
+                (error as? ComputerUseError)?.errorDescription,
+                "click: AXPress went out and the app did not answer in time; it may have acted, so no other click method was tried. Read the app state before retrying; a repeat could act twice."
+            )
+        }
+    }
+
     func testMakeVisualCursorTargetUsesWindowRelativeElementCenter() {
         let screenMappings = [
             VisualCursorScreenMapping(

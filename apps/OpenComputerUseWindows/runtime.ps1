@@ -818,7 +818,13 @@ function Limit-Text([string]$Text, $TextLimit = $script:DefaultTextLimit) {
     return $Text
 }
 
+# Unknown password status is not permission to read a potentially sensitive value.
+function Test-PasswordElement($element) {
+    try { return ($element.Current.IsPassword -ne $false) } catch { return $true }
+}
+
 function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
+    if (Test-PasswordElement $element) { return "" }
     try {
         $valuePattern = $element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
         $value = $valuePattern.Current.Value
@@ -866,12 +872,11 @@ function New-TreeCacheRequest {
     $cache = New-Object Windows.Automation.CacheRequest
     $cache.TreeScope = [Windows.Automation.TreeScope]::Element
     $cache.TreeFilter = [Windows.Automation.Condition]::TrueCondition
-    foreach ($name in @('ControlType', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
+    foreach ($name in @('ControlType', 'IsPassword', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
         'IsInvokePatternAvailable', 'IsTogglePatternAvailable', 'IsSelectionItemPatternAvailable', 'IsExpandCollapsePatternAvailable',
         'IsScrollItemPatternAvailable', 'IsScrollPatternAvailable', 'IsValuePatternAvailable')) {
         $cache.Add([Windows.Automation.AutomationElement]::($name + 'Property'))
     }
-    $cache.Add([Windows.Automation.ValuePattern]::ValueProperty)
     $cache.Add([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
     return $cache
 }
@@ -898,8 +903,8 @@ function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
             elseif ($state -eq [Windows.Automation.ExpandCollapseState]::Expanded) { $actions.Add('Collapse') }
         }
         $value = ''
-        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty)) {
-            $value = Limit-Text ([string]$element.GetCachedPropertyValue([Windows.Automation.ValuePattern]::ValueProperty)) $TextLimit
+        if ($info.IsPassword -eq $false) {
+            $value = Get-ElementValue $element $TextLimit
         }
         return [pscustomobject]@{
             index = $index
@@ -1096,6 +1101,7 @@ function Get-SelectedText($processId, $TextLimit = $script:DefaultTextLimit) {
         if ($null -eq $focused -or $focused.Current.ProcessId -ne $processId) {
             return $null
         }
+        if (Test-PasswordElement $focused) { return $null }
         $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
         $selection = $textPattern.GetSelection()
         if ($selection.Count -gt 0) {

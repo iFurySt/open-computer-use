@@ -222,8 +222,13 @@ def accessible_id(node):
     return str(safe(node.get_accessible_id, "") or "")
 
 
+def is_password(node):
+    # GTK 4's password entries answer GetText with the plaintext, so their text is never read.
+    return node_role(node).lower() == "password text"
+
+
 def text_value(node, text_limit=DEFAULT_TEXT_LIMIT):
-    if not supports_interface(node, "Text"):
+    if is_password(node) or not supports_interface(node, "Text"):
         return ""
     text_iface = safe(node.get_text_iface)
     if text_iface is None:
@@ -247,6 +252,8 @@ def numeric_value(node):
 
 
 def element_value(node, text_limit=DEFAULT_TEXT_LIMIT):
+    if is_password(node):
+        return ""
     return text_value(node, text_limit=text_limit) or numeric_value(node)
 
 
@@ -481,7 +488,7 @@ def focus_details(window, text_limit=DEFAULT_TEXT_LIMIT, max_nodes=MAX_ELEMENTS,
         return None, None, truncated
     summary = (node_role(focused) + " " + limit_text(node_name(focused), text_limit)).strip()
     selection = None
-    if supports_interface(focused, "Text"):
+    if supports_interface(focused, "Text") and not is_password(focused):
         text_iface = safe(focused.get_text_iface)
         count = safe(lambda: Atspi.Text.get_n_selections(text_iface), 0)
         selected = safe(lambda: Atspi.Text.get_selection(text_iface, 0)) if count > 0 else None

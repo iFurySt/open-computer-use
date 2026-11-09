@@ -50,11 +50,15 @@ def load_runtime():
 
 
 class InterfaceOnlyAccessible:
-    def __init__(self, interfaces):
+    def __init__(self, interfaces, role="text"):
         self.interfaces = interfaces
+        self.role = role
 
     def get_interfaces(self):
         return self.interfaces
+
+    def get_role_name(self):
+        return self.role
 
     def get_text_iface(self):
         return self
@@ -75,6 +79,15 @@ class RuntimeInterfaceDetectionTests(unittest.TestCase):
         node = InterfaceOnlyAccessible(["Accessible", "Text"])
 
         self.assertEqual(self.runtime.text_value(node), "hello")
+
+    def test_password_text_is_withheld_from_values(self):
+        node = InterfaceOnlyAccessible(["Accessible", "Text", "EditableText"], role="password text")
+
+        self.assertEqual(self.runtime.text_value(node), "")
+        self.assertEqual(self.runtime.text_value(node, text_limit=None), "")
+        with mock.patch.object(self.runtime, "numeric_value", side_effect=AssertionError("password numeric read")), \
+             mock.patch.object(node, "get_text_iface", side_effect=AssertionError("password text read")):
+            self.assertEqual(self.runtime.element_value(node, text_limit=None), "")
 
     def test_insert_text_uses_accessible_interfaces(self):
         node = InterfaceOnlyAccessible(["Accessible", "Text", "EditableText"])
@@ -423,6 +436,16 @@ class FocusDetailsTests(unittest.TestCase):
         )
         self.assertEqual(self.runtime.focus_details(focused), ("text Editor", "中文🙂", False))
         self.assertEqual(self.runtime.focus_details(focused, text_limit=2), ("text Ed...", "中文...", False))
+
+    def test_password_selection_is_withheld(self):
+        focused = self.node(focused=True)
+        focused.get_role_name.return_value = "password text"
+        self.runtime.Atspi.Text = types.SimpleNamespace(
+            get_n_selections=lambda _: 1,
+            get_selection=lambda _iface, index: types.SimpleNamespace(start_offset=0, end_offset=7),
+            get_text=lambda _iface, start, end: "hunter2"[start:end],
+        )
+        self.assertEqual(self.runtime.focus_details(focused), ("password text Editor", None, False))
 
     def test_no_selection_does_not_fetch_a_range(self):
         selection = mock.Mock()
