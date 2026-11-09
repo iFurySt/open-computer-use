@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-08 | Windows 动作结果 | 点击等动作已经送达、只是之后读不到窗口时（例如窗口被关闭），不再报成失败，避免模型重试造成重复动作。 | 动作后的快照单独捕获错误，返回非错误结果并说明读取失败原因，同时作废旧索引；动作超时提示可能已送达。补 `windows-action-observation.test.ps1`（直接运行生产 dispatch）与 Go 回归，并接入 Windows CI。 |
 | 2026-11-08 | Windows 键盘输入目标 | 后台窗口里 `press_key` 送到有焦点的控件，`type_text` 写进有焦点的文本框而不是第一个；`ctrl+a` 不再被当成 `a` 输入。 | auto 方式按 `GetGUIThreadInfo` 的焦点控件投递，检查投递结果；组合键拒绝并提示 `key_method=global`；`type_text` 只读焦点框拒绝，焦点未知且有多个文本框时拒绝。补 `windows-keyboard-focus.test.ps1` 并接入 Windows CI。 |
 | 2026-11-08 | Windows 元素重新定位 | 控件重建后，点击、设值等动作不再落到另一个同名控件（同名按钮、共用 AutomationId 的列表行）。 | RuntimeId、类型、AutomationId 和完整名称摘要必须一致，失效或变化要求重新观察，不按名称猜替代目标；展示截断不影响身份比较。补 `windows-element-resolution.test.ps1` 并接入 Windows CI。 |
 | 2026-11-08 | macOS 元素序号核对 | 快照之后控件被 app 复用或改名时，不会按到另一个控件。 | 动作前核对序号对应元素的 role / 名称 / identifier；身份变化、失效或无法读取时要求重新观察，不自动寻找同名替代控件。 |

@@ -1608,7 +1608,13 @@ try {
         }
 
         Start-Sleep -Milliseconds 120
-        $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        # The action has been delivered. Failing to read the window afterwards (the click closed it) does not
+        # undo it, and reporting the action as failed invites a retry that acts twice.
+        try {
+            $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        } catch {
+            $response = [pscustomobject]@{ ok = $true; observationError = $_.Exception.Message }
+        }
     }
 } catch {
     $message = $_.Exception.Message

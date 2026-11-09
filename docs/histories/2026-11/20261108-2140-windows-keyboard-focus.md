@@ -43,3 +43,5 @@
 增加真实 WinForms 双输入框/独立遮挡窗口回归，经 native MCP 验证已知焦点第二字段键入、选区替换、后台焦点未知时拒绝、Return、拒绝 ctrl+a、无文本焦点且多字段拒绝、只读焦点拒绝。测试接入现有 Windows observation 脚本。
 
 真实 Windows 首轮发现多行 Document 没有 ValuePattern，退到后台后焦点丢失时仍会误写第一个 Edit。改为对全部文本控件计数，不能把不支持写入的 Document/只读字段排除后再猜目标。已知非文本焦点直接拒绝。原 EM_SETSEL 会丢弃选区，改为保留选区并仅执行一次 EM_REPLACESEL，不再失败后用 WM_SETTEXT 重试。
+
+维护者最终验证：完整 [Windows observation](https://github.com/iFurySt/open-computer-use/actions/runs/42646920550) 通过，含真实 WinForms 第二字段键入、选区替换、Return、后台拒绝和 WPF / Edge / 全局输入 / 截图回归。#169 已 Squash 合并。

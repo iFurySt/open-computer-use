@@ -87,6 +87,8 @@ try {
     [void]$cover.CloseMainWindow();Wait-For { $cover.HasExited } 'cover exit'
     Change-Window "focus-second"
     Wait-For { (Read-State).twoFocused } 'second input focus'
+    $fresh = Call-Tool 'get_app_state' @{ include_screenshot = $false }
+    Assert (-not $fresh.isError) (Text $fresh)
     $typed = Call-Tool "type_text" @{ text = "-hello" }
     Assert (-not $typed.isError) (Text $typed)
     Wait-For { (Read-State).two -eq 'second-hello' } 'second input actual text'
@@ -105,9 +107,12 @@ try {
     Assert ((Read-State).two -eq $before.two -and (Read-State).key2 -eq $before.key2) 'Refused chord delivered input'
     foreach ($kind in @('focus-button','readonly')) {
         Change-Window $kind
+        $fresh = Call-Tool 'get_app_state' @{ include_screenshot = $false }
+        Assert (-not $fresh.isError) (Text $fresh)
         $before = Read-State
         $result = Call-Tool "type_text" @{ text = "must-not-type" }
-        Assert $result.isError (Text $result)
+        $reason = if ($kind -eq 'readonly') { 'read-only' } else { 'not a supported text field|not a writable text field|2 text fields' }
+        Assert ($result.isError -and (Text $result) -match $reason) (Text $result)
         Assert ((Read-State).one -eq $before.one -and (Read-State).two -eq $before.two) 'Refused typing changed a field'
     }
     Write-Output 'Real WinForms: focused second-field typing/selection/Return and background ambiguity refusal, refused chord, ambiguous focus and read-only refusal passed.'

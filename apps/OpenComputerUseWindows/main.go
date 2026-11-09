@@ -251,6 +251,8 @@ type psResponse struct {
 	Text     string       `json:"text,omitempty"`
 	Error    string       `json:"error,omitempty"`
 	Snapshot *appSnapshot `json:"snapshot,omitempty"`
+	// ObservationError is set when an action was delivered but reading the window afterwards failed.
+	ObservationError string `json:"observationError,omitempty"`
 }
 
 type service struct {
@@ -573,7 +575,7 @@ func (s *service) actionResult(app string, request psRequest) toolCallResult {
 		request.WindowHandle = previous.WindowHandle
 	}
 	snapshot, result := s.refreshSnapshot(app, request)
-	if result.IsError {
+	if result.IsError || snapshot == nil {
 		return result
 	}
 	return snapshot.result()
@@ -583,16 +585,44 @@ func (s *service) currentSnapshot(app string) *appSnapshot {
 	return s.snapshots[strings.ToLower(app)]
 }
 
+// Without a trustworthy post-operation observation, no alias may retain the old indexes.
+func (s *service) invalidateSnapshot(app string) {
+	previous := s.currentSnapshot(app)
+	for alias, cached := range s.snapshots {
+		if alias == strings.ToLower(app) || (previous != nil && (cached == previous || cached.App.PID == previous.App.PID)) {
+			delete(s.snapshots, alias)
+		}
+	}
+}
+
 func (s *service) refreshSnapshot(app string, request psRequest) (*appSnapshot, toolCallResult) {
 	response, err := s.runBridge(request)
 	if err != nil {
-		return nil, textResult(err.Error(), true)
+		s.invalidateSnapshot(app)
+		message := err.Error()
+		if request.Tool != "get_app_state" {
+			message += "\nThe action outcome is unknown; it may already have been delivered. Run get_app_state before retrying."
+		}
+		return nil, textResult(message, true)
+	}
+	if response == nil {
+		s.invalidateSnapshot(app)
+		return nil, textResult("Windows runtime did not return a response. Run get_app_state before retrying.", true)
 	}
 	if !response.OK {
+		s.invalidateSnapshot(app)
 		return nil, textResult(response.Error, true)
 	}
+	if response.ObservationError != "" {
+		s.invalidateSnapshot(app)
+		if request.Tool == "get_app_state" {
+			return nil, textResult(response.ObservationError, true)
+		}
+		return nil, textResult("The "+request.Tool+" action was delivered, but reading "+app+" afterwards failed: "+response.ObservationError+"\nRun get_app_state before the next action instead of repeating this one.", false)
+	}
 	if response.Snapshot == nil {
-		return nil, textResult("Windows runtime did not return an app snapshot.", true)
+		s.invalidateSnapshot(app)
+		return nil, textResult("Windows runtime did not return an app snapshot. Run get_app_state before retrying.", true)
 	}
 	if request.IncludeScreenshot != nil && !*request.IncludeScreenshot {
 		response.Snapshot.ScreenshotPNGBase64 = ""
@@ -672,6 +702,9 @@ func runPowerShell(request psRequest) (*psResponse, error) {
 	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, operationPath)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
+		if request.Tool != "list_apps" && request.Tool != "get_app_state" {
+			return nil, errors.New("Windows runtime timed out after 30s; the " + request.Tool + " action may already have been delivered. Run get_app_state before retrying it.")
+		}
 		return nil, errors.New("Windows runtime timed out after 30s")
 	}
 	if err != nil {
