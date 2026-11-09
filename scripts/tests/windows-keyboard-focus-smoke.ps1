@@ -82,6 +82,8 @@ try {
     Start-Sleep -Milliseconds 300
     $typed = Call-Tool "type_text" @{ text = "-hello" }
     Assert (-not $typed.isError) (Text $typed)
+    Write-Output ("Receiver after typing: " + ((Read-State) | ConvertTo-Json -Compress))
+    Write-Output ("Returned observation: " + (Text $typed))
     Wait-For { (Read-State).two -eq 'second-hello' } 'second input actual text'
     Assert ((Read-State).one -eq 'first') 'First input was modified instead'
     $key = Call-Tool "press_key" @{ key = "Return" }
@@ -101,6 +103,10 @@ try {
         Assert ((Read-State).one -eq $before.one -and (Read-State).two -eq $before.two) 'Refused typing changed a field'
     }
     Write-Output 'Real WinForms: background second-field typing/Return, refused chord, ambiguous focus and read-only refusal passed.'
+} catch {
+    if (Test-Path $stateFile) { Write-Output ([IO.File]::ReadAllText($stateFile)) }
+    if (Test-Path (Join-Path $directory 'fixture.err')) { Write-Output ([IO.File]::ReadAllText((Join-Path $directory 'fixture.err'))) }
+    throw
 } finally {
     if ($native -and -not $native.HasExited) { $native.StandardInput.Close(); if (-not $native.WaitForExit(3000)) { $native.Kill() } }
     foreach ($child in @($cover,$fixture)) { if ($child -and -not $child.HasExited) { [void]$child.CloseMainWindow(); if (-not $child.WaitForExit(3000)) { $child.Kill() } } }

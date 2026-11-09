@@ -31,7 +31,7 @@ $timer.Add_Tick({
    }
   }catch{}
  }
- $state.one=$one.Text;$state.two=$two.Text
+ $state.one=$one.Text;$state.two=$two.Text;$state.oneFocused=$one.Focused;$state.twoFocused=$two.Focused;$state.oneHandle=$one.Handle.ToInt64();$state.twoHandle=$two.Handle.ToInt64()
  $temp=$StatePath+'.tmp';[IO.File]::WriteAllText($temp,($state|ConvertTo-Json -Compress),$encoding)
  if(Test-Path $StatePath){[IO.File]::Replace($temp,$StatePath,($StatePath+'.bak'));[IO.File]::Delete($StatePath+'.bak')}else{[IO.File]::Move($temp,$StatePath)}
 })
