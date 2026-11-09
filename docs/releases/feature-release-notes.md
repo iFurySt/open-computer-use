@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-08 | Windows 元素重新定位 | 控件重建后，点击、设值等动作不再落到另一个同名控件（同名按钮、共用 AutomationId 的列表行）。 | RuntimeId、类型、AutomationId 和完整名称摘要必须一致，失效或变化要求重新观察，不按名称猜替代目标；展示截断不影响身份比较。补 `windows-element-resolution.test.ps1` 并接入 Windows CI。 |
 | 2026-11-08 | macOS 元素序号核对 | 快照之后控件被 app 复用或改名时，不会按到另一个控件。 | 动作前核对序号对应元素的 role / 名称 / identifier；身份变化、失效或无法读取时要求重新观察，不自动寻找同名替代控件。 |
 | 2026-11-08 | Linux 只读字段 | set_value 不再改写用户无法编辑的字段。 | 写入前按 `READ_ONLY` / `EDITABLE` 拒绝只读字段，什么都不写；修复前 Qt 6 只读 `QLineEdit` 被改写并返回成功，GTK 3 等待 0.6 秒后报告“可能已改变”。见 [写入验证](../set-value-verification.md)。 |
 | 2026-11-08 | Linux 输入框点击 | 点击 GTK 3 输入框会把光标放进去，不再替用户按 Enter 提交。 | GTK 3 文本字段的 `activate` 是 Enter 键，不再作为点击 action；`auto` 改用指针点击。修复前点击输入框触发了它的 activate（提交），焦点也没有进入。 |

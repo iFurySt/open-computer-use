@@ -103,3 +103,5 @@ $cacheSource = $ast.Find({ param($n) $n -is [System.Management.Automation.Langua
 Assert (-not $cacheSource.Contains('ValuePattern]::ValueProperty')) 'Bulk cache requests secret values'
 Write-Output 'Password value guards and bulk-read exclusion passed.'
 & (Join-Path $PSScriptRoot 'windows-observation-selection.test.ps1') -RuntimePath $RuntimePath
+
+& (Join-Path $PSScriptRoot "windows-element-resolution.test.ps1") -RuntimePath $RuntimePath

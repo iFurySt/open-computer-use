@@ -849,15 +849,23 @@ function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
     }
 }
 
+function Get-NameDigest([string]$name) {
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { [Convert]::ToBase64String($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($name))) }
+    finally { $hash.Dispose() }
+}
+
 function Get-ElementRecord($element, [int]$index, $windowBounds, $TextLimit = $script:DefaultTextLimit) {
     $frame = Get-ElementFrame $element $windowBounds
+    $fullName = Get-ElementString $element "Name"
     $runtimeId = @()
     try { $runtimeId = @($element.GetRuntimeId()) } catch {}
     [pscustomobject]@{
         index = $index
         runtimeId = $runtimeId
         automationId = Get-ElementString $element "AutomationId"
-        name = Limit-Text (Get-ElementString $element "Name") $TextLimit
+        name = Limit-Text $fullName $TextLimit
+        nameDigest = Get-NameDigest $fullName
         controlType = Get-ElementControlTypeName $element
         localizedControlType = Get-ElementString $element "LocalizedControlType"
         className = Get-ElementString $element "ClassName"
@@ -922,6 +930,7 @@ function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
             runtimeId = @($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty))
             automationId = $info.AutomationId
             name = Limit-Text $info.Name $TextLimit
+            nameDigest = Get-NameDigest $info.Name
             controlType = $info.ControlType.ProgrammaticName
             localizedControlType = $info.LocalizedControlType
             className = $info.ClassName
@@ -1219,30 +1228,20 @@ function Get-AllElements($root) {
 }
 
 function Find-Element($process, $record) {
-    if ($null -eq $record) {
-        return $null
-    }
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
+    if ($null -eq $record) { return $null }
+    foreach ($element in (Get-AllElements (Get-MainElement $process))) {
         try {
-            if (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId)) {
+            if (-not (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId))) { continue }
+            $current = $element.Current
+            if ($current.ControlType.ProgrammaticName -ceq $record.controlType -and
+                ([string]$current.AutomationId) -ceq ([string]$record.automationId) -and
+                -not [string]::IsNullOrEmpty($record.nameDigest) -and
+                (Get-NameDigest $current.Name) -ceq $record.nameDigest) {
                 return $element
             }
-        } catch {
-        }
+        } catch { }
     }
-    foreach ($element in (Get-AllElements $root)) {
-        try {
-            $sameAutomationId = -not [string]::IsNullOrWhiteSpace($record.automationId) -and $element.Current.AutomationId -eq $record.automationId
-            $sameName = -not [string]::IsNullOrWhiteSpace($record.name) -and $element.Current.Name -eq $record.name
-            $sameType = $element.Current.ControlType.ProgrammaticName -eq $record.controlType
-            if (($sameAutomationId -or $sameName) -and $sameType) {
-                return $element
-            }
-        } catch {
-        }
-    }
-    return $null
+    throw "Element $($record.index) changed or is no longer available. Run get_app_state again before acting; nothing was sent."
 }
 
 function Invoke-VerifiedSetValue($pattern, [string]$value) {

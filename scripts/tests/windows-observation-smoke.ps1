@@ -99,6 +99,21 @@ try {
     Assert (-not $write.isError) (Text $write)
     Wait-For { (Read-State).text -eq $value } "real UIA value update"
     Write-Output "Selective channels, index refusal/recovery and real Unicode text update passed."
+    foreach ($change in @("rename-input", "rebuild-input")) {
+        $before = Call-Tool "get_app_state" @{ include_screenshot = $false }
+        $index = Input-Index $before
+        $original = (Read-State).text
+        Change-Window $change
+        $staleWrite = Call-Tool "set_value" @{ element_index = $index; value = "must-not-write-stale" }
+        Assert ($staleWrite.isError -and (Text $staleWrite) -match 'get_app_state again') (Text $staleWrite)
+        Assert ((Read-State).text -eq $original) "Stale identity changed the real input"
+        Change-Window "restore-input-name"
+        $fresh = Call-Tool "get_app_state" @{ include_screenshot = $false }
+        $updated = Call-Tool "set_value" @{ element_index = (Input-Index $fresh); value = $value }
+        Assert (-not $updated.isError) (Text $updated)
+        Wait-For { (Read-State).text -eq $value } 'fresh identity write'
+        Write-Output "Real WPF ${change}: stale index refused without writing, fresh index works."
+    }
     foreach ($kind in @("tiny", "minimize", "cloak")) {
         Change-Window $kind
         if ($kind -eq "tiny") {

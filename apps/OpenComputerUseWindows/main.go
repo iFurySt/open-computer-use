@@ -85,6 +85,7 @@ type elementRecord struct {
 	RuntimeID            []int    `json:"runtimeId,omitempty"`
 	AutomationID         string   `json:"automationId,omitempty"`
 	Name                 string   `json:"name,omitempty"`
+	NameDigest           string   `json:"nameDigest,omitempty"`
 	ControlType          string   `json:"controlType,omitempty"`
 	LocalizedControlType string   `json:"localizedControlType,omitempty"`
 	ClassName            string   `json:"className,omitempty"`
