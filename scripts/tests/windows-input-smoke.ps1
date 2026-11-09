@@ -124,6 +124,7 @@ try {
  foreach($key in @(0x11,0x10,0x12,0x5b,0x41,0x5a,1)){Assert ([InputProbe]::GetAsyncKeyState($key) -ge 0) "Physical key/button left held"}
  $invalid=Call "press_key" @{key="ctrl+unmapped";key_method="global"}
  Assert ($invalid.isError -and [InputProbe]::GetAsyncKeyState(0x11) -ge 0) "Invalid key left Ctrl held"
+ $null=Observe
  $state=State
  OK (Call "drag" @{from_x=($state.dragX-50);from_y=$state.dragY;to_x=($state.dragX+50);to_y=$state.dragY})
  Wait-For {(State).dragMoves -gt 0} "real dragged mouse movement"

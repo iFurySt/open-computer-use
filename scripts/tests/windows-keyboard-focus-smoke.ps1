@@ -87,6 +87,8 @@ try {
     [void]$cover.CloseMainWindow();Wait-For { $cover.HasExited } 'cover exit'
     Change-Window "focus-second"
     Wait-For { (Read-State).twoFocused } 'second input focus'
+    $fresh = Call-Tool 'get_app_state' @{ include_screenshot = $false }
+    Assert (-not $fresh.isError) (Text $fresh)
     $typed = Call-Tool "type_text" @{ text = "-hello" }
     Assert (-not $typed.isError) (Text $typed)
     Wait-For { (Read-State).two -eq 'second-hello' } 'second input actual text'
