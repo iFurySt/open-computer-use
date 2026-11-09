@@ -15,6 +15,8 @@ final class ElementRecord {
     let rawActions: [String]
     let prettyActions: [String]
     let isSyntheticText: Bool
+    /// What the snapshot showed at this index, checked before any action on it; nil where no check applies.
+    let identity: ElementIdentity?
 
     init(
         index: Int,
@@ -26,7 +28,8 @@ final class ElementRecord {
         value: String? = nil,
         rawActions: [String],
         prettyActions: [String],
-        isSyntheticText: Bool = false
+        isSyntheticText: Bool = false,
+        identity: ElementIdentity? = nil
     ) {
         self.index = index
         self.identifier = identifier
@@ -38,6 +41,7 @@ final class ElementRecord {
         self.rawActions = rawActions
         self.prettyActions = prettyActions
         self.isSyntheticText = isSyntheticText
+        self.identity = identity
     }
 }
 
@@ -1113,7 +1117,14 @@ private struct TreeRenderer {
             localFrame: localFrame,
             role: role,
             rawActions: actions,
-            prettyActions: prettyActions
+            prettyActions: prettyActions,
+            identity: ElementIdentity(
+                role: stringValue(of: root, attribute: kAXRoleAttribute), subrole: subrole,
+                title: stringValue(of: root, attribute: kAXTitleAttribute),
+                description: stringValue(of: root, attribute: kAXDescriptionAttribute),
+                identifier: stringValue(of: root, attribute: kAXIdentifierAttribute),
+                value: ElementIdentity.valueIsName.contains(role) ? stringValue(of: root, attribute: kAXValueAttribute) : nil
+            )
         )
         records[index] = record
 
@@ -1361,7 +1372,18 @@ private func copyActions(_ element: AXUIElement) -> [String]? {
     return actions as? [String]
 }
 
+/// A password field's value is never read. AppKit answers an empty string, which type_text took for the field's text
+/// and replaced the whole password with the typed characters; an app that answers the text in clear would put the
+/// secret into snapshots, query matches and logs.
+func isSecureTextField(subrole: String?) -> Bool {
+    subrole == kAXSecureTextFieldSubrole as String
+}
+
 private func attributeValue(of element: AXUIElement, attribute: String) -> CFTypeRef? {
+    if (attribute == kAXValueAttribute as String || attribute == kAXSelectedTextAttribute as String),
+       isSecureTextField(subrole: attributeValue(of: element, attribute: kAXSubroleAttribute) as? String) {
+        return nil
+    }
     if let cache = AXSnapshotReadCache.current { return cache.value(element, attribute) }
     var value: CFTypeRef?
     let error = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
@@ -2511,10 +2533,10 @@ extension SnapshotBuilder {
         kAXRoleAttribute as String,
         kAXTitleAttribute as String,
         kAXDescriptionAttribute as String,
-        kAXValueAttribute as String,
         kAXIdentifierAttribute as String,
         kAXPositionAttribute as String,
         kAXSizeAttribute as String,
+        kAXSubroleAttribute as String,
     ]
 
     /// Use one bounded traversal so every app has the same visibility and match rules.
@@ -2604,9 +2626,13 @@ extension SnapshotBuilder {
             }
         }
         func str(_ i: Int) -> String? { (raw[i] as? String).map { String($0.prefix(1001)) } }
+        // Password classification precedes any value request, including batch fallback.
+        let value = isSecureTextField(subrole: str(6)) ? nil
+            : stringValue(of: element, attribute: kAXValueAttribute).map { String($0.prefix(1001)) }
         return NodeScan(
-            role: str(0), title: str(1), description: str(2), value: str(3), identifier: str(4),
-            globalFrame: axFrame(position: raw[5], size: raw[6])
+            role: str(0), title: str(1), description: str(2),
+            value: value, identifier: str(3),
+            globalFrame: axFrame(position: raw[4], size: raw[5])
         )
     }
 
