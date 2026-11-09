@@ -420,6 +420,9 @@ def smoke(native, focus_checks=False, hidden_checks=False, observation_checks=Fa
                     wait_for(lambda: state_is(count=count), "cached-index button click")
                 acknowledged("perform_secondary_action", element_index=button_index, action="click")
                 wait_for(lambda: state_is(count=3), "real secondary action")
+                refused = client.call("click", name, element_index=input_index, click_method="accessibility")
+                assert refused.get("isError") and "could not click" in text(refused), (refused, state_file.read_text())
+                assert state_is(activated=0), "refused accessibility click submitted the entry"
                 acknowledged("click", element_index=input_index)
                 wait_for(lambda: state_is(focused=True), "entry click focuses the entry")
                 assert state_is(activated=0), "entry click ran the entry's Enter action: " + state_file.read_text()

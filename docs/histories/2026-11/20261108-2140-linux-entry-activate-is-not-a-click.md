@@ -27,3 +27,7 @@ GTK 4 用同名 action，实测（4.18）执行后没有可见效果；但 X11 �
 - `scripts/tests/linux-read-back-smoke.py`
 - `docs/ARCHITECTURE.md`
 - `docs/releases/feature-release-notes.md`
+
+### Maintainer validation
+
+最新 main 整合后，Linux Go 全套与 46 项 Python 测试通过。私有 D-Bus/Xvfb 的真实 GTK 3 原生 MCP 测试通过：auto 点击获得焦点且 activate 计数为零，显式 accessibility 点击拒绝且不触发 activate；真实 Return 仍使计数增加。默认/禁用动作回读与焦点/选区 smoke 通过。旧 binary 在同一 accessibility 点击用例错误返回 ok，负对照失败。保留 GTK 4/Gecko/Chromium 的既有行为；本轮未安装浏览器复测。
