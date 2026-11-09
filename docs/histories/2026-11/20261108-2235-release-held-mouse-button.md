@@ -28,3 +28,10 @@
 ### 📁 Files Modified
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/InputSimulation.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/DragReleaseTests.swift`
+
+### Maintainer review
+
+- 基于最新 main 整合。抬起事件在按下之前创建；只有本次按下成功，才注册不受后续租约撤销影响的配对释放。普通事件仍检查会话，不给任意 mouse-up 通用豁免。
+- 拖拽失败时保留原错误，在最后成功投递位置释放；抬起沿用按钮、click count 和全局 gesture，并更新投递时间。
+- 本机真实 AppKit 事件队列对照：main 的点击/拖拽撤销用例缺少抬起；修复版本通过。按下前拒绝不释放，纯逻辑清理测试也通过。没有实际锁屏或改动用户文档。
+- Swift 全套 461 项、9 skipped、0 failures；最终时间戳调整后 4 项配对释放回归再次通过，包含真实事件队列；文档与 diff 检查通过。

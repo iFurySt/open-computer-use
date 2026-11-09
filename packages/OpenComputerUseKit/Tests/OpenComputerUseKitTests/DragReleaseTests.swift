@@ -37,6 +37,30 @@ final class DragReleaseTests: XCTestCase {
         XCTAssertEqual(postedEvents(), [.mouseMoved, .leftMouseDown, .leftMouseUp])
     }
 
+    func testOnlyOurSuccessfulPressOwnsARelease() throws {
+        var events: [String] = []
+        XCTAssertThrowsError(try InputSimulation.withPressedMouseButton(press: {
+            throw ComputerUseError.stateUnavailable("before press")
+        }, release: { events.append("up") }) { events.append("body") })
+        XCTAssertTrue(events.isEmpty)
+        XCTAssertThrowsError(try InputSimulation.withPressedMouseButton(press: {
+            events.append("down")
+        }, release: { events.append("up") }) {
+            events.append("drag")
+            throw ComputerUseError.stateUnavailable("lease ended")
+        })
+        XCTAssertEqual(events, ["down", "drag", "up"])
+    }
+
+    func testRefusedPressPostsNoRelease() throws {
+        try startReading()
+        let countdown = Countdown(failingCall: 2)
+        XCTAssertThrowsError(try LockedUseActionScope.withValidator({ try countdown.check() }) {
+            try InputSimulation.clickTargeted(at: CGPoint(x: 300, y: 300), button: .left, clickCount: 1, pid: getpid())
+        })
+        XCTAssertEqual(postedEvents(), [.mouseMoved])
+    }
+
     private func startReading() throws {
         guard AXIsProcessTrusted() else { throw XCTSkip("Posting events needs the Accessibility permission") }
         NSApplication.shared.setActivationPolicy(.accessory)
