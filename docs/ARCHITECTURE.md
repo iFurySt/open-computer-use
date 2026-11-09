@@ -218,3 +218,5 @@ macOS `doctor --json` 在 CLI 和 app-agent proxy 路径复用 `PermissionDiagno
 Locked Use’s non-UI authorization mechanism is registered with `,privileged` and restricted to Apple's root authorizationhosthelper peers. A separate load-check right must return a fixed extractable context marker before the installer attaches the remote branch to system.login.screensaver; signature checks and a denied AuthorizationCopyRights result alone do not prove host compatibility. The original native fallback is preserved.
 
 The load-check grants only its isolated right, with `shared=false` and a fresh AuthorizationRef that is destroyed afterwards. authd does not export context on a denied result. It reads/writes no credentials and never evaluates system.login.screensaver; successful marker export is required before installation changes that policy.
+
+密码字段观察不会返回已标记密码控件的值或选区；Linux 与 Windows 的识别方式、真实 fixture 和已知边界见 [密码字段](password-fields.md)。

@@ -8,6 +8,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import tempfile
 
 SECRET = "ocu-password-probe"
 PUBLIC = "ocu-public-probe"
@@ -16,7 +17,7 @@ PUBLIC = "ocu-public-probe"
 def fixture(version):
     import gi
     gi.require_version("Gtk", version + ".0")
-    from gi.repository import Gtk, GLib
+    from gi.repository import Gtk, GLib, Gdk
     GLib.set_prgname("ocu-password-gtk" + version)
     if version == "3":
         win = Gtk.Window(title="OCU password probe")
@@ -30,6 +31,8 @@ def fixture(version):
         password.set_text(SECRET)
         ordinary.set_text(PUBLIC)
         win.show_all()
+        window_handle = win.get_window()
+        window_handle.focus(Gdk.CURRENT_TIME)
         password.grab_focus()
         password.select_region(0, -1)
         Gtk.main()
@@ -71,6 +74,13 @@ def main(args):
                     if time.monotonic() >= deadline:
                         raise
                     time.sleep(.1)
+            if args.native:
+                response = subprocess.run([args.native, "call", "get_app_state", "--args",
+                    json.dumps({"app": str(process.pid), "include_screenshot": False, "text_limit": "max"})],
+                    capture_output=True, text=True, timeout=40)
+                assert response.returncode == 0, response.stderr + response.stdout
+                assert SECRET not in response.stdout and PUBLIC in response.stdout, "native output filter failed"
+                print("GTK%s native CLI response: ordinary text present, password withheld" % version)
             leaked = SECRET in encoded
             if args.expect_leak and version == "4":
                 assert leaked, "baseline did not reproduce GTK4 leak on this toolkit version"
@@ -99,6 +109,12 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--fixture", choices=("3", "4"))
     parser.add_argument("--runtime", default="apps/OpenComputerUseLinux/runtime.py")
+    parser.add_argument("--native")
     parser.add_argument("--expect-leak", action="store_true")
     args = parser.parse_args()
-    fixture(args.fixture) if args.fixture else main(args)
+    if args.fixture:
+        fixture(args.fixture)
+    else:
+        with tempfile.TemporaryDirectory(prefix="ocu-password-runtime-") as directory:
+            os.environ.setdefault("XDG_RUNTIME_DIR", directory)
+            main(args)
