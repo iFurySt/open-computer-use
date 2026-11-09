@@ -1077,11 +1077,16 @@ public final class ComputerUseService {
                 throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
             }
 
-            try verifySetValueReadBack(requested: value, elementIndex: elementIndex, read: {
-                // Direct AX reads: never verify against a cached snapshot value.
-                var actual: CFTypeRef?
-                return AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &actual) == .success ? actual : nil
-            }, validate: { try requireUsableComputerUseSession() })
+            try requireUsableComputerUseSession()
+            // A password field's value is never read back: AppKit answers "" whatever it holds, so the check failed a
+            // write that had worked and invited sending it again.
+            if !isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) {
+                try verifySetValueReadBack(requested: value, elementIndex: elementIndex, read: {
+                    // Direct AX reads: never verify against a cached snapshot value.
+                    var actual: CFTypeRef?
+                    return AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &actual) == .success ? actual : nil
+                }, validate: { try requireUsableComputerUseSession() })
+            }
         } catch {
             settleVisualCursor(at: cursorTarget)
             throw error
@@ -1900,6 +1905,7 @@ public final class ComputerUseService {
     }
 
     private func typeTextUsingAccessibility(_ text: String, on element: AXUIElement, pid: pid_t) throws -> Bool {
+        if isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) { return false }
         let attribute: String
         let value: String
         var caret: Int?
@@ -2111,6 +2117,10 @@ public final class ComputerUseService {
     }
 
     private func stringValue(of element: AXUIElement, attribute: String) -> String? {
+        if (attribute == kAXValueAttribute as String || attribute == kAXSelectedTextAttribute as String),
+           isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) {
+            return nil
+        }
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
         guard result == .success, let value else {
