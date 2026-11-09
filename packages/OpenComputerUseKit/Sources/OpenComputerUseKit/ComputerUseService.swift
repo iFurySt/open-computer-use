@@ -1077,6 +1077,7 @@ public final class ComputerUseService {
                 throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
             }
 
+            try requireUsableComputerUseSession()
             // A password field's value is never read back: AppKit answers "" whatever it holds, so the check failed a
             // write that had worked and invited sending it again.
             if !isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) {
@@ -1904,6 +1905,7 @@ public final class ComputerUseService {
     }
 
     private func typeTextUsingAccessibility(_ text: String, on element: AXUIElement, pid: pid_t) throws -> Bool {
+        if isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) { return false }
         let attribute: String
         let value: String
         var caret: Int?
@@ -2115,7 +2117,7 @@ public final class ComputerUseService {
     }
 
     private func stringValue(of element: AXUIElement, attribute: String) -> String? {
-        if attribute == kAXValueAttribute as String,
+        if (attribute == kAXValueAttribute as String || attribute == kAXSelectedTextAttribute as String),
            isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) {
             return nil
         }

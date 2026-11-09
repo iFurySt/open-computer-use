@@ -30,3 +30,10 @@ AppKit 的 `NSSecureTextField` 对 AXValue 回答空串。`type_text` 把空串�
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/AXSemanticRenderingTests.swift`
 - `scripts/tests/fixtures/MacOSTextInputFixture.swift`
 - `scripts/tests/macos-text-input-smoke.mjs`
+
+### Maintainer follow-up (2026-11-09)
+
+- 原补丁仍批量请求 AXValue，且未过滤 AXSelectedText；改为先读 metadata，普通字段再读值，快照缓存、query 与非缓存路径均覆盖。密码输入直接用键盘路径，写入完成后仍验证会话。
+- 独立真实 AppKit 对照：旧 main 追加 X 后把 hunter2 变成 X 并报错；修复后为 hunter2X，set_value 成功，普通文本、中文、emoji、光标、选区与 JS/CLI 回归通过。
+- 增加故意暴露秘密的 NSSecureTextField provider 及读取计数，snapshot / selected text / query 不请求密码属性；普通字段仍可读取。Swift 455 项，9 跳过，无失败。
+- 本机 Locked Use 未批准 dev 身份；使用同团队签名且已获批准的正式身份临时 app 测试，不改系统授权，不停服务。

@@ -154,6 +154,7 @@ final class AXSemanticRenderingTests: XCTestCase {
         let password = fixture.add(5, role: "AXTextField", title: "Password")
         password.attributes["AXSubrole"] = "AXSecureTextField" as CFString
         password.attributes["AXValue"] = "hunter2-planted" as CFString
+        password.attributes["AXSelectedText"] = "hunter2-selected" as CFString
         password.settable = true
         fixture.nodes[2]!.children.append(5)
         let output = fixture.render(focused: 5)

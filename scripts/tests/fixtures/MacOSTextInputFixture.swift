@@ -66,13 +66,25 @@ final class ProbeTextView: NSTextView {
         }
     }
 }
+// Deliberately misbehaving provider: proves filtering happens before requesting secrets.
+final class ProbeSecureTextField: NSSecureTextField {
+    var exposeValue = false
+    var secretReads = 0
+    override func accessibilityAttributeValue(_ attribute: NSAccessibility.Attribute) -> Any? {
+        if exposeValue && (attribute == .value || attribute == .selectedText) {
+            secretReads += 1
+            return stringValue
+        }
+        return super.accessibilityAttributeValue(attribute)
+    }
+}
 final class Controller {
     let app: TextInputApplication
     let window = NSWindow(contentRect: NSRect(x: 180, y: 180, width: 500, height: 330),
         styleMask: [.titled], backing: .buffered, defer: false)
     let view = ProbeTextView(frame: NSRect(x: 20, y: 100, width: 460, height: 190))
     let field = NSTextField(frame: NSRect(x: 20, y: 40, width: 460, height: 30))
-    let secure = NSSecureTextField(frame: NSRect(x: 20, y: 5, width: 460, height: 30))
+    let secure = ProbeSecureTextField(frame: NSRect(x: 20, y: 5, width: 460, height: 30))
     let sheetField = NSTextField(frame: NSRect(x: 20, y: 45, width: 320, height: 30))
     var sheet: NSPanel?
     let stateURL = URL(fileURLWithPath: CommandLine.arguments[1])
@@ -106,6 +118,7 @@ final class Controller {
                 if let sheet { window.endSheet(sheet); sheet.orderOut(nil); self.sheet = nil }
                 view.valueWritable = true; view.selectedWritable = true; view.rejectSelectedWrite = false; view.rejectValueWrite = false; view.rejectCaretWrite = false; view.moveFocusOnProbe = false
                 view.string = "hello world"; field.stringValue = "untouched"; secure.stringValue = "hunter2"; sheetField.stringValue = "save.txt"
+                secure.exposeValue = false; secure.secretReads = 0
                 view.valueMode = "normal"
                 view.valueWrites = 0; view.selectedWrites = 0
             }
@@ -126,6 +139,7 @@ final class Controller {
                 window.beginSheet(panel)
                 sheet = panel
             }
+            if let expose = cmd["exposeSecureValue"] as? Bool { secure.exposeValue = expose; secure.secretReads = 0 }
             let owner = target == "sheet" ? sheet! : window
             let input: NSView = target == "field" ? field : target == "secure" ? secure : target == "sheet" ? sheetField : view
             if let text = cmd["text"] as? String {
@@ -141,7 +155,7 @@ final class Controller {
         }
         let range = view.selectedRange()
         let data = try! JSONSerialization.data(withJSONObject: [
-            "serial": serial, "view": view.string, "field": field.stringValue, "secure": secure.stringValue, "sheet": sheetField.stringValue,
+            "serial": serial, "view": view.string, "field": field.stringValue, "secure": secure.stringValue, "secretReads": secure.secretReads, "sheet": sheetField.stringValue,
             "selection": [range.location, range.length], "target": target,
             "valueWrites": view.valueWrites, "selectedWrites": view.selectedWrites])
         try? data.write(to: stateURL, options: .atomic)

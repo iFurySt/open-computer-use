@@ -167,6 +167,19 @@ try {
   assert.equal(state().view,'hello world');
   console.log('Password field: typing inserts at the caret, set_value succeeds, and the value never reaches the snapshot.');
 
+  await configure({target:'secure',exposeSecureValue:true});
+  const secret = state().secure;
+  const passwordObservation = await call('get_app_state',{include_screenshot:false});
+  assert.ok(!JSON.stringify(passwordObservation).includes(secret));
+  const byName = await call('query',{text:'Password input'});
+  assert.ok(!JSON.stringify(byName).includes(secret));
+  const byValue = await call('query',{text:secret,exact:true});
+  assert.ok(!JSON.stringify(byValue).includes('Password input'), 'Password matched by value');
+  await configure({target:'secure'}); // publish any reads made during snapshot/query
+  assert.equal(state().secretReads,0, 'Snapshot/query requested a password value or selection');
+  console.log('Password provider: snapshot, selected text and query do not request secret attributes.');
+
+
   await reset();
   worker = new WorkerJavaScriptSession({native});
   const js = await worker.run(`var textApp = await cua.getApp(${JSON.stringify(appName)}, {initialState:false}); await textApp.typeText("JS");`);
