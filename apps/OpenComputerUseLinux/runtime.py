@@ -252,6 +252,8 @@ def numeric_value(node):
 
 
 def element_value(node, text_limit=DEFAULT_TEXT_LIMIT):
+    if is_password(node):
+        return ""
     return text_value(node, text_limit=text_limit) or numeric_value(node)
 
 

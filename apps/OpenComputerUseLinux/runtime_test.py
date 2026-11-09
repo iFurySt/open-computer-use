@@ -85,6 +85,9 @@ class RuntimeInterfaceDetectionTests(unittest.TestCase):
 
         self.assertEqual(self.runtime.text_value(node), "")
         self.assertEqual(self.runtime.text_value(node, text_limit=None), "")
+        with mock.patch.object(self.runtime, "numeric_value", side_effect=AssertionError("password numeric read")), \
+             mock.patch.object(node, "get_text_iface", side_effect=AssertionError("password text read")):
+            self.assertEqual(self.runtime.element_value(node, text_limit=None), "")
 
     def test_insert_text_uses_accessible_interfaces(self):
         node = InterfaceOnlyAccessible(["Accessible", "Text", "EditableText"])

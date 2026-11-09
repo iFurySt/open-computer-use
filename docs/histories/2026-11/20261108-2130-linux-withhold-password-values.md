@@ -26,3 +26,9 @@ GTK 4 的 `GtkPasswordEntry` 对 AT-SPI `GetText` 返回明文（GTK 3 返回圆
 - `apps/OpenComputerUseLinux/runtime_test.py`
 - `docs/ARCHITECTURE.md`
 - `docs/releases/feature-release-notes.md`
+
+### Maintainer follow-up (2026-11-09)
+
+- 用户授权依次处理 #178、#164、#181。补充 Linux 密码节点的 numeric fallback 防护，避免 Text 被过滤后改从 Value 接口读取。
+- 检查 Windows 同类路径并补 UIA IsPassword 防护：普通值、缓存值和选区都受保护，未知标记不读取；批量缓存不预取密码值。
+- 加入可重复 GTK 3/4 假密码 fixture 与 WPF PasswordBox 回归；普通文本作为正对照。边界见 `docs/password-fields.md`。
