@@ -70,6 +70,17 @@ public static class OCUWin32 {
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int count);
+
+    public static string WindowClass(IntPtr hwnd, uint expectedProcessId) {
+        uint pid;
+        if (hwnd == IntPtr.Zero || GetWindowThreadProcessId(hwnd, out pid) == 0 || pid != expectedProcessId)
+            return null;
+        var name = new System.Text.StringBuilder(256);
+        return GetClassName(hwnd, name, name.Capacity) > 0 ? name.ToString() : null;
+    }
+
     // Hit-test inside the requested window, never against the desktop occluder.
     public static IntPtr ClickTarget(IntPtr root, int x, int y) {
         uint rootPid; GetWindowThreadProcessId(root, out rootPid);
@@ -818,7 +829,13 @@ function Limit-Text([string]$Text, $TextLimit = $script:DefaultTextLimit) {
     return $Text
 }
 
+# Unknown password status is not permission to read a potentially sensitive value.
+function Test-PasswordElement($element) {
+    try { return ($element.Current.IsPassword -ne $false) } catch { return $true }
+}
+
 function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
+    if (Test-PasswordElement $element) { return "" }
     try {
         $valuePattern = $element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
         $value = $valuePattern.Current.Value
@@ -866,12 +883,11 @@ function New-TreeCacheRequest {
     $cache = New-Object Windows.Automation.CacheRequest
     $cache.TreeScope = [Windows.Automation.TreeScope]::Element
     $cache.TreeFilter = [Windows.Automation.Condition]::TrueCondition
-    foreach ($name in @('ControlType', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
+    foreach ($name in @('ControlType', 'IsPassword', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
         'IsInvokePatternAvailable', 'IsTogglePatternAvailable', 'IsSelectionItemPatternAvailable', 'IsExpandCollapsePatternAvailable',
         'IsScrollItemPatternAvailable', 'IsScrollPatternAvailable', 'IsValuePatternAvailable')) {
         $cache.Add([Windows.Automation.AutomationElement]::($name + 'Property'))
     }
-    $cache.Add([Windows.Automation.ValuePattern]::ValueProperty)
     $cache.Add([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
     return $cache
 }
@@ -898,8 +914,8 @@ function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
             elseif ($state -eq [Windows.Automation.ExpandCollapseState]::Expanded) { $actions.Add('Collapse') }
         }
         $value = ''
-        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty)) {
-            $value = Limit-Text ([string]$element.GetCachedPropertyValue([Windows.Automation.ValuePattern]::ValueProperty)) $TextLimit
+        if ($info.IsPassword -eq $false) {
+            $value = Get-ElementValue $element $TextLimit
         }
         return [pscustomobject]@{
             index = $index
@@ -1071,18 +1087,43 @@ function Get-FocusedSummary($processId, $TextLimit = $script:DefaultTextLimit) {
     return $null
 }
 
+# Three states: false is a known non-Chromium window; null means classification
+# failed. Unknown windows omit optional selected text instead of probing a risky provider.
+function Test-ChromiumWindow($processId) {
+    try {
+        $process = Get-Process -Id $processId -ErrorAction Stop
+        $className = [OCUWin32]::WindowClass($process.MainWindowHandle, [uint32]$processId)
+        if ([string]::IsNullOrEmpty($className)) { return $null }
+        return $className -like "Chrome_*"
+    } catch { return $null }
+}
+
+function Read-SafeSelectedText($focused, $TextLimit) {
+    if (Test-PasswordElement $focused) { return $null }
+    # Embedded Chromium controls can live under a non-Chromium host HWND.
+    if ($focused.Current.FrameworkId -eq 'Chrome' -or $focused.Current.ClassName -like 'Chrome_*') { return $null }
+    $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
+    $selection = $textPattern.GetSelection()
+    if ($selection.Count -gt 0) {
+        $maxLength = if ($null -eq $TextLimit) { -1 } else { [int]$TextLimit + 1 }
+        return Limit-Text ($selection.Item(0).GetText($maxLength)) $TextLimit
+    }
+    return $null
+}
+
 function Get-SelectedText($processId, $TextLimit = $script:DefaultTextLimit) {
+    # Chromium and Electron UIA providers raise an uncatchable AccessViolationException
+    # inside TextPatternRange.GetText, which terminates the PowerShell runspace and
+    # fails every observation/action for that app. Skip the selection read for them.
+    if ((Test-ChromiumWindow $processId) -ne $false) {
+        return $null
+    }
     try {
         $focused = [Windows.Automation.AutomationElement]::FocusedElement
         if ($null -eq $focused -or $focused.Current.ProcessId -ne $processId) {
             return $null
         }
-        $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
-        $selection = $textPattern.GetSelection()
-        if ($selection.Count -gt 0) {
-            $maxLength = if ($null -eq $TextLimit) { -1 } else { [int]$TextLimit + 1 }
-            return Limit-Text ($selection.Item(0).GetText($maxLength)) $TextLimit
-        }
+        return Read-SafeSelectedText $focused $TextLimit
     } catch {
     }
     return $null
