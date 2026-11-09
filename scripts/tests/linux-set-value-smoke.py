@@ -18,10 +18,11 @@ def fixture(name, state_file):
     window=Gtk.Window(title=name);window.set_default_size(500,300)
     box=Gtk.Box(orientation=Gtk.Orientation.VERTICAL);window.add(box)
     entries={}
-    for mode in ['normal','ignore','limited','delay']:
+    for mode in ['normal','ignore','limited','delay','readonly']:
         entry=Gtk.Entry(text='old');entry.get_accessible().set_name('Value '+mode)
         entries[mode]=entry;box.pack_start(entry,False,False,5)
         if mode=='limited': entry.set_max_length(4)
+        if mode=='readonly': entry.set_editable(False)
         if mode=='ignore':
             entry.connect('insert-text',lambda e,*_:e.stop_emission_by_name('insert-text'))
             entry.connect('delete-text',lambda e,*_:e.stop_emission_by_name('delete-text'))
@@ -53,14 +54,17 @@ def smoke(native):
                 h.wait_for(state_file.exists,'GTK startup')
                 for read_back in ['0','1']:
                     client=h.MCP(native,read_back,stderr)
-                    for mode,value,error in [('normal',' \t中文🙂\n',False),('normal','',False),('normal','same',False),('normal','same',False),('delay','delayed',False),('number','15.0',False),('ignore','new',True),('limited','too long',True)]:
+                    for mode,value,error in [('normal',' \t中文🙂\n',False),('normal','',False),('normal','same',False),('normal','same',False),('delay','delayed',False),('number','15.0',False),('ignore','new','could not verify'),('limited','too long','could not verify'),('readonly','new','read-only')]:
                         tree=client.call('get_app_state',name,include_screenshot=False)
                         assert not tree.get('isError'),h.text(tree)
                         match=re.search(r'^\s*(\d+) .*Value '+mode+r'\b',h.text(tree),re.M)
                         assert match,h.text(tree)
                         result=client.call('set_value',name,element_index=match[1],value=value)
-                        assert bool(result.get('isError'))==error,h.text(result)
-                        if error: assert 'could not verify' in h.text(result),h.text(result)
+                        assert bool(result.get('isError'))==bool(error),h.text(result)
+                        if error:
+                            assert error in h.text(result),h.text(result)
+                            if mode == 'readonly':
+                                assert json.loads(state_file.read_text())[mode] == 'old', 'read-only value changed'
                         else: h.wait_for(lambda:json.loads(state_file.read_text())[mode]==(float(value) if mode=='number' else value),'Exact receiver value')
                         print(f'Real GTK read-back={read_back}, mode={mode}, expectedError={error}: passed.',flush=True)
                     client.close();client=None

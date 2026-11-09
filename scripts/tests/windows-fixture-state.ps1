@@ -16,3 +16,24 @@ function Read-WindowsFixtureState([string]$Path) {
         }
     }
 }
+
+# Publish a complete command before exposing it to the fixture timer. Directly
+# truncating the live file can leave a transient JSON error recorded in its state.
+function Write-WindowsFixtureCommand([string]$Path, $Command) {
+    $temporary = $Path + '.' + [Guid]::NewGuid() + '.tmp'
+    try {
+        [IO.File]::WriteAllText($temporary, ($Command | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+        for ($attempt = 0; $attempt -lt 20; $attempt++) {
+            try {
+                if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary, $Path, ($temporary + ".bak")) }
+                else { [IO.File]::Move($temporary, $Path) }
+                return
+            } catch [IO.IOException] {
+                if ($attempt -eq 19) { throw }
+                Start-Sleep -Milliseconds 10
+            }
+        }
+    } finally {
+        Remove-Item -LiteralPath $temporary, ($temporary + ".bak") -Force -ErrorAction SilentlyContinue
+    }
+}
