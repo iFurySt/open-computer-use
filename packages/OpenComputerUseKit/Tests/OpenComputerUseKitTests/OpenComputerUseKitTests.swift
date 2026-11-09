@@ -2166,6 +2166,32 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testClickSequenceNeverFallsBackAfterPartialDelivery() throws {
+        for outcomes: [AXError] in [[.success, .actionUnsupported], [.success, .cannotComplete], [.cannotComplete]] {
+            var calls = 0
+            XCTAssertThrowsError(try performClickActionSequence(action: "AXPress", repeatCount: 3, send: {
+                defer { calls += 1 }
+                return outcomes[calls]
+            }, pause: {}))
+            XCTAssertEqual(calls, outcomes.count)
+        }
+        var calls = 0
+        XCTAssertFalse(try performClickActionSequence(action: "AXPress", repeatCount: 2, send: {
+            calls += 1; return .actionUnsupported
+        }, pause: {}))
+        XCTAssertEqual(calls, 1)
+        calls = 0
+        XCTAssertTrue(try performClickActionSequence(action: "AXPress", repeatCount: 2, send: {
+            calls += 1; return .success
+        }, pause: {}))
+        XCTAssertEqual(calls, 2)
+        calls = 0
+        XCTAssertTrue(try performClickActionSequence(action: "AXOpen", repeatCount: 2, send: {
+            calls += 1; return .attributeUnsupported
+        }, pause: {}))
+        XCTAssertEqual(calls, 1, "Legacy AXOpen handling must not open twice")
+    }
+
     func testClickChainTriesAnotherWayOnlyWhenTheAppRanNothing() throws {
         func ran(_ result: AXError, _ action: String = kAXPressAction) -> String {
             do { return try clickActionRan(result, action: action) ? "ran" : "refused" } catch { return "stop" }

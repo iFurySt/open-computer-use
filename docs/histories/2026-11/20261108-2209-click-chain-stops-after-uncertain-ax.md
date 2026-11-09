@@ -23,3 +23,11 @@
 ### 📁 Files Modified
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
+
+### Maintainer follow-up (2026-11-09)
+
+- 基于已合并 #178/#164 的最新 main 解决冲突。抽出生产连击序列供测试覆盖，补首次拒绝/超时、部分成功后拒绝/超时、正常双击、AXOpen 不重复。
+- 新增可重复的真实 AppKit 慢按钮脚本：修复前连续 3 轮每次投递 3 次、约 6.2 秒且返回成功；修复后每次 1 次、约 1.5 秒返回不确定结果。快速单击和有意双击分别准确执行 1/2 次。
+- Swift 457 项（9 跳过）无失败；签名 release app 构建通过；点击几何、后代保护回归通过。桌面有活动，使用既有 allow-desktop-activity 模式，不声称本轮验证了前台/物理指针稳定。
+- 文件面板首次运行与另一 GUI probe 重叠时出现一次取消异常；改为独立顺序运行，旧版与修复版各 12 个 custom/filtered/plain/modal × snapshot/query/coordinate 场景均通过。最终证据使用顺序运行。
+- 文档与入口见 `docs/click-outcomes.md`。不改系统授权、不启用全局指针；Linux 临时容器已清理。

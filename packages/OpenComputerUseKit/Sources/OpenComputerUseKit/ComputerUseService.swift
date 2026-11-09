@@ -538,6 +538,30 @@ func clickMayHaveActedMessage(what: String, result: AXError) -> String {
     return "click: \(what) went out and \(answer); it may have acted, so no other click method was tried. Read the app state before retrying; a repeat could act twice."
 }
 
+// Shared by production dispatch and sequence tests: a partially delivered multi-click
+// must never return "unhandled" and restart through another delivery method.
+func performClickActionSequence(action: String, repeatCount: Int,
+                                send: () throws -> AXError,
+                                pause: () -> Void = { Thread.sleep(forTimeInterval: 0.05) }) throws -> Bool {
+    let attempts = max(repeatCount, 1)
+    for index in 0..<attempts {
+        let result = try send()
+        guard try clickActionRan(result, action: action) else {
+            guard index == 0 else {
+                throw ComputerUseError.message("click: \(action) \(index + 1) of \(attempts) was refused after \(index) went out; no other click method was tried. Read the app state before retrying.")
+            }
+            return false
+        }
+        // AXOpen answered attributeUnsupported and opened: never open it again.
+        if result != .success { return true }
+        if index < attempts - 1 {
+            pause()
+        }
+    }
+
+    return true
+}
+
 func canUseActivationOnlyClickFallback(role: String?) -> Bool {
     guard let role else {
         return false
@@ -1599,24 +1623,10 @@ public final class ComputerUseService {
             return false
         }
 
-        let attempts = max(repeatCount, 1)
-        for index in 0..<attempts {
+        return try performClickActionSequence(action: action, repeatCount: repeatCount, send: {
             try requireUsableComputerUseSession()
-            let result = AXUIElementPerformAction(element, action as CFString)
-            guard try clickActionRan(result, action: action) else {
-                guard index == 0 else {
-                    throw ComputerUseError.message("click: \(action) \(index + 1) of \(attempts) was refused after \(index) went out; no other click method was tried. Read the app state before retrying.")
-                }
-                return false
-            }
-            // AXOpen answered attributeUnsupported and opened: never open it again.
-            if result != .success { return true }
-            if index < attempts - 1 {
-                Thread.sleep(forTimeInterval: 0.05)
-            }
-        }
-
-        return true
+            return AXUIElementPerformAction(element, action as CFString)
+        })
     }
 
     private func activateClickTarget(element: AXUIElement, availableActions: [String]) throws -> Bool {
