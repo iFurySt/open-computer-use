@@ -25,7 +25,7 @@ function Write-WindowsFixtureCommand([string]$Path, $Command) {
         [IO.File]::WriteAllText($temporary, ($Command | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
         for ($attempt = 0; $attempt -lt 20; $attempt++) {
             try {
-                if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary, $Path, $null) }
+                if (Test-Path -LiteralPath $Path) { [IO.File]::Replace($temporary, $Path, ($temporary + ".bak")) }
                 else { [IO.File]::Move($temporary, $Path) }
                 return
             } catch [IO.IOException] {
@@ -34,6 +34,6 @@ function Write-WindowsFixtureCommand([string]$Path, $Command) {
             }
         }
     } finally {
-        Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $temporary, ($temporary + ".bak") -Force -ErrorAction SilentlyContinue
     }
 }
