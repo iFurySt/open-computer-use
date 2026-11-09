@@ -24,3 +24,13 @@
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/AccessibilitySnapshot.swift`
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/ElementIdentityTests.swift`
+
+### Maintainer review: final behavior
+
+基于最新 main，收紧为只验证原 AX 引用，身份变化/引用失效/读取失败就拒绝并要求重新 get_app_state，不按同名控件自动改绑。这样避免误选替代对象，也移除了动作路径上的整树搜索和额外时间预算。名称、role/subrole、identifier 与静态文字/弹出按钮的值参与身份；普通文本内容和复选状态不参与。
+
+读取当前 role/subrole 后才按需要读取 AXValue；不批量读取任意候选的值，保留密码保护。属性级 AX 错误也不能当成普通缺失值；无 role 的身份不通过。
+
+真实 AppKit/native MCP 对照：main 在 Alpha 改成 Beta 后用旧索引按到了 Beta；修复版拒绝且计数不变，重新观察后能正确点击 Alpha。再次改名同样拒绝；普通文本框用同一索引连续 set_value 两次正常。脚本：scripts/tests/macos-element-identity-smoke.mjs，baseline 可加 --baseline。测试只使用临时自有窗口，不操作用户文档。
+
+最终验证：Swift 463 项、9 skipped、0 failures；真实 NSOpenPanel 12 组快照/查询/坐标矩阵与 AppKit 文本/密码回归通过，文档检查通过。

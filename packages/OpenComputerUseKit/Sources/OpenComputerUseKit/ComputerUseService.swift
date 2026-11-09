@@ -1404,21 +1404,11 @@ public final class ComputerUseService {
         return try keptRecord(record, index: index, snapshot: snapshot)
     }
 
-    /// The record an action on `index` uses: the snapshot's while its element still reads as the snapshot showed it,
-    /// else the one element in the window that now does. Apps reuse controls: two buttons that swapped titles after
-    /// the read would otherwise have the click press the one now showing the other title.
     private func keptRecord(_ record: ElementRecord, index: String, snapshot: AppSnapshot) throws -> ElementRecord {
         guard let recorded = record.identity, let element = record.element else { return record }
-        let valueToo = ElementIdentity.valueIsName.contains(recorded.role ?? "")
-        let now = try ElementIdentity.read(element, valueToo: valueToo)?.identity
-        guard let again = try ElementIdentity.rebind(index: index, recorded: recorded, now: now, candidates: {
-            snapshot.windowElement.map { ElementIdentity.walk($0, valueToo: valueToo) } ?? ([], false)
-        }) else { return record }
-        debugClickDecision("element \(index) rebound to the one element that reads as \(recorded.described)")
-        return ElementRecord(index: record.index, identifier: record.identifier, element: again,
-                             localFrame: localFrame(of: again, windowBounds: snapshot.windowBounds), role: record.role,
-                             title: record.title, value: record.value, rawActions: copyActions(for: again) ?? record.rawActions,
-                             prettyActions: record.prettyActions, isSyntheticText: record.isSyntheticText, identity: recorded)
+        let now = try ElementIdentity.read(element)
+        try ElementIdentity.validate(index: index, recorded: recorded, now: now)
+        return record
     }
 
     func matchingAction(requested: String, record: ElementRecord) -> String? {
