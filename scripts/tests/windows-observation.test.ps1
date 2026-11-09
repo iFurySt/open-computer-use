@@ -85,3 +85,20 @@ foreach ($role in @("edit", "editable text", ([string][char]0x7F16 + [char]0x8F9
     Assert ((Input-Index $result) -eq "7") "Smoke index lookup depends on the UI language"
 }
 Write-Output "Observation smoke helpers: zero/single/multiple images and localized control roles passed."
+
+# Password providers must not be asked for Value/Text, including unknown status.
+foreach ($name in @('Test-PasswordElement', 'Get-ElementValue')) {
+    $function = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $name }, $true)
+    Assert ($null -ne $function) "Missing password guard"
+    Invoke-Expression $function.Extent.Text
+}
+foreach ($status in @($true, $null)) {
+    $node = [pscustomobject]@{ Current = [pscustomobject]@{ IsPassword = $status }; reads = 0 }
+    $node | Add-Member ScriptMethod GetCurrentPattern { param($pattern) $this.reads++; throw 'Must not read' }
+    Assert ((Get-ElementValue $node) -eq '' -and $node.reads -eq 0) 'Password pattern requested'
+}
+$selectionSource = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-SelectedText' }, $true).Extent.Text
+Assert ($selectionSource.IndexOf('Test-PasswordElement') -lt $selectionSource.IndexOf('$textPattern =')) 'Selection guard missing'
+$cacheSource = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'New-TreeCacheRequest' }, $true).Extent.Text
+Assert (-not $cacheSource.Contains('ValuePattern]::ValueProperty')) 'Bulk cache requests secret values'
+Write-Output 'Password value guards and bulk-read exclusion passed.'
