@@ -249,3 +249,135 @@ final class AXActiveMenuTests: XCTestCase {
         XCTAssertTrue(tree.entries.isEmpty)
     }
 }
+
+/// review 追加：读不到 / 快速无菜单路径 / 截断 / 窗口按钮排序。
+extension AXActiveMenuTests {
+    func testMenuLevelWindowWithoutReadableMenuIsReportedUnreadable() {
+        let fixture = fixture()
+        // 主窗口校验失败（应用不回答）：有菜单层级窗口就报 unreadable，没有就是普通"无菜单"。
+        for present in [false, true] {
+            let tree = readActiveAXMenus(menuBar: fixture.bar, focused: { nil }, pid: 42,
+                                         menuWindowPresent: present, validateWindow: { false }, reader: reader())
+            XCTAssertTrue(tree.roots.isEmpty)
+            XCTAssertEqual(tree.menuWindowUnreadable, present)
+            XCTAssertEqual(tree.notes, present ? [AXActiveMenuNote.unreadable] : [])
+        }
+        let expired = readActiveAXMenus(menuBar: fixture.bar, focused: { nil }, pid: 42, expired: { true },
+                                        menuWindowPresent: true, validateWindow: { true }, reader: reader())
+        XCTAssertTrue(expired.menuWindowUnreadable, "预算一开始就耗尽也不能伪装成没有菜单")
+        let found = readActiveAXMenus(menuBar: fixture.bar, focused: { nil }, pid: 42,
+                                      menuWindowPresent: true, validateWindow: { true }, reader: reader())
+        XCTAssertTrue(found.roots.first === fixture.menu)
+        XCTAssertFalse(found.menuWindowUnreadable)
+        XCTAssertTrue(found.notes.isEmpty)
+        fixture.selected.selected = false
+        let none = readActiveAXMenus(menuBar: fixture.bar, focused: { nil }, pid: 42,
+                                     menuWindowPresent: true, validateWindow: { true }, reader: reader())
+        XCTAssertTrue(none.menuWindowUnreadable, "菜单窗口在屏但 AX 没有任何候选，同样是读不到")
+        XCTAssertEqual(
+            AXActiveMenuNote.unreadable,
+            "[A menu appears to be open but did not answer accessibility reads; "
+                + "do not click its opener again. Press Escape to close it or take a screenshot.]"
+        )
+    }
+
+    func testWindowTriageSkipsDiscoveryWithoutMenuCandidateWindow() {
+        func window(_ id: CGWindowID, pid: pid_t = 42, layer: Int) -> AXMenuWindowEvidence {
+            AXMenuWindowEvidence(windowID: id, pid: pid, bounds: CGRect(x: 0, y: 0, width: 200, height: 100),
+                                 layer: layer, onScreen: true, alpha: 1)
+        }
+        let popUp = AXMenuWindowEvidence.popUpMenuLevel
+        XCTAssertEqual(popUp, 101)
+        var offScreen = window(13, layer: popUp)
+        offScreen.onScreen = false
+        var transparent = window(14, layer: popUp)
+        transparent.alpha = 0
+        // layer 0 普通窗口、别的进程的菜单、目标窗口本身、离屏或透明窗口：都不触发 AX 发现。
+        let quietWindows = [window(11, layer: 0), window(12, pid: 99, layer: popUp), window(11, layer: popUp),
+                            offScreen, transparent]
+        let quiet = AXMenuWindowTriage(windows: quietWindows, pid: 42, rootWindowID: 11)
+        XCTAssertTrue(quiet.skipsDiscovery)
+        XCTAssertFalse(quiet.menuLevelWindowPresent)
+        let skipped: AXActiveMenuTree<Node> = quiet.discover { _ in
+            XCTFail("没有 layer > 0 的在屏窗口不可进入 AX 发现")
+            return .init()
+        }
+        XCTAssertTrue(skipped.roots.isEmpty)
+        XCTAssertFalse(skipped.menuWindowUnreadable)
+        // 浮动面板等非菜单层级窗口：要跑发现，但不能作为"菜单在但读不到"的证据。
+        let floating = AXMenuWindowTriage(windows: [window(11, layer: 0), window(15, layer: 3)],
+                                          pid: 42, rootWindowID: 11)
+        XCTAssertFalse(floating.skipsDiscovery)
+        XCTAssertFalse(floating.menuLevelWindowPresent)
+        let menu = AXMenuWindowTriage(windows: [window(11, layer: 0), window(16, layer: popUp)],
+                                      pid: 42, rootWindowID: 11)
+        XCTAssertFalse(menu.skipsDiscovery)
+        XCTAssertTrue(menu.menuLevelWindowPresent)
+        var presentSeen: Bool?
+        let discovered: AXActiveMenuTree<Node> = menu.discover { present in
+            presentSeen = present
+            return .init(menuWindowUnreadable: present)
+        }
+        XCTAssertEqual(presentSeen, true)
+        XCTAssertTrue(discovered.menuWindowUnreadable)
+    }
+
+    func testNodeAndDepthCapsMarkTreeTruncatedAndCountShownItems() {
+        let fixture = fixture()
+        fixture.menu.children = (0 ..< 5).map { _ in Node(kAXMenuItemRole) }
+        for child in fixture.menu.children {
+            child.parent = fixture.menu
+        }
+        let capped = readActiveAXMenus(menuBar: fixture.bar, focused: { nil }, pid: 42,
+                                       maximumNodes: 3, validateWindow: { true }, reader: reader())
+        XCTAssertTrue(capped.roots.first === fixture.menu)
+        XCTAssertEqual(capped.entries.count, 3)
+        XCTAssertTrue(capped.truncated)
+        XCTAssertEqual(capped.itemCount, 2)
+        XCTAssertEqual(capped.notes, ["[menu truncated: 2 items shown, more exist]"])
+        let full = readActiveAXMenus(menuBar: fixture.bar, focused: { nil }, pid: 42,
+                                     validateWindow: { true }, reader: reader())
+        XCTAssertFalse(full.truncated)
+        XCTAssertEqual(full.itemCount, 5)
+        XCTAssertTrue(full.notes.isEmpty)
+        let shallow = readActiveAXMenus(menuBar: fixture.bar, focused: { nil }, pid: 42,
+                                        maximumDepth: 1, validateWindow: { true }, reader: reader())
+        XCTAssertEqual(shallow.entries.count, 1)
+        XCTAssertTrue(shallow.truncated, "深度上限同样是截断，不能让菜单看起来到此为止")
+        XCTAssertEqual(shallow.itemCount, 0)
+        XCTAssertGreaterThanOrEqual(AXMenuDiscoveryBudget.minimumNodes, 2048)
+    }
+
+    func testWalkBudgetExhaustionKeepsPartialTreeAsTruncated() {
+        let fixture = fixture()
+        fixture.menu.children = (0 ..< 5).map { _ in Node(kAXMenuItemRole) }
+        for child in fixture.menu.children {
+            child.parent = fixture.menu
+        }
+        var checks = 0
+        // 预算在第 4 次检查时用完：根和前三个节点已进树，剩余的标成截断而不是整棵丢掉。
+        let tree = readActiveAXMenus(menuBar: fixture.bar, focused: { nil }, pid: 42,
+                                     walkBudgetExhausted: { checks += 1; return checks > 3 },
+                                     validateWindow: { true }, reader: reader())
+        XCTAssertTrue(tree.roots.first === fixture.menu)
+        XCTAssertEqual(tree.entries.count, 3)
+        XCTAssertTrue(tree.truncated)
+        XCTAssertFalse(tree.menuWindowUnreadable)
+        XCTAssertEqual(AXMenuDiscoveryBudget.verificationShare, 0.4, accuracy: 0.000001)
+    }
+
+    func testWindowChromeButtonsArePartitionedAfterOtherCandidatesInOrder() {
+        typealias Candidate = (name: String, subrole: String?)
+        let nodes: [Candidate] = [("close", kAXCloseButtonSubrole as String), ("toolbar", nil),
+                                  ("minimize", kAXMinimizeButtonSubrole as String),
+                                  ("zoom", kAXZoomButtonSubrole as String), ("send", nil),
+                                  ("fullscreen", kAXFullScreenButtonSubrole as String),
+                                  ("search", "AXSearchField")]
+        let split = partitionWindowChromeButtons(nodes) { $0.subrole }
+        XCTAssertEqual(split.regular.map(\.name), ["toolbar", "send", "search"])
+        XCTAssertEqual(split.deferred.map(\.name), ["close", "minimize", "zoom", "fullscreen"])
+        let plain = partitionWindowChromeButtons(["a", "b"]) { _ in nil }
+        XCTAssertEqual(plain.regular, ["a", "b"])
+        XCTAssertTrue(plain.deferred.isEmpty)
+    }
+}

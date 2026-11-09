@@ -307,6 +307,8 @@ enum SnapshotBuilder {
         TimingLog.measure("snapshot.tree_walk") {
             AXSnapshotReadCache.withSnapshot {
                 for menu in activeMenus.roots { renderer.render(menu) }
+                // "菜单读不到" / "菜单被截断" 紧跟菜单项、先于窗口树，模型不会把它当成窗口树的尾注。
+                renderer.lines.append(contentsOf: activeMenus.notes)
                 renderer.render(rootElement)
             }
         }
@@ -2419,6 +2421,8 @@ enum TargetedAX {
         let truncated: Bool
         let stopReason: String?
         let visitedNodes: Int
+        /// 与快照正文相同的活动菜单提示（读不到 / 被截断）；为空表示没有异常。
+        var notes: [String] = []
     }
 
 }
@@ -2552,9 +2556,16 @@ extension SnapshotBuilder {
         var clip: CGRect?
         // 打开的菜单先搜：菜单项不在窗口子树里，否则 query 永远找不到它们。
         let menus = activeMenus(in: context, maximumNodes: criteria.maxNodes)
-        let roots = menus.roots.map(AXSearchNode.init(element:)) + [AXSearchNode(element: context.windowElement)]
+        let windowRoot = AXSearchNode(element: context.windowElement)
+        var roots = menus.roots.map(AXSearchNode.init(element:)) + [windowRoot]
+        // 窗口自身的关闭 / 最小化 / 缩放按钮是 AXWindow 的直接子节点，广度优先会最先碰到它们；
+        // 它们从窗口遍历里摘出来，等其他候选都搜完再作为额外根搜索。只改 query 顺序，不改快照渲染。
+        var deferredWindowButtons: [AXSearchNode] = []
         var merged = TargetedWalkResult<AXSearchNode>()
-        for root in roots {
+        var position = 0
+        while position < roots.count {
+            let root = roots[position]
+            position += 1
             guard !expired(), merged.stopReason == nil || merged.stopReason == "complete" else { break }
             let maxNodes = max(1, criteria.maxNodes - merged.visitedNodes)
             let limit = max(1, criteria.limit - merged.matches.count)
@@ -2591,7 +2602,16 @@ extension SnapshotBuilder {
                       let elements = values as? [AXUIElement] else {
                     throw ComputerUseError.stateUnavailable("AX children could not be read")
                 }
-                return (elements.map { AXSearchNode(element: $0) }, count > remaining)
+                var nodes = elements.map { AXSearchNode(element: $0) }
+                if node == windowRoot {
+                    let split = partitionWindowChromeButtons(nodes) { child in
+                        AXUIElementSetMessagingTimeout(child.element, 0.05)
+                        return stringValue(of: child.element, attribute: kAXSubroleAttribute as String)
+                    }
+                    deferredWindowButtons = split.deferred
+                    nodes = split.regular
+                }
+                return (nodes, count > remaining)
             }
             return ([], false)
             })
@@ -2599,10 +2619,14 @@ extension SnapshotBuilder {
             merged.visitedNodes += partial.visitedNodes
             merged.stopReason = partial.stopReason
             if merged.matches.count >= criteria.limit { merged.stopReason = "limit"; break }
+            if root == windowRoot { roots.append(contentsOf: deferredWindowButtons) }
         }
         let result = merged
-        let reason = result.stopReason ?? (textTruncated ? "text_limit" : nil)
-        return .init(records: result.matches.compactMap { records[$0] }, truncated: reason != nil, stopReason: reason, visitedNodes: result.visitedNodes)
+        var reason = result.stopReason ?? (textTruncated ? "text_limit" : nil)
+        // 菜单树被节点 / 深度上限截断时，窗口遍历再完整也不能宣称搜遍了：上限之后的菜单项根本没进过搜索。
+        if reason == nil, menus.truncated { reason = "menu_truncated" }
+        return .init(records: result.matches.compactMap { records[$0] }, truncated: reason != nil, stopReason: reason,
+                     visitedNodes: result.visitedNodes, notes: menus.notes)
     }
 
     /// 查询窗口上下文对应的活动菜单；没有可信的 CGWindowID 几何时不读菜单。

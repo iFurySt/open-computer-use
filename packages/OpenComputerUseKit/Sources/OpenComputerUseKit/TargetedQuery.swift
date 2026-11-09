@@ -1,3 +1,4 @@
+import ApplicationServices
 import Foundation
 
 struct TargetedAppIdentity: Equatable {
@@ -109,4 +110,26 @@ func boundedTargetedWalk<Node: Hashable>(
         }
     }
     return result
+}
+
+/// 窗口自身的红绿灯按钮子角色。它们是 AXWindow 的直接子节点，纯 `role: button` 查询若把关闭按钮排第一，
+/// 模型点第一个结果就会关掉窗口（Chrome `--app` 窗口实测）。
+let windowChromeButtonSubroles: Set<String> = [kAXCloseButtonSubrole as String, kAXMinimizeButtonSubrole as String,
+                                               kAXZoomButtonSubrole as String, kAXFullScreenButtonSubrole as String]
+
+/// 把窗口红绿灯按钮从同级候选里摘出来，两组都保持原有相对顺序；调用方把 `deferred` 排到所有其他候选之后。
+/// 只读子角色，不做任何输入；`subrole` 返回 nil 的节点一律当作普通候选。
+func partitionWindowChromeButtons<Node>(
+    _ nodes: [Node], subrole: (Node) -> String?
+) -> (regular: [Node], deferred: [Node]) {
+    var regular: [Node] = []
+    var deferred: [Node] = []
+    for node in nodes {
+        if let subrole = subrole(node), windowChromeButtonSubroles.contains(subrole) {
+            deferred.append(node)
+        } else {
+            regular.append(node)
+        }
+    }
+    return (regular, deferred)
 }

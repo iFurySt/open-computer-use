@@ -17,38 +17,36 @@ struct AXMenuReader<Element> {
 struct AXActiveMenuTree<Element> {
     var roots: [Element] = []
     var entries: [(element: Element, children: [Element])] = []
+    /// 目标进程拥有菜单层级（kCGPopUpMenuWindowLevel）的在屏 CG 窗口，但 AX 发现失败、超时或没找到任何菜单。
+    /// 正在跟踪菜单的应用可能不再回答子节点读取；此时快照若只显示"没有菜单"，模型会再点一次 opener 把菜单关掉。
+    /// 只在 `roots` 为空时为 true。
+    var menuWindowUnreadable = false
+    /// 遍历因节点 / 深度上限提前停止，树里的菜单项不完整；query 据此报告搜索不完整。
+    var truncated = false
+    /// 已进树的菜单项（kAXMenuItemRole）数量，供截断提示使用。
+    var itemCount = 0
 
     func children(of element: Element, equal: (Element, Element) -> Bool) -> [Element]? {
         entries.first(where: { equal($0.element, element) })?.children
     }
+
+    /// 快照树与 query 结果共用的提示行；没有异常时为空。
+    var notes: [String] {
+        var notes: [String] = []
+        if menuWindowUnreadable { notes.append(AXActiveMenuNote.unreadable) }
+        if truncated { notes.append(AXActiveMenuNote.truncated(itemsShown: itemCount)) }
+        return notes
+    }
 }
 
-/// 几何只用于只读菜单可见性佐证，不证明窗口所有权，也不授权输入。
-struct AXMenuWindowEvidence {
-    var windowID: CGWindowID
-    var pid: pid_t
-    var bounds: CGRect
-    var layer: Int
-    var onScreen: Bool
-    var alpha: Double
+/// 面向模型的菜单提示文案；快照正文和 query 的 `notes` 必须用同一份。
+enum AXActiveMenuNote {
+    static let unreadable = "[A menu appears to be open but did not answer accessibility reads; "
+        + "do not click its opener again. Press Escape to close it or take a screenshot.]"
 
-    func matches(_ frame: CGRect, pid: pid_t, excluding rootWindowID: CGWindowID) -> Bool {
-        func valid(_ rect: CGRect) -> Bool {
-            [rect.minX, rect.minY, rect.width, rect.height].allSatisfy(\.isFinite)
-                && rect.width > 0 && rect.height > 0
-        }
-        guard self.pid == pid, windowID != 0, windowID != rootWindowID,
-              onScreen, alpha.isFinite, alpha > 0, layer > 0, valid(frame), valid(bounds) else { return false }
-        // CG/AX 均为全局 point。菜单窗口（layer > 0）在 macOS 26+ 带玻璃/阴影内边距：
-        // AX 报的是菜单内容区，CG 报的是整个窗口，四边各差约 75pt（Contacts 实测）。
-        // 只接受"内容区被窗口包含且每边边距有限"，仍拒绝普通窗口的包含或仅相交。
-        let insets = [frame.minX - bounds.minX, frame.minY - bounds.minY,
-                      bounds.maxX - frame.maxX, bounds.maxY - frame.maxY]
-        return insets.allSatisfy { $0 >= -2 && $0 <= Self.maximumMenuWindowInset }
+    static func truncated(itemsShown: Int) -> String {
+        "[menu truncated: \(itemsShown) items shown, more exist]"
     }
-
-    /// 菜单窗口内容区到窗口边缘的最大可信边距（pt）。
-    static let maximumMenuWindowInset: CGFloat = 96
 }
 
 private struct AXMenuGeometry<Element> {
@@ -138,14 +136,18 @@ func readActiveAXMenus<Element>(
     menuBar: Element?, focused: () -> Element?, pid: pid_t,
     maximumNodes: Int = 256, maximumDepth: Int = 16,
     expired: () -> Bool = { false },
+    walkBudgetExhausted: () -> Bool = { false },
     foundCandidate: () -> Void = {},
     rootWindowID: CGWindowID = 0,
     windowEvidence: () -> [AXMenuWindowEvidence] = { [] },
+    menuWindowPresent: Bool = false,
     prepareForPublication: (Element) -> Bool = { _ in true },
     validateWindow: () -> Bool,
     reader: AXMenuReader<Element>
 ) -> AXActiveMenuTree<Element> {
-    guard maximumNodes > 0, maximumDepth > 0, !expired() else { return .init() }
+    // 任何失败路径都返回同一个空树：有菜单层级窗口时它带 unreadable 标记，而不是伪装成"没有菜单"。
+    let empty = AXActiveMenuTree<Element>(menuWindowUnreadable: menuWindowPresent)
+    guard maximumNodes > 0, maximumDepth > 0, !expired() else { return empty }
     let menu = kAXMenuRole as String
     let item = kAXMenuItemRole as String
     var windows: [AXMenuWindowEvidence]?
@@ -203,14 +205,24 @@ func readActiveAXMenus<Element>(
     }
 
     let initial = selection()
-    guard !expired(), !initial.roots.isEmpty, validateWindow(), !expired() else { return .init() }
+    guard !expired(), !initial.roots.isEmpty, validateWindow(), !expired() else { return empty }
     var tree = AXActiveMenuTree<Element>()
     var seen: [Element] = []
     func walk(_ element: Element, depth: Int) -> Bool {
-        guard depth < maximumDepth, seen.count < maximumNodes, owned(element), reader.visible(element) != false,
-              !contains(seen, element), let role = reader.role(element), [menu, item].contains(role)
+        guard !contains(seen, element) else { return false }
+        // 上限检查放在任何 IPC 之前：到顶后再读角色会把预算耗在不会进树的节点上，整棵树反而因超时被丢弃。
+        // 代价是分隔线等非菜单节点也可能被算成"还有更多项"。
+        // 遍历预算用完同样算截断而不是丢弃：复核还要按节点再读一遍，必须给它留时间，
+        // 否则 2048 的上限只会让长菜单在复核阶段整棵超时，比原先显示 256 项更糟。
+        guard depth < maximumDepth, seen.count < maximumNodes, !walkBudgetExhausted() else {
+            tree.truncated = true
+            return false
+        }
+        guard owned(element), reader.visible(element) != false,
+              let role = reader.role(element), [menu, item].contains(role)
         else { return false }
         seen.append(element)
+        if role == item { tree.itemCount += 1 }
         var descendants: [Element] = []
         // 只探索活动项的候选子菜单；每层仍须独立证明打开，selected 本身不够。
         if role == menu || reader.expanded(element) == true || reader.selected(element)
@@ -229,31 +241,31 @@ func readActiveAXMenus<Element>(
     }
     let final = selection()
     guard !expired(), validateWindow(), !expired(), initial.roots.count == final.roots.count,
-          zip(initial.roots, final.roots).allSatisfy({ reader.equal($0.0, $0.1) }) else { return .init() }
+          zip(initial.roots, final.roots).allSatisfy({ reader.equal($0.0, $0.1) }) else { return empty }
     for entry in tree.entries {
-        guard owned(entry.element), reader.visible(entry.element) != false else { return .init() }
+        guard owned(entry.element), reader.visible(entry.element) != false else { return empty }
         for child in entry.children where reader.role(child) == menu {
-            guard isOpen(child, parent: entry.element, ancestors: final.ancestors) else { return .init() }
+            guard isOpen(child, parent: entry.element, ancestors: final.ancestors) else { return empty }
         }
     }
     for evidence in geometry {
-        guard owned(evidence.element), reader.frame(evidence.element) == evidence.frame else { return .init() }
+        guard owned(evidence.element), reader.frame(evidence.element) == evidence.frame else { return empty }
     }
     if !geometry.isEmpty {
-        guard !expired() else { return .init() }
+        guard !expired() else { return empty }
         let freshWindows = windowEvidence()
         guard !expired(), geometry.allSatisfy({ evidence in
             let matches = freshWindows.filter { $0.matches(evidence.frame, pid: pid, excluding: rootWindowID) }
             guard matches.count == 1, let window = matches.first else { return false }
             return window.windowID == evidence.window.windowID && window.bounds == evidence.window.bounds
                 && window.layer == evidence.window.layer
-        }) else { return .init() }
+        }) else { return empty }
     }
     // 发布的同一批句柄会被 renderer/AXPress 复用，不能携带 discovery 的短超时。
     for entry in tree.entries {
-        guard !expired(), prepareForPublication(entry.element) else { return .init() }
+        guard !expired(), prepareForPublication(entry.element) else { return empty }
     }
-    return expired() ? .init() : tree
+    return expired() ? empty : tree
 }
 
 /// 无候选 discovery 预算 80ms，有候选后 discovery/复核总预算 300ms；每次 AX IPC 至多 40ms。
@@ -261,6 +273,8 @@ func readActiveAXMenus<Element>(
 /// 会从 <1ms 涨到 20–30ms，原来的 4ms 上限让菜单栏读取一律超时、菜单永远读不到。
 /// CG 同步查询返回后检查预算；后续语义渲染沿用普通 AX renderer 的约束。
 /// 只给本次创建/取得的 AX 句柄设置超时，不接收共享 snapshot root。
+/// 进入 AX 发现前先读一次在屏 CG 窗口列表：目标进程没有 layer > 0 的在屏窗口就直接返回"无菜单"，
+/// 这份列表随后复用为首次几何佐证，结束前的复核仍重新读取。
 func captureActiveAXMenus(
     pid: pid_t, windowID: CGWindowID, bounds: CGRect, maximumNodes: Int
 ) -> AXActiveMenuTree<AXUIElement> {
@@ -270,117 +284,49 @@ func captureActiveAXMenus(
         duration - (ProcessInfo.processInfo.systemUptime - started)
     }
     let system = AXMenuSystemReader(remaining: remaining)
-    let application = AXUIElementCreateApplication(pid)
-    let menuBar = system.element(application, kAXMenuBarAttribute)
-    return readActiveAXMenus(
-        menuBar: menuBar, focused: { system.element(application, kAXFocusedUIElementAttribute) }, pid: pid,
-        maximumNodes: min(maximumNodes, 256), expired: { remaining() <= 0 },
-        foundCandidate: { if remaining() > 0 { duration = AXMenuDiscoveryBudget.withCandidate } },
-        rootWindowID: windowID,
-        windowEvidence: { system.windows(pid: pid) },
-        prepareForPublication: {
-            // SDK：非 system-wide 对象设 0 后使用当前全局超时；不修改全局或普通 root。
-            AXUIElementSetMessagingTimeout($0, 0) == .success
-        },
-        validateWindow: {
-            // 重新取得窗口句柄，不能更改 snapshot 持有对象的 timeout。
-            for window in system.array(application, kAXWindowsAttribute).prefix(32) {
-                guard remaining() > 0 else { return false }
-                if system.owner(window) == pid, system.prepare(window),
-                   SkyLightSPI.shared.windowID(for: window) == windowID {
-                    return system.frame(window) == bounds && remaining() > 0
+    var initialWindows: [AXMenuWindowEvidence]? = system.windows(pid: pid)
+    var walkBudget = AXMenuWalkBudget()
+    let triage = AXMenuWindowTriage(windows: initialWindows ?? [], pid: pid, rootWindowID: windowID)
+    return triage.discover { menuWindowPresent in
+        let application = AXUIElementCreateApplication(pid)
+        let menuBar = system.element(application, kAXMenuBarAttribute)
+        return readActiveAXMenus(
+            menuBar: menuBar, focused: { system.element(application, kAXFocusedUIElementAttribute) }, pid: pid,
+            maximumNodes: max(maximumNodes, AXMenuDiscoveryBudget.minimumNodes), expired: { remaining() <= 0 },
+            walkBudgetExhausted: { walkBudget.exhausted(remaining: remaining()) },
+            foundCandidate: { if remaining() > 0 { duration = AXMenuDiscoveryBudget.withCandidate } },
+            rootWindowID: windowID,
+            windowEvidence: {
+                if let cached = initialWindows { initialWindows = nil; return cached }
+                return system.windows(pid: pid)
+            },
+            menuWindowPresent: menuWindowPresent,
+            prepareForPublication: {
+                // SDK：非 system-wide 对象设 0 后使用当前全局超时；不修改全局或普通 root。
+                AXUIElementSetMessagingTimeout($0, 0) == .success
+            },
+            validateWindow: {
+                // 重新取得窗口句柄，不能更改 snapshot 持有对象的 timeout。
+                for window in system.array(application, kAXWindowsAttribute).prefix(32) {
+                    guard remaining() > 0 else { return false }
+                    if system.owner(window) == pid, system.prepare(window),
+                       SkyLightSPI.shared.windowID(for: window) == windowID {
+                        return system.frame(window) == bounds && remaining() > 0
+                    }
                 }
-            }
-            return false
-        },
-        reader: AXMenuReader(
-            owner: system.owner,
-            role: { system.value($0, kAXRoleAttribute) as? String },
-            selected: { system.value($0, kAXSelectedAttribute) as? Bool == true },
-            visible: { system.value($0, "AXVisible") as? Bool },
-            expanded: { system.value($0, "AXExpanded") as? Bool },
-            frame: system.frame,
-            parent: { system.element($0, kAXParentAttribute) },
-            children: system.array,
-            equal: { CFEqual($0, $1) }
+                return false
+            },
+            reader: AXMenuReader(
+                owner: system.owner,
+                role: { system.value($0, kAXRoleAttribute) as? String },
+                selected: { system.value($0, kAXSelectedAttribute) as? Bool == true },
+                visible: { system.value($0, "AXVisible") as? Bool },
+                expanded: { system.value($0, "AXExpanded") as? Bool },
+                frame: system.frame,
+                parent: { system.element($0, kAXParentAttribute) },
+                children: system.array,
+                equal: { CFEqual($0, $1) }
+            )
         )
-    )
-}
-
-/// 活动菜单发现的时间预算（秒）。
-enum AXMenuDiscoveryBudget {
-    /// 还没发现任何菜单候选时的总预算：没有菜单的常规快照只多付这么多。
-    static let discovery: TimeInterval = 0.08
-    /// 发现候选后 discovery + 复核的总预算。
-    static let withCandidate: TimeInterval = 0.3
-    /// 单次 AX IPC 上限。
-    static let perCall: TimeInterval = 0.04
-}
-
-private struct AXMenuSystemReader {
-    let remaining: () -> TimeInterval
-
-    func prepare(_ element: AXUIElement) -> Bool {
-        let interval = remaining()
-        return interval > 0
-            && AXUIElementSetMessagingTimeout(element, Float(min(interval, AXMenuDiscoveryBudget.perCall))) == .success
-    }
-
-    func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
-        guard prepare(element) else { return nil }
-        var result: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &result) == .success,
-              remaining() > 0 else { return nil }
-        return result
-    }
-
-    func element(_ root: AXUIElement, _ attribute: String) -> AXUIElement? {
-        guard let result = value(root, attribute), CFGetTypeID(result) == AXUIElementGetTypeID() else { return nil }
-        return unsafeDowncast(result, to: AXUIElement.self)
-    }
-
-    func owner(_ element: AXUIElement) -> pid_t? {
-        var result: pid_t = 0
-        return AXUIElementGetPid(element, &result) == .success ? result : nil
-    }
-
-    func array(_ element: AXUIElement, _ attribute: String) -> [AXUIElement] {
-        guard prepare(element) else { return [] }
-        var count: CFIndex = 0
-        guard AXUIElementGetAttributeValueCount(element, attribute as CFString, &count) == .success,
-              count > 0, prepare(element) else { return [] }
-        var values: CFArray?
-        guard AXUIElementCopyAttributeValues(element, attribute as CFString, 0, min(count, 256), &values) == .success,
-              remaining() > 0 else { return [] }
-        return (values as? [AXUIElement]) ?? []
-    }
-
-    func frame(_ root: AXUIElement) -> CGRect? {
-        guard let position = value(root, kAXPositionAttribute), let size = value(root, kAXSizeAttribute),
-              CFGetTypeID(position) == AXValueGetTypeID(), CFGetTypeID(size) == AXValueGetTypeID()
-        else { return nil }
-        var point = CGPoint.zero
-        var dimensions = CGSize.zero
-        guard AXValueGetValue(unsafeDowncast(position, to: AXValue.self), .cgPoint, &point),
-              AXValueGetValue(unsafeDowncast(size, to: AXValue.self), .cgSize, &dimensions) else { return nil }
-        return CGRect(origin: point, size: dimensions)
-    }
-
-    func windows(pid: pid_t) -> [AXMenuWindowEvidence] {
-        guard remaining() > 0,
-              let infos = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]],
-              remaining() > 0 else { return [] }
-        return infos.compactMap { info in
-            guard let owner = info[kCGWindowOwnerPID as String] as? NSNumber, owner.int32Value == pid,
-                  let identifier = info[kCGWindowNumber as String] as? NSNumber,
-                  let rect = info[kCGWindowBounds as String] as? NSDictionary,
-                  let bounds = CGRect(dictionaryRepresentation: rect),
-                  let layer = info[kCGWindowLayer as String] as? NSNumber,
-                  let alpha = info[kCGWindowAlpha as String] as? NSNumber,
-                  let visible = info[kCGWindowIsOnscreen as String] as? NSNumber else { return nil }
-            return AXMenuWindowEvidence(windowID: identifier.uint32Value, pid: pid, bounds: bounds,
-                                        layer: layer.intValue, onScreen: visible.boolValue,
-                                        alpha: alpha.doubleValue)
-        }
     }
 }

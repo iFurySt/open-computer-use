@@ -1192,10 +1192,14 @@ public final class ComputerUseService {
         let result = try SnapshotBuilder.targetedSearch(criteria, in: context)
         try requireUsableComputerUseSession()
         let matches = result.records.map { registerTargetedElement(record: $0, context: context, criteria: criteria) }
-        return ["matches": matches, "truncated": result.truncated,
-                "stop_reason": result.stopReason ?? "complete", "visited_nodes": result.visitedNodes,
-                "window_id": context.windowID.map { Int($0) } ?? 0,
-                "max_nodes": criteria.maxNodes, "limit": criteria.limit]
+        var payload: [String: Any] = ["matches": matches, "truncated": result.truncated,
+                                      "stop_reason": result.stopReason ?? "complete",
+                                      "visited_nodes": result.visitedNodes,
+                                      "window_id": context.windowID.map { Int($0) } ?? 0,
+                                      "max_nodes": criteria.maxNodes, "limit": criteria.limit]
+        // 与快照同一份文案：菜单在但读不到 / 菜单被截断。没有异常时不带这个键，老的调用方不受影响。
+        if !result.notes.isEmpty { payload["notes"] = result.notes }
+        return payload
     }
 
     /// A snapshot carrying real window context but no rendered tree or screenshot,
@@ -1563,9 +1567,10 @@ public final class ComputerUseService {
               let windowID = snapshot.targetWindowID, let bounds = snapshot.windowBounds else { return }
         let deadline = ProcessInfo.processInfo.systemUptime + 0.6
         while ProcessInfo.processInfo.systemUptime < deadline {
-            if !captureActiveAXMenus(pid: snapshot.app.pid, windowID: windowID, bounds: bounds, maximumNodes: 64).roots.isEmpty {
-                return
-            }
+            let menus = captureActiveAXMenus(pid: snapshot.app.pid, windowID: windowID, bounds: bounds,
+                                             maximumNodes: 64)
+            // 菜单层级窗口已经在屏但 AX 不回答，同样说明菜单打开了，不必再等。
+            if !menus.roots.isEmpty || menus.menuWindowUnreadable { return }
             Thread.sleep(forTimeInterval: 0.05)
         }
     }
