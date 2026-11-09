@@ -295,6 +295,51 @@ func appendingDragDeliveryNote(to result: ToolCallResult, path: DragDeliveryPath
     return ToolCallResult(content: content, isError: result.isError)
 }
 
+/// 与 `appendingDragDeliveryNote` 同样的插入位置：快照文本之后、截图之前，`primaryText` 仍是快照。
+func appendingResultNote(_ note: String, to result: ToolCallResult) -> ToolCallResult {
+    var content = result.content
+    let insertIndex = content.firstIndex { $0.dictionary["type"] as? String == "image" } ?? content.endIndex
+    content.insert(.text(note), at: insertIndex)
+    return ToolCallResult(content: content, isError: result.isError)
+}
+
+let clickFocusDeliveredUnverifiedNote = "Click delivered a focus request to the text field, but the app did not "
+    + "confirm the focus within 300 ms. Run get_app_state before typing."
+let clickRowSelectionDeliveredUnverifiedNote = "Click delivered a row selection, but the app did not confirm it "
+    + "within 400 ms. Run get_app_state to verify the selection."
+
+/// 一次 AX 写入 / 动作的结论：核实到效果、发出去但没核实到、或者可以证明没生效。
+enum AccessibilityWriteOutcome: Equatable {
+    case verified
+    case delivered
+    case notApplied
+}
+
+enum AccessibilityWriteDelivery: Equatable {
+    case delivered
+    case notApplied
+}
+
+/// 只有这些错误码能证明写入 / 动作没有生效。`.failure` 与 `.cannotComplete`（-25205）不算：
+/// AppKit 对已经执行的 AXConfirm / AXScrollDownByPage 也会答 -25205，Notes 创建备忘录时同样如此。
+func accessibilityWriteProvesNothingApplied(_ error: AXError) -> Bool {
+    switch error {
+    case .attributeUnsupported, .actionUnsupported, .illegalArgument, .noValue, .notImplemented, .invalidUIElement:
+        return true
+    default:
+        return false
+    }
+}
+
+/// 行里的 checkbox / 展开三角 / 按钮有自己的 AXPress，点它们是要按下去，不是选行。
+/// 只有目标就是行 / 单元格本身，或目标没有 AXPress（静态文本、图片）时，点击才等于选中所在行。
+func clickShouldSelectContainingRow(role: String?, actions: [String]) -> Bool {
+    if role == kAXRowRole as String || role == kAXCellRole as String {
+        return true
+    }
+    return !actions.contains { $0.caseInsensitiveCompare(kAXPressAction as String) == .orderedSame }
+}
+
 func selectTextErrorMessage(_ error: TextSelectionResolverError, elementIndex: String) -> String {
     switch error {
     case .emptyText:
@@ -575,6 +620,8 @@ func shouldPreferContainingWebRowAXClickCandidate(
 
 public final class ComputerUseService {
     private var snapshotsByApp: [String: AppSnapshot] = [:]
+    /// 本次 click 里有写入已发出但没核实到效果时的说明；click 返回前取走附到结果上。
+    private var pendingClickDeliveryNote: String?
     private var invalidatedSnapshotAliases: Set<String> = []
     // Read per call: the app agent applies the caller's OPEN_COMPUTER_USE_* variables
     // for the duration of each request.
@@ -690,6 +737,8 @@ public final class ComputerUseService {
 
         let snapshot = try snapshotForAction(app: query, elementIndex: elementIndex)
         let button = MouseButtonKind(rawValue: mouseButton.lowercased()) ?? .left
+        // 上一次 click 若在附说明前抛错，说明不能带到这一次。
+        pendingClickDeliveryNote = nil
         if elementIndex == nil, !snapshot.observation.includeScreenshot {
             throw ComputerUseError.stateUnavailable(SnapshotObservationOptions.screenshotOmittedNote + "; request a screenshot before screenshot-coordinate actions")
         }
@@ -852,7 +901,10 @@ public final class ComputerUseService {
             throw ComputerUseError.invalidArguments("click requires either element_index or x/y")
         }
 
-        return try actionResult(for: query, recoveryPolicy: clickActionSnapshotRecoveryPolicy(for: clickMethod))
+        let result = try actionResult(for: query, recoveryPolicy: clickActionSnapshotRecoveryPolicy(for: clickMethod))
+        guard let note = pendingClickDeliveryNote else { return result }
+        pendingClickDeliveryNote = nil
+        return appendingResultNote(note, to: result)
     }
 
     public func performSecondaryAction(app query: String, elementIndex: String, action: String) throws -> ToolCallResult {
@@ -1366,12 +1418,31 @@ public final class ComputerUseService {
                 return true
             }
 
-            if clickCount <= 1, Self.isTextEntryRole(record.role), try focusTextEntry(element) {
-                return true
+            if clickCount <= 1, Self.isTextEntryRole(record.role) {
+                switch try focusTextEntry(element) {
+                case .verified:
+                    return true
+                case .delivered:
+                    // 写入已经发出去（AppKit 对已执行的写入也会回 -25205），再按 AXConfirm 会把搜索提交掉；
+                    // 停在这里，把"已投递未核实"告诉调用方。
+                    pendingClickDeliveryNote = clickFocusDeliveredUnverifiedNote
+                    return true
+                case .notApplied:
+                    break
+                }
             }
 
-            if clickCount <= 1, !hasAncestorRole("AXWebArea", of: element), try selectContainingRow(for: element) {
-                return true
+            let rowTarget = clickShouldSelectContainingRow(role: record.role, actions: record.rawActions)
+            if clickCount <= 1, rowTarget, !hasAncestorRole("AXWebArea", of: element) {
+                switch try selectContainingRow(for: element) {
+                case .verified:
+                    return true
+                case .delivered:
+                    pendingClickDeliveryNote = clickRowSelectionDeliveredUnverifiedNote
+                    return true
+                case .notApplied:
+                    break
+                }
             }
 
             if try performAction(named: kAXPressAction as String, on: element, availableActions: record.rawActions, repeatCount: clickCount) {
@@ -1446,22 +1517,83 @@ public final class ComputerUseService {
     }
 
     /// outline / table 的行（Contacts 侧栏实测）没有 AXPress，父级也不是 AXList；点击一行的语义就是选中它。
-    /// 对最近的 AXRow 设 AXSelected=true 并读回核实；行本身不可设时不算成功，交给后面的动作链。
-    private func selectContainingRow(for element: AXUIElement) throws -> Bool {
+    /// 先对最近的 AXRow 设 AXSelected=true；行本身不可设时，把 `[row]` 写进 outline / table 的
+    /// AXSelectedRows 或 AXSelectedChildren（哪个可设用哪个）。两条路都读回核实，读回是轮询到变化为止。
+    /// 写入发出后不再交给后面的动作链：落进去的 AXPress / AXConfirm 会进到单元格的文本框开始编辑。
+    private func selectContainingRow(for element: AXUIElement) throws -> AccessibilityWriteOutcome {
         var current = element
         for _ in 0..<8 {
             if stringValue(of: current, attribute: kAXRoleAttribute) == kAXRowRole as String {
-                guard isSettable(element: current, attribute: kAXSelectedAttribute),
-                      try setBoolAttribute(named: kAXSelectedAttribute, on: current) else { return false }
-                pauseBeforeReadBack(0.15)
-                var value: CFTypeRef?
-                return AXUIElementCopyAttributeValue(current, kAXSelectedAttribute as CFString, &value) == .success
-                    && (value as? Bool) == true
+                return try selectRow(current)
             }
-            guard let parent = copyParent(of: current) else { return false }
+            guard let parent = copyParent(of: current) else { return .notApplied }
             current = parent
         }
-        return false
+        return .notApplied
+    }
+
+    private func selectRow(_ row: AXUIElement) throws -> AccessibilityWriteOutcome {
+        if isSettable(element: row, attribute: kAXSelectedAttribute) {
+            let delivery = try writeAttribute(named: kAXSelectedAttribute, value: kCFBooleanTrue, on: row)
+            guard delivery == .delivered else { return .notApplied }
+            let verified = pollUntil(timeout: 0.4) {
+                var value: CFTypeRef?
+                return AXUIElementCopyAttributeValue(row, kAXSelectedAttribute as CFString, &value) == .success
+                    && (value as? Bool) == true
+            }
+            return verified ? .verified : .delivered
+        }
+
+        guard let container = rowSelectionContainer(of: row) else { return .notApplied }
+        let settableAttributes = [kAXSelectedRowsAttribute, kAXSelectedChildrenAttribute]
+            .filter { isSettable(element: container, attribute: $0) }
+        for attribute in settableAttributes {
+            let delivery = try writeAttribute(named: attribute, value: [row] as CFArray, on: container)
+            guard delivery == .delivered else { continue }
+            let verified = pollUntil(timeout: 0.4) {
+                var value: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(container, attribute as CFString, &value) == .success,
+                      let members = value as? [AXUIElement] else { return false }
+                return members.contains { CFEqual($0, row) }
+            }
+            return verified ? .verified : .delivered
+        }
+        return .notApplied
+    }
+
+    /// 行所属的 outline / table：AXRow 可能隔着 AXGroup 之类的中间层。
+    private func rowSelectionContainer(of row: AXUIElement) -> AXUIElement? {
+        var current = row
+        for _ in 0..<4 {
+            guard let parent = copyParent(of: current) else { return nil }
+            let role = stringValue(of: parent, attribute: kAXRoleAttribute)
+            if role == kAXOutlineRole as String || role == kAXTableRole as String {
+                return parent
+            }
+            current = parent
+        }
+        return nil
+    }
+
+    /// 写属性并只回答"写入有没有发出去"：只有 attributeUnsupported 这类错误能证明没生效，
+    /// `.failure` / `.cannotComplete` 可能是应用已经执行却答错了码，按已投递处理，由调用方读回核实。
+    private func writeAttribute(
+        named attribute: String, value: CFTypeRef, on element: AXUIElement
+    ) throws -> AccessibilityWriteDelivery {
+        try requireUsableComputerUseSession()
+        let result = AXUIElementSetAttributeValue(element, attribute as CFString, value)
+        return accessibilityWriteProvesNothingApplied(result) ? .notApplied : .delivered
+    }
+
+    /// 每 5 ms 检查一次，直到条件成立或超时。不受 OPEN_COMPUTER_USE_ACTION_READ_BACK 影响：
+    /// 读回是动作本身的核实，不是给模型看的快照。
+    private func pollUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + timeout
+        while true {
+            if condition() { return true }
+            guard ProcessInfo.processInfo.systemUptime < deadline else { return false }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
     }
 
     private func selectableListItem(containing element: AXUIElement) -> (list: AXUIElement, item: AXUIElement)? {
@@ -1611,16 +1743,28 @@ public final class ComputerUseService {
     /// 点击文本输入框的语义是把键盘焦点放进去。SwiftUI 的搜索框（Contacts 实测）没有 AXPress，
     /// 只有 AXConfirm / AXShowMenu：按 AXConfirm 等于提交搜索，焦点仍留在列表上，随后 type_text 必然失败。
     /// 所以先设 AXFocused，并核实应用的焦点元素确实换成了它；失败再走原来的动作链。
-    private func focusTextEntry(_ element: AXUIElement) throws -> Bool {
-        guard isSettable(element: element, attribute: kAXFocusedAttribute),
-              try setBoolAttribute(named: kAXFocusedAttribute, on: element) else { return false }
+    private func focusTextEntry(_ element: AXUIElement) throws -> AccessibilityWriteOutcome {
+        guard isSettable(element: element, attribute: kAXFocusedAttribute) else { return .notApplied }
         var pid: pid_t = 0
-        guard AXUIElementGetPid(element, &pid) == .success else { return false }
-        let deadline = ProcessInfo.processInfo.systemUptime + 0.3
-        repeat {
-            if let focused = Self.focusedElement(pid: pid), CFEqual(focused, element) { return true }
-            Thread.sleep(forTimeInterval: 0.03)
-        } while ProcessInfo.processInfo.systemUptime < deadline
+        guard AXUIElementGetPid(element, &pid) == .success else { return .notApplied }
+        guard try writeAttribute(named: kAXFocusedAttribute, value: kCFBooleanTrue, on: element) == .delivered else {
+            return .notApplied
+        }
+        // 焦点可能落在字段自己的编辑器上（Preview 的 PDF 表单字段聚焦的是里面的文本区），往上数几层也算。
+        let verified = pollUntil(timeout: 0.3) {
+            guard let focused = Self.focusedElement(pid: pid) else { return false }
+            return self.isElement(element, ancestorOrSelfOf: focused, maximumDepth: 4)
+        }
+        return verified ? .verified : .delivered
+    }
+
+    private func isElement(_ element: AXUIElement, ancestorOrSelfOf candidate: AXUIElement, maximumDepth: Int) -> Bool {
+        var current = candidate
+        for _ in 0...maximumDepth {
+            if CFEqual(current, element) { return true }
+            guard let parent = copyParent(of: current) else { return false }
+            current = parent
+        }
         return false
     }
 
