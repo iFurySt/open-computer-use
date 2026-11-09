@@ -13,6 +13,6 @@
 
 - 基于 main 的原始 binary 可正常观察 GTK；加入测试沙盒进程后，稳定重现缺失 /run/flatpak/at-spi-bus 的失败。
 - 修复 binary 在同样环境下通过原生 MCP 观察、set_value 的真实 GTK 状态验证和动作回读；显式 AT_SPI_BUS_ADDRESS 覆盖通过。
-- Linux Go 全套测试在容器通过，Python 44 项通过。测试进程模拟沙盒环境，不宣称完成 GNOME Wayland/完整 Flatpak 安装验证。
+- Linux Go 全套测试在容器通过，Python 44 项与已有真实 GTK 原生 MCP 动作回读回归通过。测试进程模拟沙盒环境，不宣称完成 GNOME Wayland/完整 Flatpak 安装验证。
 
 入口与行为边界见 `docs/linux-session-discovery.md`。
