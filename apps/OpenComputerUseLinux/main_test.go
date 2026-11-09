@@ -685,3 +685,56 @@ func TestDoctorJSONRejectsUnsupportedPermissionDiagnostics(t *testing.T) {
 		t.Fatal("unsupported JSON mode must not emit text on stdout")
 	}
 }
+
+func TestAccessibilityBusDiscoveryNeverImportsAnotherProcessOverride(t *testing.T) {
+	dir := shortTempDir(t)
+	socket := filepath.Join(dir, "a11y.sock")
+	listenUnixSocket(t, socket)
+	for _, address := range []string{"unix:path=/run/flatpak/at-spi-bus", "unix:path=" + socket, "unix:abstract=private-sandbox", "tcp:host=localhost,port=1234"} {
+		env := envSliceToMap(linuxRuntimeEnvironmentFrom([]string{"PATH=/usr/bin"}, os.Getuid(), []map[string]string{{"AT_SPI_BUS_ADDRESS": address}}))
+		if got := env["AT_SPI_BUS_ADDRESS"]; got != "" {
+			t.Fatalf("Imported another process bus %q", got)
+		}
+		explicit := envSliceToMap(linuxRuntimeEnvironmentFrom([]string{"AT_SPI_BUS_ADDRESS=" + address}, os.Getuid(), nil))
+		if explicit["AT_SPI_BUS_ADDRESS"] != address {
+			t.Fatal("Explicit caller address changed")
+		}
+	}
+}
+
+func TestSandboxSessionVariablesDoNotWinDiscovery(t *testing.T) {
+	for _, marker := range []string{"FLATPAK_ID", "container"} {
+		env := envSliceToMap(linuxRuntimeEnvironmentFrom(nil, os.Getuid(), []map[string]string{
+			{marker: "sandbox", "DISPLAY": ":99", "XAUTHORITY": "/private/auth", "AT_SPI_BUS_ADDRESS": "unix:path=/private/bus"},
+			{"DISPLAY": ":1", "XAUTHORITY": "/host/auth"},
+		}))
+		if env["DISPLAY"] != ":1" || env["XAUTHORITY"] != "/host/auth" || env["AT_SPI_BUS_ADDRESS"] != "" {
+			t.Fatalf("Sandbox environment leaked into desktop discovery: %#v", env)
+		}
+	}
+}
+
+func TestProcessRankingIgnoresDesktopNamesInArguments(t *testing.T) {
+	dir := t.TempDir()
+	write := func(comm, cmdline string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "comm"), []byte(comm), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "cmdline"), []byte(cmdline), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("WebKitNetworkPr\n", "/usr/libexec/WebKitNetworkProcess\x00--env=XAUTHORITY=/run/user/1000/.mutter-Xwaylandauth\x00gnome-shell\x00")
+	if rank := desktopProcessRank(processSearchText(dir)); rank != 0 {
+		t.Fatalf("Sandbox argv ranked as desktop: %d", rank)
+	}
+	write("gnome-shell\n", "/usr/bin/gnome-shell\x00--mode=user\x00")
+	if rank := desktopProcessRank(processSearchText(dir)); rank != 95 {
+		t.Fatalf("Host desktop rank = %d", rank)
+	}
+	write("gnome-terminal-\n", "/usr/libexec/gnome-terminal-server\x00--gapplication-service\x00")
+	if rank := desktopProcessRank(processSearchText(dir)); rank != 65 {
+		t.Fatalf("Truncated comm lost argv[0] identity: %d", rank)
+	}
+}

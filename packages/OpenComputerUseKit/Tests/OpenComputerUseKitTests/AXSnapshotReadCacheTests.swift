@@ -3,6 +3,22 @@ import XCTest
 @testable import OpenComputerUseKit
 
 final class AXSnapshotReadCacheTests: XCTestCase {
+    func testPasswordReadsStopBeforeValueOrSelectionRequest() {
+        XCTAssertFalse(AXSnapshotReadCache.names.contains("AXValue"))
+        XCTAssertFalse(AXSnapshotReadCache.names.contains("AXSelectedText"))
+        let element = AXUIElementCreateApplication(120999)
+        var reads: [String] = []
+        let cache = AXSnapshotReadCache(batch: { _ in
+            ["AXSubrole": .value("AXSecureTextField" as CFString)]
+        }, single: { _, name in
+            reads.append(name)
+            return (.success, "secret" as CFString)
+        })
+        XCTAssertNil(cache.value(element, "AXValue"))
+        XCTAssertNil(cache.value(element, "AXSelectedText"))
+        XCTAssertTrue(reads.isEmpty)
+    }
+
     func testEqualAXReferencesShareTheBatchAndAbsentValuesDoNotRefetch() {
         var batches = 0, singles = 0
         let cache = AXSnapshotReadCache(batch: { _ in

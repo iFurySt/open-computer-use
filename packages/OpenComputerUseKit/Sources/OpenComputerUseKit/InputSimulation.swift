@@ -62,8 +62,10 @@ enum InputSimulation {
 
         for _ in 0..<max(clickCount, 1) {
             try postMouseEvent(type: .mouseMoved, source: source, point: point, button: button.cgButton, clickState: clickCount)
-            try postMouseEvent(type: button.downEvent, source: source, point: point, button: button.cgButton, clickState: clickCount)
-            try postMouseEvent(type: button.upEvent, source: source, point: point, button: button.cgButton, clickState: clickCount)
+            let release = try mouseRelease(source: source, point: point, button: button, clickState: clickCount)
+            try withPressedMouseButton(press: {
+                try postMouseEvent(type: button.downEvent, source: source, point: point, button: button.cgButton, clickState: clickCount)
+            }, release: { postPreparedRelease(release) }) {}
         }
     }
 
@@ -74,8 +76,10 @@ enum InputSimulation {
 
         for _ in 0..<max(clickCount, 1) {
             try postMouseEventToPid(type: .mouseMoved, source: source, point: point, button: button.cgButton, clickState: clickCount, pid: pid)
-            try postMouseEventToPid(type: button.downEvent, source: source, point: point, button: button.cgButton, clickState: clickCount, pid: pid)
-            try postMouseEventToPid(type: button.upEvent, source: source, point: point, button: button.cgButton, clickState: clickCount, pid: pid)
+            let release = try mouseRelease(source: source, point: point, button: button, clickState: clickCount)
+            try withPressedMouseButton(press: {
+                try postMouseEventToPid(type: button.downEvent, source: source, point: point, button: button.cgButton, clickState: clickCount, pid: pid)
+            }, release: { postPreparedRelease(release, pid: pid) }) {}
         }
     }
 
@@ -135,50 +139,67 @@ enum InputSimulation {
         Thread.sleep(forTimeInterval: 0.1)
     }
 
+    // The release is allocated before pressing and is only posted after our own
+    // press succeeds. Cleanup must not require a still-valid action lease.
+    static func withPressedMouseButton(press: () throws -> Void, release: () -> Void, body: () throws -> Void) throws {
+        try press()
+        defer { release() }
+        try body()
+    }
+
+    private static func mouseRelease(source: CGEventSource?, point: CGPoint, button: MouseButtonKind, clickState: Int, eventNumber: Int64? = nil) throws -> CGEvent {
+        guard let event = CGEvent(mouseEventSource: source, mouseType: button.upEvent, mouseCursorPosition: point, mouseButton: button.cgButton) else {
+            throw ComputerUseError.message("Failed to prepare mouse release before pressing.")
+        }
+        event.setIntegerValueField(.mouseEventClickState, value: Int64(clickState))
+        applyDragMotionFields(to: event, delta: nil, eventNumber: eventNumber)
+        return event
+    }
+
+    private static func postPreparedRelease(_ event: CGEvent, pid: pid_t? = nil) {
+        // Creation preceded the press; delivery must carry the current time.
+        event.timestamp = DispatchTime.now().uptimeNanoseconds
+        if let pid { event.postToPid(pid) } else { event.post(tap: .cghidEventTap) }
+        Thread.sleep(forTimeInterval: 0.03)
+    }
+
     static func dragTargeted(from start: CGPoint, to end: CGPoint, pid: pid_t) throws {
         guard let source = CGEventSource(stateID: .combinedSessionState) else {
             throw ComputerUseError.message("Failed to create targeted event source.")
         }
-
+        let release = try mouseRelease(source: source, point: start, button: .left, clickState: 1)
         try postMouseEventToPid(type: .mouseMoved, source: source, point: start, button: .left, clickState: 1, pid: pid)
-        try postMouseEventToPid(type: .leftMouseDown, source: source, point: start, button: .left, clickState: 1, pid: pid)
-
-        for step in 1...10 {
-            let progress = CGFloat(step) / 10
-            let point = CGPoint(
-                x: start.x + ((end.x - start.x) * progress),
-                y: start.y + ((end.y - start.y) * progress)
-            )
-            try postMouseEventToPid(type: .leftMouseDragged, source: source, point: point, button: .left, clickState: 1, pid: pid)
+        try withPressedMouseButton(press: {
+            try postMouseEventToPid(type: .leftMouseDown, source: source, point: start, button: .left, clickState: 1, pid: pid)
+        }, release: { postPreparedRelease(release, pid: pid) }) {
+            for step in 1...10 {
+                let progress = CGFloat(step) / 10
+                let point = CGPoint(x: start.x + ((end.x - start.x) * progress), y: start.y + ((end.y - start.y) * progress))
+                try postMouseEventToPid(type: .leftMouseDragged, source: source, point: point, button: .left, clickState: 1, pid: pid)
+                release.location = point
+            }
         }
-
-        try postMouseEventToPid(type: .leftMouseUp, source: source, point: end, button: .left, clickState: 1, pid: pid)
     }
 
     static func dragGlobally(from start: CGPoint, to end: CGPoint) throws {
-        // A nil (default) event source posted to the HID tap, with per-step deltas and
-        // no timestamp override. This is what lets macOS recognize the synthetic
-        // sequence as a real window-server drag on current releases.
         let gesture = dragGestureEventNumber()
+        let release = try mouseRelease(source: nil, point: start, button: .left, clickState: 1, eventNumber: gesture)
         try postMouseEvent(type: .mouseMoved, source: nil, point: start, button: .left, clickState: 1)
-        try postMouseEvent(type: .leftMouseDown, source: nil, point: start, button: .left, clickState: 1, eventNumber: gesture)
-        // Clear the OS drag threshold before motion, or the gesture reads as a click.
-        Thread.sleep(forTimeInterval: 0.05)
-
-        var previous = start
-        let steps = dragStepCount(from: start, to: end)
-        for step in 1...steps {
-            let progress = CGFloat(step) / CGFloat(steps)
-            let point = CGPoint(
-                x: start.x + ((end.x - start.x) * progress),
-                y: start.y + ((end.y - start.y) * progress)
-            )
-            let delta = CGSize(width: point.x - previous.x, height: point.y - previous.y)
-            try postMouseEvent(type: .leftMouseDragged, source: nil, point: point, button: .left, clickState: 1, delta: delta, eventNumber: gesture)
-            previous = point
+        try withPressedMouseButton(press: {
+            try postMouseEvent(type: .leftMouseDown, source: nil, point: start, button: .left, clickState: 1, eventNumber: gesture)
+        }, release: { postPreparedRelease(release) }) {
+            Thread.sleep(forTimeInterval: 0.05)
+            var previous = start
+            let steps = dragStepCount(from: start, to: end)
+            for step in 1...steps {
+                let progress = CGFloat(step) / CGFloat(steps)
+                let point = CGPoint(x: start.x + ((end.x - start.x) * progress), y: start.y + ((end.y - start.y) * progress))
+                let delta = CGSize(width: point.x - previous.x, height: point.y - previous.y)
+                try postMouseEvent(type: .leftMouseDragged, source: nil, point: point, button: .left, clickState: 1, delta: delta, eventNumber: gesture)
+                previous = point
+                release.location = point
+            }
         }
-
-        try postMouseEvent(type: .leftMouseUp, source: nil, point: end, button: .left, clickState: 1, eventNumber: gesture)
     }
 
     static func typeText(_ text: String, pid: pid_t) throws {
