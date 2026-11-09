@@ -76,7 +76,15 @@ try {
     $full = Call-Tool "get_app_state" @{}
     Assert (-not $full.isError -and (Images $full).Count -eq 1) (Text $full)
     Write-Output "Normal WPF window returned a validated PNG."
-    $oldIndex = Input-Index $full
+    Assert ((Text $full) -match "Observation password" -and (Text $full) -notmatch "ocu-password-fixture") "Password missing or disclosed"
+    Change-Window "password"
+    $passwordState = Call-Tool "get_app_state" @{ include_screenshot = $false }
+    Assert (-not $passwordState.isError -and (Text $passwordState) -notmatch "ocu-password-fixture") "Focused password disclosed"
+    Write-Output "Real WPF password and focused selection withheld from native MCP."
+    Change-Window "selection"
+    $selectedState = Call-Tool "get_app_state" @{ include_screenshot = $false }
+    Assert (-not $selectedState.isError -and (Text $selectedState) -match 'Selected text:.*initial-value') 'Ordinary WPF selection missing'
+    $oldIndex = Input-Index $passwordState
     $image = Call-Tool "get_app_state" @{ include_ax = $false }
     Assert (-not $image.isError -and (Images $image).Count -eq 1) (Text $image)
     Assert ((Text $image) -match "indexes invalidated" -and (Text $image) -notmatch "Observation input|initial-value") "AX not omitted"
@@ -91,6 +99,21 @@ try {
     Assert (-not $write.isError) (Text $write)
     Wait-For { (Read-State).text -eq $value } "real UIA value update"
     Write-Output "Selective channels, index refusal/recovery and real Unicode text update passed."
+    foreach ($change in @("rename-input", "rebuild-input")) {
+        $before = Call-Tool "get_app_state" @{ include_screenshot = $false }
+        $index = Input-Index $before
+        $original = (Read-State).text
+        Change-Window $change
+        $staleWrite = Call-Tool "set_value" @{ element_index = $index; value = "must-not-write-stale" }
+        Assert ($staleWrite.isError -and (Text $staleWrite) -match 'get_app_state again') (Text $staleWrite)
+        Assert ((Read-State).text -eq $original) "Stale identity changed the real input"
+        Change-Window "restore-input-name"
+        $fresh = Call-Tool "get_app_state" @{ include_screenshot = $false }
+        $updated = Call-Tool "set_value" @{ element_index = (Input-Index $fresh); value = $value }
+        Assert (-not $updated.isError) (Text $updated)
+        Wait-For { (Read-State).text -eq $value } 'fresh identity write'
+        Write-Output "Real WPF ${change}: stale index refused without writing, fresh index works."
+    }
     foreach ($kind in @("tiny", "minimize", "cloak")) {
         Change-Window $kind
         if ($kind -eq "tiny") {
@@ -121,3 +144,7 @@ try {
     if (Test-Path -LiteralPath $fixtureError) { Get-Content -LiteralPath $fixtureError | Write-Output }
     Remove-Item -LiteralPath $directory -Recurse -Force
 }
+
+& (Join-Path $PSScriptRoot 'windows-observation-browser-smoke.ps1') -NativePath $NativePath
+
+& (Join-Path $PSScriptRoot "windows-keyboard-focus-smoke.ps1") -NativePath $NativePath

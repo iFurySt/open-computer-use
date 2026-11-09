@@ -500,6 +500,68 @@ func isLikelyContainingRowActionFrame(
     return true
 }
 
+/// Whether a click-chain AX action ran: true when it did, false when the answer proves the app ran nothing, so the
+/// chain may try its next way. Any other answer can come after the app acted: an app busy past the AX timeout answers
+/// cannotComplete while the action runs, and AppKit answers AXConfirm on a table cell with attributeUnsupported after
+/// it started editing. Those throw, so one click never lands a second time through another way.
+func clickActionRan(_ result: AXError, action: String) throws -> Bool {
+    switch result {
+    case .success:
+        return true
+    case .attributeUnsupported where action.caseInsensitiveCompare("AXOpen") == .orderedSame:
+        return true
+    case .actionUnsupported, .illegalArgument, .notImplemented, .invalidUIElement:
+        return false
+    case .failure, .cannotComplete, .attributeUnsupported, .noValue:
+        throw ComputerUseError.message(clickMayHaveActedMessage(what: action, result: result))
+    default:
+        throw ComputerUseError.message("AXUIElementPerformAction(\(action)) failed with \(result.rawValue)")
+    }
+}
+
+/// The same for an attribute the click chain writes: a write the attribute refused never applied.
+func clickAttributeWasSet(_ result: AXError, attribute: String) throws -> Bool {
+    switch result {
+    case .success:
+        return true
+    case .attributeUnsupported, .actionUnsupported, .illegalArgument, .noValue, .notImplemented, .invalidUIElement:
+        return false
+    case .failure, .cannotComplete:
+        throw ComputerUseError.message(clickMayHaveActedMessage(what: "setting \(attribute)", result: result))
+    default:
+        throw ComputerUseError.message("AXUIElementSetAttributeValue(\(attribute)) failed with \(result.rawValue)")
+    }
+}
+
+func clickMayHaveActedMessage(what: String, result: AXError) -> String {
+    let answer = result == .cannotComplete ? "the app did not answer in time" : "the app answered AXError \(result.rawValue)"
+    return "click: \(what) went out and \(answer); it may have acted, so no other click method was tried. Read the app state before retrying; a repeat could act twice."
+}
+
+// Shared by production dispatch and sequence tests: a partially delivered multi-click
+// must never return "unhandled" and restart through another delivery method.
+func performClickActionSequence(action: String, repeatCount: Int,
+                                send: () throws -> AXError,
+                                pause: () -> Void = { Thread.sleep(forTimeInterval: 0.05) }) throws -> Bool {
+    let attempts = max(repeatCount, 1)
+    for index in 0..<attempts {
+        let result = try send()
+        guard try clickActionRan(result, action: action) else {
+            guard index == 0 else {
+                throw ComputerUseError.message("click: \(action) \(index + 1) of \(attempts) was refused after \(index) went out; no other click method was tried. Read the app state before retrying.")
+            }
+            return false
+        }
+        // AXOpen answered attributeUnsupported and opened: never open it again.
+        if result != .success { return true }
+        if index < attempts - 1 {
+            pause()
+        }
+    }
+
+    return true
+}
+
 func canUseActivationOnlyClickFallback(role: String?) -> Bool {
     guard let role else {
         return false
@@ -1077,11 +1139,16 @@ public final class ComputerUseService {
                 throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
             }
 
-            try verifySetValueReadBack(requested: value, elementIndex: elementIndex, read: {
-                // Direct AX reads: never verify against a cached snapshot value.
-                var actual: CFTypeRef?
-                return AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &actual) == .success ? actual : nil
-            }, validate: { try requireUsableComputerUseSession() })
+            try requireUsableComputerUseSession()
+            // A password field's value is never read back: AppKit answers "" whatever it holds, so the check failed a
+            // write that had worked and invited sending it again.
+            if !isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) {
+                try verifySetValueReadBack(requested: value, elementIndex: elementIndex, read: {
+                    // Direct AX reads: never verify against a cached snapshot value.
+                    var actual: CFTypeRef?
+                    return AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &actual) == .success ? actual : nil
+                }, validate: { try requireUsableComputerUseSession() })
+            }
         } catch {
             settleVisualCursor(at: cursorTarget)
             throw error
@@ -1334,6 +1401,13 @@ public final class ComputerUseService {
             throw ComputerUseError.invalidArguments("unknown element_index '\(index)'")
         }
 
+        return try keptRecord(record, index: index, snapshot: snapshot)
+    }
+
+    private func keptRecord(_ record: ElementRecord, index: String, snapshot: AppSnapshot) throws -> ElementRecord {
+        guard let recorded = record.identity, let element = record.element else { return record }
+        let now = try ElementIdentity.read(element)
+        try ElementIdentity.validate(index: index, recorded: recorded, now: now)
         return record
     }
 
@@ -1426,15 +1500,11 @@ public final class ComputerUseService {
             [target.item] as CFArray
         )
 
-        switch result {
-        case .success:
-            pauseBeforeReadBack(0.15)
-            return true
-        case .failure, .attributeUnsupported, .actionUnsupported, .cannotComplete, .noValue, .invalidUIElement, .illegalArgument:
+        guard try clickAttributeWasSet(result, attribute: kAXSelectedChildrenAttribute) else {
             return false
-        default:
-            throw ComputerUseError.message("AXUIElementSetAttributeValue(\(kAXSelectedChildrenAttribute)) failed with \(result.rawValue)")
         }
+        pauseBeforeReadBack(0.15)
+        return true
     }
 
     private func selectableListItem(containing element: AXUIElement) -> (list: AXUIElement, item: AXUIElement)? {
@@ -1560,25 +1630,10 @@ public final class ComputerUseService {
             return false
         }
 
-        let attempts = max(repeatCount, 1)
-        for index in 0..<attempts {
+        return try performClickActionSequence(action: action, repeatCount: repeatCount, send: {
             try requireUsableComputerUseSession()
-            let result = AXUIElementPerformAction(element, action as CFString)
-            switch result {
-            case .success:
-                if index < attempts - 1 {
-                    Thread.sleep(forTimeInterval: 0.05)
-                }
-            case .attributeUnsupported where action.caseInsensitiveCompare("AXOpen") == .orderedSame:
-                return true
-            case .failure, .actionUnsupported, .attributeUnsupported, .cannotComplete, .noValue, .invalidUIElement, .illegalArgument:
-                return false
-            default:
-                throw ComputerUseError.message("AXUIElementPerformAction(\(action)) failed with \(result.rawValue)")
-            }
-        }
-
-        return true
+            return AXUIElementPerformAction(element, action as CFString)
+        })
     }
 
     private func activateClickTarget(element: AXUIElement, availableActions: [String]) throws -> Bool {
@@ -1601,15 +1656,7 @@ public final class ComputerUseService {
 
     private func setBoolAttribute(named attribute: String, on element: AXUIElement) throws -> Bool {
         try requireUsableComputerUseSession()
-        let result = AXUIElementSetAttributeValue(element, attribute as CFString, kCFBooleanTrue)
-        switch result {
-        case .success:
-            return true
-        case .failure, .attributeUnsupported, .actionUnsupported, .cannotComplete, .noValue, .invalidUIElement, .illegalArgument:
-            return false
-        default:
-            throw ComputerUseError.message("AXUIElementSetAttributeValue(\(attribute)) failed with \(result.rawValue)")
-        }
+        return try clickAttributeWasSet(AXUIElementSetAttributeValue(element, attribute as CFString, kCFBooleanTrue), attribute: attribute)
     }
 
     private func isSettable(element: AXUIElement, attribute: String) -> Bool {
@@ -1900,6 +1947,7 @@ public final class ComputerUseService {
     }
 
     private func typeTextUsingAccessibility(_ text: String, on element: AXUIElement, pid: pid_t) throws -> Bool {
+        if isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) { return false }
         let attribute: String
         let value: String
         var caret: Int?
@@ -2111,6 +2159,10 @@ public final class ComputerUseService {
     }
 
     private func stringValue(of element: AXUIElement, attribute: String) -> String? {
+        if (attribute == kAXValueAttribute as String || attribute == kAXSelectedTextAttribute as String),
+           isSecureTextField(subrole: stringValue(of: element, attribute: kAXSubroleAttribute)) {
+            return nil
+        }
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
         guard result == .success, let value else {
