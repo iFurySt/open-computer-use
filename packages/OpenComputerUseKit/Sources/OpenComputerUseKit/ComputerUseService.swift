@@ -1401,6 +1401,13 @@ public final class ComputerUseService {
             throw ComputerUseError.invalidArguments("unknown element_index '\(index)'")
         }
 
+        return try keptRecord(record, index: index, snapshot: snapshot)
+    }
+
+    private func keptRecord(_ record: ElementRecord, index: String, snapshot: AppSnapshot) throws -> ElementRecord {
+        guard let recorded = record.identity, let element = record.element else { return record }
+        let now = try ElementIdentity.read(element)
+        try ElementIdentity.validate(index: index, recorded: recorded, now: now)
         return record
     }
 

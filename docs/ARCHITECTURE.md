@@ -226,3 +226,5 @@ macOS 点击链在 AX 动作结果不确定时停止，不再切换方法重发�
 Windows Chromium/Electron 的危险 TextPattern 选区读取在调用前跳过；未知窗口和嵌入式 Chromium 也不探测该选区，普通原生控件保留。见 [Windows 选区](windows-selected-text.md)。
 
 Linux 会话发现排除沙盒进程，不再导入其他进程的 AT_SPI_BUS_ADDRESS；显式调用者值保留，默认使用 libatspi 的会话总线查询。见 [会话发现](linux-session-discovery.md)。
+
+macOS 快照元素动作在输入前核对原 AX 引用的 role/subrole、名称和 identifier；静态文字和弹出按钮额外核对值。身份变化、引用失效或读取失败要求重新观察，不搜索同名替代对象。普通输入值和勾选状态不作为身份；当前 role/subrole 确认后才按需读值，密码字段不读值。真实回归入口：`scripts/tests/macos-element-identity-smoke.mjs`。
