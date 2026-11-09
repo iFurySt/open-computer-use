@@ -80,12 +80,21 @@ try {
     $cover = Start-Process powershell.exe -ArgumentList @("-NoProfile", "-STA", "-File", "`"$fixtureSource`"", "-StatePath", "`"$stateFile`"", "-Cover") -PassThru
     Wait-For { (Get-Process -Id $cover.Id).MainWindowHandle -ne [IntPtr]::Zero } 'cover startup'
     Start-Sleep -Milliseconds 300
+    $before = Read-State
+    $background = Call-Tool "type_text" @{ text = "must-not-guess" }
+    Assert ($background.isError -and (Text $background) -match '2 text fields') (Text $background)
+    Assert ((Read-State).one -eq $before.one -and (Read-State).two -eq $before.two) 'Background ambiguity modified a field'
+    [void]$cover.CloseMainWindow();Wait-For { $cover.HasExited } 'cover exit'
+    Change-Window "focus-second"
+    Wait-For { (Read-State).twoFocused } 'second input focus'
     $typed = Call-Tool "type_text" @{ text = "-hello" }
     Assert (-not $typed.isError) (Text $typed)
-    Write-Output ("Receiver after typing: " + ((Read-State) | ConvertTo-Json -Compress))
-    Write-Output ("Returned observation: " + (Text $typed))
     Wait-For { (Read-State).two -eq 'second-hello' } 'second input actual text'
     Assert ((Read-State).one -eq 'first') 'First input was modified instead'
+    Change-Window "select-second"
+    $typed = Call-Tool "type_text" @{ text = "chosen" }
+    Assert (-not $typed.isError) (Text $typed)
+    Wait-For { (Read-State).two -eq 'chosen-hello' } 'selected text replacement'
     $key = Call-Tool "press_key" @{ key = "Return" }
     Assert (-not $key.isError) (Text $key)
     Wait-For { (Read-State).key2 -gt 0 } 'Return reaches focused second child'
@@ -94,7 +103,6 @@ try {
     $chord = Call-Tool "press_key" @{ key = "ctrl+a" }
     Assert ($chord.isError -and (Text $chord) -match 'cannot carry modifier keys') (Text $chord)
     Assert ((Read-State).two -eq $before.two -and (Read-State).key2 -eq $before.key2) 'Refused chord delivered input'
-    [void]$cover.CloseMainWindow();Wait-For { $cover.HasExited } 'cover exit'
     foreach ($kind in @('focus-button','readonly')) {
         Change-Window $kind
         $before = Read-State
@@ -102,10 +110,10 @@ try {
         Assert $result.isError (Text $result)
         Assert ((Read-State).one -eq $before.one -and (Read-State).two -eq $before.two) 'Refused typing changed a field'
     }
-    Write-Output 'Real WinForms: background second-field typing/Return, refused chord, ambiguous focus and read-only refusal passed.'
+    Write-Output 'Real WinForms: focused second-field typing/selection/Return and background ambiguity refusal, refused chord, ambiguous focus and read-only refusal passed.'
 } catch {
     if (Test-Path $stateFile) { Write-Output ([IO.File]::ReadAllText($stateFile)) }
-    if (Test-Path (Join-Path $directory 'fixture.err')) { Write-Output ([IO.File]::ReadAllText((Join-Path $directory 'fixture.err'))) }
+    try { Get-Content (Join-Path $directory 'fixture.err') -ErrorAction Stop | Write-Output } catch { }
     throw
 } finally {
     if ($native -and -not $native.HasExited) { $native.StandardInput.Close(); if (-not $native.WaitForExit(3000)) { $native.Kill() } }

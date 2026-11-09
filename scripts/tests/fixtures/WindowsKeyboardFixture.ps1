@@ -23,7 +23,8 @@ $timer.Add_Tick({
    $command=[IO.File]::ReadAllText($StatePath+'.command')|ConvertFrom-Json
    if($command.sequence -gt $state.sequence){
     switch($command.kind){
-     'focus-second' {$form.Activate();[void]$two.Focus()}
+     'focus-second' {$form.Activate();[void]$two.Focus();$two.Select($two.TextLength,0)}
+     'select-second' {$form.Activate();[void]$two.Focus();$two.Select(0,6)}
      'focus-button' {$form.Activate();[void]$button.Focus()}
      'readonly' {$form.Activate();$two.ReadOnly=$true;[void]$two.Focus()}
     }

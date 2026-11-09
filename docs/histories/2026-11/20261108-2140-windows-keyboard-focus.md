@@ -40,4 +40,6 @@
 
 基于最新 main 去掉与 #163 重复的 GetClassName 声明，保留 #166 身份校验。焦点 HWND 验证同进程；UIA 焦点只读时直接拒绝，不吞掉错误后改写其他字段；选定 UIA 控件缺少 HWND 时不另找其他 child。posted key 在按下成功后 finally 释放，补中途异常测试。
 
-增加真实 WinForms 双输入框/独立遮挡窗口回归，经 native MCP 验证后台第二字段键入、Return、拒绝 ctrl+a、无文本焦点且多字段拒绝、只读焦点拒绝。测试接入现有 Windows observation 脚本。
+增加真实 WinForms 双输入框/独立遮挡窗口回归，经 native MCP 验证已知焦点第二字段键入、选区替换、后台焦点未知时拒绝、Return、拒绝 ctrl+a、无文本焦点且多字段拒绝、只读焦点拒绝。测试接入现有 Windows observation 脚本。
+
+真实 Windows 首轮发现多行 Document 没有 ValuePattern，退到后台后焦点丢失时仍会误写第一个 Edit。改为对全部文本控件计数，不能把不支持写入的 Document/只读字段排除后再猜目标。已知非文本焦点直接拒绝。原 EM_SETSEL 会丢弃选区，改为保留选区并仅执行一次 EM_REPLACESEL，不再失败后用 WM_SETTEXT 重试。

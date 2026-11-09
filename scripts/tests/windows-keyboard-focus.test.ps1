@@ -78,17 +78,18 @@ Write-Output "press_key: focused control, window fallback, foreign focus, refuse
 
 # type_text: the focused edit control first, then a field only when it is the only one.
 Reset 45; Invoke-TypeText $process "hi" | Out-Null
-Assert ((Events) -eq "send:45:177,text:45:hi") "Text did not go to the focused second field: $(Events)"
+Assert ((Events) -eq "text:45:hi") "Text did not go to the focused second field: $(Events)"
 Reset 45; [OCUWin32]::focusClass = "WindowsForms10.EDIT.app.0.141b42a_r6_ad1"; Invoke-TypeText $process "hi" | Out-Null
-Assert ((Events) -eq "send:45:177,text:45:hi") "A focused WinForms edit was not typed into: $(Events)"
+Assert ((Events) -eq "text:45:hi") "A focused WinForms edit was not typed into: $(Events)"
 Reset 45; [OCUWin32]::style = 0x0800
 Refuses { Invoke-TypeText $process "hi" } "read-only"
 Reset 0; Refuses { Invoke-TypeText $process "hi" } "2 text fields and none has keyboard focus"
 Assert ((Events) -eq "") "Text was sent to a guessed field: $(Events)"
-Reset 44 @((Field 45)); [OCUWin32]::focusClass = "Button"; Invoke-TypeText $process "hi" | Out-Null
-Assert ((Events) -eq "send:45:177,text:45:hi") "The only field was not typed into while a button had focus: $(Events)"
+Reset 44 @((Field 45)); [OCUWin32]::focusClass = "Button"
+Refuses { Invoke-TypeText $process "hi" } "not a supported text field"
+Assert ((Events) -eq "") "Button focus redirected to another field"
 Reset 0 @((Field 44)); Invoke-TypeText $process "hi" | Out-Null
-Assert ((Events) -eq "send:44:177,text:44:hi") "The only field was not typed into in the background: $(Events)"
+Assert ((Events) -eq "text:44:hi") "The only field was not typed into in the background: $(Events)"
 foreach ($class in @("Edit", "RICHEDIT50W", "RichEdit20W", "WindowsForms10.RichEdit20W.app.0.1", "WindowsForms10.EDIT.app.0.141b42a_r6_ad1")) { Assert (Test-EditWindowClass $class) "$class not taken for an edit control" }
 foreach ($class in @("Scintilla", "HwndWrapper[app;;1]", "EditorPane", "Button")) { Assert (-not (Test-EditWindowClass $class)) "$class taken for an edit control" }
 Write-Output "type_text: focused field, WinForms edit, read-only, several unfocused fields refused, single field and edit classes passed."
@@ -105,3 +106,12 @@ Reset 44; $script:interruptSleep = $true
 Refuses { Send-Key 42 'Return' 'auto' } 'interrupted'
 Assert ((Events) -eq 'post:44:256:13,post:44:257:13') 'Interrupted posted press missed key-up'
 Write-Output 'Readonly UIA focus, no HWND retarget and interrupted key cleanup passed.'
+
+Reset 0
+$document = Field 45
+$document.Current.ControlType.ProgrammaticName = 'ControlType.Document'
+$document | Add-Member -Force ScriptMethod GetCurrentPattern { param($pattern) $null }
+$script:fields = @((Field 44), $document)
+Refuses { Invoke-TypeText $process 'wrong-target' } '2 text fields'
+Assert ((Events) -eq '') 'Non-ValuePattern Document was ignored when choosing input target'
+Write-Output 'Mixed Edit/Document ambiguity refused without writing.'

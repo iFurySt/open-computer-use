@@ -620,23 +620,10 @@ function Send-TextToEditHandle([IntPtr]$hwnd, [string]$text, $element) {
         return $false
     }
 
-    try {
-        [void][OCUWin32]::SendMessage($hwnd, $EM_SETSEL, [IntPtr](-1), [IntPtr](-1))
-        [void][OCUWin32]::SendMessage($hwnd, $EM_REPLACESEL, [IntPtr]1, $text)
-        return $true
-    } catch {
-    }
-
-    try {
-        $current = ""
-        if ($null -ne $element) {
-            $current = Get-ElementValue $element
-        }
-        [void][OCUWin32]::SendMessage($hwnd, $WM_SETTEXT, [IntPtr]::Zero, ($current + $text))
-        return $true
-    } catch {
-        return $false
-    }
+    # Preserve the receiver's selection. Once a write is attempted, do not retry
+    # through WM_SETTEXT: it could replace the entire value or duplicate input.
+    [void][OCUWin32]::SendMessage($hwnd, $EM_REPLACESEL, [IntPtr]1, $text)
+    return $true
 }
 
 function Get-VirtualKey([string]$key) {
@@ -1397,24 +1384,22 @@ function Find-TextEntryElement($process) {
             if ($focusedValue.Current.IsReadOnly) { throw "The focused text field is read-only." }
             return $focused
         }
-        if ((Get-ElementControlTypeName $focused) -match "Edit|Document") {
-            throw "The focused text field is not writable through UI Automation; refusing to choose another field."
-        }
+        throw "The focused control is not a writable text field; refusing to choose another field."
     }
 
-    # Nothing known to have focus: a field is taken only when it is the only one, never the first of several.
-    $writable = @(Get-AllElements (Get-MainElement $process) | Where-Object {
-        $valuePattern = Get-CurrentPatternOrNull $_ ([Windows.Automation.ValuePattern]::Pattern)
-        $null -ne $valuePattern -and -not $valuePattern.Current.IsReadOnly
-    })
-    $textFields = @($writable | Where-Object { (Get-ElementControlTypeName $_) -match "Edit|Document" })
-    foreach ($candidates in @(, $textFields) + @(, $writable)) {
-        if ($candidates.Count -gt 1) {
-            throw "$($process.ProcessName) has $($candidates.Count) text fields and none has keyboard focus, so type_text cannot tell which one to type into. Click the field first (click with its element_index), or use set_value."
+    # Count all textual controls, including read-only fields and Document controls
+    # without ValuePattern. Filtering by writability first can hide the real target.
+    $all = @(Get-AllElements (Get-MainElement $process))
+    $textFields = @($all | Where-Object { (Get-ElementControlTypeName $_) -match "Edit|Document" })
+    if ($textFields.Count -gt 1) {
+        throw "$($process.ProcessName) has $($textFields.Count) text fields and none has keyboard focus, so type_text cannot tell which one to type into. Click the field first, or use set_value."
+    }
+    if ($textFields.Count -eq 1) {
+        $valuePattern = Get-CurrentPatternOrNull $textFields[0] ([Windows.Automation.ValuePattern]::Pattern)
+        if ($null -eq $valuePattern -or $valuePattern.Current.IsReadOnly) {
+            throw "The only text field is read-only or has no writable ValuePattern."
         }
-        if ($candidates.Count -eq 1) {
-            return $candidates[0]
-        }
+        return $textFields[0]
     }
     return $null
 }
@@ -1464,6 +1449,9 @@ function Invoke-TypeText($process, [string]$text) {
             throw "The focused text field is read-only."
         }
         return (Send-TextToEditHandle $focus $text $null)
+    }
+    if ($focus -ne $hwnd) {
+        throw "The focused control is not a supported text field; refusing to choose another field."
     }
     $element = Find-TextEntryElement $process
     $targetHwnd = Find-TextEntryWindowHandle $process $element
