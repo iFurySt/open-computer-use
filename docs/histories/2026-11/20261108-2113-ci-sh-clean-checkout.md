@@ -27,3 +27,7 @@
 - `scripts/node-repl/ocu-config.test.mjs`
 - `.github/workflows/ci.yml`
 - `docs/CICD.md`
+
+### Maintainer review
+
+基于最新 main 合并。本地干净副本复现基础门禁缺失 11 个路径导致提前退出，以及导入测试误启动 native 的 ENOENT。给导入测试显式设置不存在的 native 命令及超时，确保机器即使安装 OCU 也不能掩盖意外启动。后续用干净导出目录、未安装 OCU 的 PATH，在 macOS 和非 root Linux 容器执行完整 ci.sh。
