@@ -851,8 +851,20 @@ def verify_set_value(requested, read, numeric=False):
         time.sleep(min(0.05, remaining))
 
 
+def refuse_read_only(node):
+    # Qt 6 applies SetTextContents to a read-only line edit (it reports READ_ONLY and EDITABLE);
+    # GTK 3 marks a non-editable entry only by leaving EDITABLE out.
+    if state_contains(node, Atspi.StateType.READ_ONLY) or (
+        node_role(node).lower() in {"text", "entry", "password text"}
+        and not state_contains(node, Atspi.StateType.EDITABLE)
+    ):
+        raise RuntimeError("Cannot set a value for an element that is read-only; nothing was written")
+
+
 def set_element_value(node, value):
     value = str(value)
+    if node is not None:
+        refuse_read_only(node)
     if node is not None and supports_interface(node, "EditableText"):
         editable = safe(node.get_editable_text_iface)
         if editable is not None:

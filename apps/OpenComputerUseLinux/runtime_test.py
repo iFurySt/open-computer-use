@@ -34,6 +34,7 @@ def load_runtime():
     repository.Atspi = types.SimpleNamespace(
         Text=FakeText,
         EditableText=FakeEditableText,
+        StateType=types.SimpleNamespace(EDITABLE="editable", READ_ONLY="read-only"),
     )
     repository.Gdk = types.SimpleNamespace()
     gi.repository = repository
@@ -50,15 +51,19 @@ def load_runtime():
 
 
 class InterfaceOnlyAccessible:
-    def __init__(self, interfaces, role="text"):
+    def __init__(self, interfaces, role="text", states=("editable",)):
         self.interfaces = interfaces
         self.role = role
+        self.states = set(states)
 
     def get_interfaces(self):
         return self.interfaces
 
     def get_role_name(self):
         return self.role
+
+    def get_state_set(self):
+        return types.SimpleNamespace(contains=lambda state: state in self.states)
 
     def get_text_iface(self):
         return self
@@ -96,6 +101,25 @@ class RuntimeInterfaceDetectionTests(unittest.TestCase):
 
     def test_set_value_uses_accessible_interfaces(self):
         node = InterfaceOnlyAccessible(["Accessible", "Text", "EditableText"])
+
+        self.assertTrue(self.runtime.set_element_value(node, "hello"))
+
+
+    def test_read_only_fields_are_refused_before_any_write(self):
+        for role, states in [
+            ("text", ("read-only", "editable")),  # Qt 6 read-only line edit
+            ("text", ()),  # GTK 3 entry with editable off
+            ("spin button", ("read-only",)),
+        ]:
+            node = InterfaceOnlyAccessible(["Accessible", "Text", "EditableText"], role, states)
+            with mock.patch.object(self.runtime.Atspi.EditableText, "set_text_contents") as write:
+                with self.assertRaisesRegex(RuntimeError, "read-only; nothing was written"):
+                    self.runtime.set_element_value(node, "hello")
+            write.assert_not_called()
+
+    def test_spin_button_without_editable_state_takes_a_value(self):
+        # Qt 6 spin boxes leave EDITABLE out.
+        node = InterfaceOnlyAccessible(["Accessible", "Text", "EditableText"], "spin button", ())
 
         self.assertTrue(self.runtime.set_element_value(node, "hello"))
 
