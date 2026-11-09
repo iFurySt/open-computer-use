@@ -26,3 +26,5 @@ Linux 在写入前拒绝只读字段，什么都不写：AT-SPI 状态含 `READ_
 - Windows：`scripts/tests/windows-set-value-smoke.ps1 -NativePath <native-executable>`，真实 WPF 自定义 ValuePattern；已接入 Windows observation CI。
 
 测试使用自有窗口和数据，不修改个人应用。
+
+macOS 已标记的密码框例外：只确认 AX 写入被接受，不读取秘密验证；成功不表示内容已验证。普通控件仍使用上述回读验证。密码观察和平台差异见 [密码字段](password-fields.md)。
