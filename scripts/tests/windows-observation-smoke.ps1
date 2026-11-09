@@ -146,3 +146,5 @@ try {
 }
 
 & (Join-Path $PSScriptRoot 'windows-observation-browser-smoke.ps1') -NativePath $NativePath
+
+& (Join-Path $PSScriptRoot "windows-keyboard-focus-smoke.ps1") -NativePath $NativePath

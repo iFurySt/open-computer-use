@@ -36,7 +36,7 @@ namespace Windows.Automation {
 "@
 $WM_KEYDOWN = 0x0100; $WM_KEYUP = 0x0101; $WM_CHAR = 0x0102; $WM_SETTEXT = 0x000C
 $EM_SETSEL = 0x00B1; $EM_REPLACESEL = 0x00C2; $GWL_STYLE = -16; $ES_READONLY = 0x0800
-function Start-Sleep { param($Milliseconds) }
+function Start-Sleep { param($Milliseconds) if ($script:interruptSleep) { throw "interrupted" } }
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function Refuses($call, $pattern) {
     $failure = $null
@@ -53,6 +53,7 @@ function Get-AllElements($root) { $script:fields }
 function Get-ElementValue($element) { "" }
 function Reset($focus = 0, $fields = @((Field 44), (Field 45))) {
     [OCUWin32]::focus = [IntPtr]$focus; [OCUWin32]::focusClass = "Edit"; [OCUWin32]::style = 0; [OCUWin32]::postWorks = $true
+    $script:interruptSleep = $false
     [OCUWin32]::events.Clear()
     [Windows.Automation.AutomationElement]::FocusedElement = $null
     $script:fields = $fields
@@ -91,3 +92,16 @@ Assert ((Events) -eq "send:44:177,text:44:hi") "The only field was not typed int
 foreach ($class in @("Edit", "RICHEDIT50W", "RichEdit20W", "WindowsForms10.RichEdit20W.app.0.1", "WindowsForms10.EDIT.app.0.141b42a_r6_ad1")) { Assert (Test-EditWindowClass $class) "$class not taken for an edit control" }
 foreach ($class in @("Scintilla", "HwndWrapper[app;;1]", "EditorPane", "Button")) { Assert (-not (Test-EditWindowClass $class)) "$class taken for an edit control" }
 Write-Output "type_text: focused field, WinForms edit, read-only, several unfocused fields refused, single field and edit classes passed."
+
+Reset 0
+$readonly = Field 0 'HwndWrapper'
+$readonly | Add-Member -Force ScriptMethod GetCurrentPattern { param($pattern) [pscustomobject]@{Current=[pscustomobject]@{IsReadOnly=$true;Value='fixed'}} }
+[Windows.Automation.AutomationElement]::FocusedElement = $readonly
+Refuses { Invoke-TypeText $process 'must-not-write' } 'read-only'
+Assert ((Events) -eq '') 'Read-only UIA focus redirected to another writable field'
+Reset 0
+Assert ((Find-TextEntryWindowHandle $process (Field 0 'HwndWrapper')) -eq [IntPtr]::Zero) 'UIA target without HWND redirected to another child'
+Reset 44; $script:interruptSleep = $true
+Refuses { Send-Key 42 'Return' 'auto' } 'interrupted'
+Assert ((Events) -eq 'post:44:256:13,post:44:257:13') 'Interrupted posted press missed key-up'
+Write-Output 'Readonly UIA focus, no HWND retarget and interrupted key cleanup passed.'

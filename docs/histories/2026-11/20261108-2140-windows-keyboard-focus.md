@@ -35,3 +35,9 @@
 - 同一组替身下对照：origin/main 把 Return 投递给顶层窗口 42（焦点在子控件 44）；`ctrl+a` 投递 Ctrl 按下、A 按下 / 抬起、Ctrl 抬起并报成功；焦点在第二个文本框 45 时写进第一个 44；两个都没焦点时写进 44；只读焦点框也写进 44。本分支：投递给 44、拒绝、写进 45、拒绝、拒绝。
 - 现有决策测试在 pwsh 7.5 下通过；内联 C# 按 C# 5 编译通过；`go vet`、`go test -race`、`GOOS=windows go vet`、windows amd64 / arm64 构建通过。
 - 后台窗口的线程是否报告焦点控件、各 toolkit 是否接受投递给焦点控件的消息，只能在 Windows 桌面上确认。
+
+### Maintainer review
+
+基于最新 main 去掉与 #163 重复的 GetClassName 声明，保留 #166 身份校验。焦点 HWND 验证同进程；UIA 焦点只读时直接拒绝，不吞掉错误后改写其他字段；选定 UIA 控件缺少 HWND 时不另找其他 child。posted key 在按下成功后 finally 释放，补中途异常测试。
+
+增加真实 WinForms 双输入框/独立遮挡窗口回归，经 native MCP 验证后台第二字段键入、Return、拒绝 ctrl+a、无文本焦点且多字段拒绝、只读焦点拒绝。测试接入现有 Windows observation 脚本。

@@ -122,11 +122,11 @@ public static class OCUWin32 {
         GUITHREADINFO info = new GUITHREADINFO();
         info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
         if (thread == 0 || !GetGUIThreadInfo(thread, ref info)) return IntPtr.Zero;
+        uint focusPid;
+        if (info.hwndFocus == IntPtr.Zero || GetWindowThreadProcessId(info.hwndFocus, out focusPid) == 0 || focusPid != pid)
+            return IntPtr.Zero;
         return info.hwndFocus;
     }
-
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    private static extern int GetClassName(IntPtr hwnd, StringBuilder name, int size);
 
     public static string ClassName(IntPtr hwnd) {
         StringBuilder name = new StringBuilder(256);
@@ -710,8 +710,10 @@ function Send-Key([IntPtr]$hwnd, [string]$key, [string]$method = "auto") {
     $vk = Get-VirtualKey $key
     $target = Get-PostedKeyTarget $hwnd
     if (-not [OCUWin32]::PostMessage($target, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)) { throw "PostMessage key delivery failed." }
-    Start-Sleep -Milliseconds 25
-    if (-not [OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)) { throw "PostMessage key release failed." }
+    try { Start-Sleep -Milliseconds 25 }
+    finally {
+        if (-not [OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)) { throw "PostMessage key release failed." }
+    }
 }
 
 function Resolve-App([string]$query) {
@@ -1387,15 +1389,17 @@ function Invoke-Scroll($element, [string]$direction, [double]$pages) {
 }
 
 function Find-TextEntryElement($process) {
-    try {
-        $focused = [Windows.Automation.AutomationElement]::FocusedElement
-        if ($null -ne $focused -and $focused.Current.ProcessId -eq $process.Id) {
-            $focusedValue = Get-CurrentPatternOrNull $focused ([Windows.Automation.ValuePattern]::Pattern)
-            if ($null -ne $focusedValue -and -not $focusedValue.Current.IsReadOnly) {
-                return $focused
-            }
+    $focused = $null
+    try { $focused = [Windows.Automation.AutomationElement]::FocusedElement } catch { }
+    if ($null -ne $focused -and $focused.Current.ProcessId -eq $process.Id) {
+        $focusedValue = Get-CurrentPatternOrNull $focused ([Windows.Automation.ValuePattern]::Pattern)
+        if ($null -ne $focusedValue) {
+            if ($focusedValue.Current.IsReadOnly) { throw "The focused text field is read-only." }
+            return $focused
         }
-    } catch {
+        if ((Get-ElementControlTypeName $focused) -match "Edit|Document") {
+            throw "The focused text field is not writable through UI Automation; refusing to choose another field."
+        }
     }
 
     # Nothing known to have focus: a field is taken only when it is the only one, never the first of several.
@@ -1443,27 +1447,10 @@ function Test-TextWindowHandleCandidate($process, $element) {
 }
 
 function Find-TextEntryWindowHandle($process, $preferredElement) {
+    # Do not replace a selected UIA target with some other child HWND.
     if (Test-TextWindowHandleCandidate $process $preferredElement) {
         return Get-NativeWindowHandle $preferredElement
     }
-
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
-        if (-not (Test-TextWindowHandleCandidate $process $element)) {
-            continue
-        }
-        $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
-        if ($null -ne $valuePattern -and -not $valuePattern.Current.IsReadOnly) {
-            return Get-NativeWindowHandle $element
-        }
-    }
-
-    foreach ($element in (Get-AllElements $root)) {
-        if (Test-TextWindowHandleCandidate $process $element) {
-            return Get-NativeWindowHandle $element
-        }
-    }
-
     return [IntPtr]::Zero
 }
 
