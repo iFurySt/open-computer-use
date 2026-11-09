@@ -76,7 +76,12 @@ try {
     $full = Call-Tool "get_app_state" @{}
     Assert (-not $full.isError -and (Images $full).Count -eq 1) (Text $full)
     Write-Output "Normal WPF window returned a validated PNG."
-    $oldIndex = Input-Index $full
+    Assert ((Text $full) -match "Observation password" -and (Text $full) -notmatch "ocu-password-fixture") "Password missing or disclosed"
+    Change-Window "password"
+    $passwordState = Call-Tool "get_app_state" @{ include_screenshot = $false }
+    Assert (-not $passwordState.isError -and (Text $passwordState) -notmatch "ocu-password-fixture") "Focused password disclosed"
+    Write-Output "Real WPF password and focused selection withheld from native MCP."
+    $oldIndex = Input-Index $passwordState
     $image = Call-Tool "get_app_state" @{ include_ax = $false }
     Assert (-not $image.isError -and (Images $image).Count -eq 1) (Text $image)
     Assert ((Text $image) -match "indexes invalidated" -and (Text $image) -notmatch "Observation input|initial-value") "AX not omitted"
