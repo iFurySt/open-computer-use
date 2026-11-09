@@ -1134,6 +1134,41 @@ final class OpenComputerUseKitTests: XCTestCase {
         )
     }
 
+    func testTextInsertionLandedWhenValueChanges() {
+        let before = TextEntryObservation(value: "ab", selection: TextSelectionRange(location: 2, length: 0))
+        let after = TextEntryObservation(value: "abc", selection: TextSelectionRange(location: 3, length: 0))
+        XCTAssertEqual(textInsertionLanded(before: before, after: after), true)
+    }
+
+    func testTextInsertionLandedWhenOnlySelectionChanges() {
+        // "abc" 打在已选中的 "abc" 上：值不变，只有选区从 (0,3) 变成 (3,0)，也算落地。
+        let before = TextEntryObservation(value: "abc", selection: TextSelectionRange(location: 0, length: 3))
+        let after = TextEntryObservation(value: "abc", selection: TextSelectionRange(location: 3, length: 0))
+        XCTAssertEqual(textInsertionLanded(before: before, after: after), true)
+    }
+
+    func testTextInsertionNotLandedWhenNothingChanges() {
+        let observation = TextEntryObservation(value: "abc", selection: TextSelectionRange(location: 3, length: 0))
+        XCTAssertEqual(textInsertionLanded(before: observation, after: observation), false)
+        let valueOnly = TextEntryObservation(value: "abc", selection: nil)
+        XCTAssertEqual(textInsertionLanded(before: valueOnly, after: valueOnly), false)
+    }
+
+    func testTextInsertionUnknownWhenNothingIsComparable() {
+        let unreadable = TextEntryObservation(value: nil, selection: nil)
+        XCTAssertNil(textInsertionLanded(before: unreadable, after: unreadable))
+        let readableBefore = TextEntryObservation(value: "abc", selection: TextSelectionRange(location: 0, length: 0))
+        XCTAssertNil(textInsertionLanded(before: readableBefore, after: unreadable))
+    }
+
+    func testProcessLaunchIdentityMatchesByLaunchDate() {
+        let launched = Date(timeIntervalSince1970: 1_700_000_000)
+        XCTAssertTrue(processLaunchIdentityMatches(stored: launched, current: launched))
+        XCTAssertFalse(processLaunchIdentityMatches(stored: launched, current: launched.addingTimeInterval(1)))
+        XCTAssertFalse(processLaunchIdentityMatches(stored: launched, current: nil))
+        XCTAssertTrue(processLaunchIdentityMatches(stored: nil, current: nil))
+    }
+
     func testKeyboardTextFallbackAcceptsSettableValueElement() {
         XCTAssertTrue(
             canUseKeyboardTextFallback(
