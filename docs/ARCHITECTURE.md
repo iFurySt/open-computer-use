@@ -224,3 +224,5 @@ The load-check grants only its isolated right, with `shared=false` and a fresh A
 macOS 点击链在 AX 动作结果不确定时停止，不再切换方法重发；部分成功的连击也不会整组重发。复现与边界见 [点击结果](click-outcomes.md)。
 
 Windows Chromium/Electron 的危险 TextPattern 选区读取在调用前跳过；未知窗口和嵌入式 Chromium 也不探测该选区，普通原生控件保留。见 [Windows 选区](windows-selected-text.md)。
+
+Linux 会话发现排除沙盒进程，不再导入其他进程的 AT_SPI_BUS_ADDRESS；显式调用者值保留，默认使用 libatspi 的会话总线查询。见 [会话发现](linux-session-discovery.md)。
