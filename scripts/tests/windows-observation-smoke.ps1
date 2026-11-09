@@ -134,7 +134,7 @@ try {
     & node (Join-Path $PSScriptRoot "windows-observation-js-smoke.mjs") $NativePath ([string]$fixture.Id) $stateFile
     Assert ($LASTEXITCODE -eq 0) "Worker JS desktop smoke failed"
     $beforeClose = Call-Tool "get_app_state" @{ include_screenshot = $false }
-    $matches = [regex]::Matches((Text $beforeClose), '(?m)^\s*(\d+)\s+[^\r\n]+? Close fixture(?:\s|$)')
+    $matches = [regex]::Matches((Text $beforeClose), '(?m)^\s*(\d+)\s+button Close fixture(?:\s|$)')
     Assert ($matches.Count -eq 1) (Text $beforeClose)
     $closeIndex = $matches[0].Groups[1].Value
     $closed = Call-Tool "click" @{ element_index = $closeIndex; click_method = 'accessibility' }
