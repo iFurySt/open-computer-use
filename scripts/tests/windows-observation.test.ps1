@@ -108,3 +108,6 @@ Write-Output 'Password value guards and bulk-read exclusion passed.'
 
 & (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot "windows-keyboard-focus.test.ps1") -RuntimePath $RuntimePath
 if ($LASTEXITCODE -ne 0) { throw "Keyboard focus regression failed" }
+
+& (Get-Process -Id $PID).Path -NoProfile -File (Join-Path $PSScriptRoot 'windows-action-observation.test.ps1') -RuntimePath $RuntimePath
+if ($LASTEXITCODE -ne 0) { throw 'Action observation regression failed' }

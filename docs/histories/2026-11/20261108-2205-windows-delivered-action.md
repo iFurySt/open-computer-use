@@ -32,3 +32,7 @@
 - 同一测试在 origin/main 的 runtime 上失败：按键已发出后快照抛 `appNotFound`，返回 `{"ok":false,"error":"appNotFound(\"fixture\") ..."}`；本分支返回 `ok: true` 加 `observationError`。
 - 现有决策测试在 pwsh 7.5 下通过；`go vet`、`go test -race`、`GOOS=windows go vet`、windows amd64 / arm64 构建通过。
 - 真实应用里哪些动作之后读取会失败（关闭窗口、窗口重建），只能在 Windows 桌面上确认。
+
+### Maintainer review
+
+合并最新 main。补 bridge 超时/通信错误/缺少响应或快照时清除同进程所有缓存别名；超时只说明结果未知，不声称一定送达。显式观察失败继续返回错误。真实 WPF fixture 增加关闭按钮，native MCP 点击后通过接收端标记和进程退出验证送达，检查回读警告和旧索引拒绝。测试接入现有 observation 入口。

@@ -585,26 +585,44 @@ func (s *service) currentSnapshot(app string) *appSnapshot {
 	return s.snapshots[strings.ToLower(app)]
 }
 
+// Without a trustworthy post-operation observation, no alias may retain the old indexes.
+func (s *service) invalidateSnapshot(app string) {
+	previous := s.currentSnapshot(app)
+	for alias, cached := range s.snapshots {
+		if alias == strings.ToLower(app) || (previous != nil && (cached == previous || cached.App.PID == previous.App.PID)) {
+			delete(s.snapshots, alias)
+		}
+	}
+}
+
 func (s *service) refreshSnapshot(app string, request psRequest) (*appSnapshot, toolCallResult) {
 	response, err := s.runBridge(request)
 	if err != nil {
-		return nil, textResult(err.Error(), true)
+		s.invalidateSnapshot(app)
+		message := err.Error()
+		if request.Tool != "get_app_state" {
+			message += "\nThe action outcome is unknown; it may already have been delivered. Run get_app_state before retrying."
+		}
+		return nil, textResult(message, true)
+	}
+	if response == nil {
+		s.invalidateSnapshot(app)
+		return nil, textResult("Windows runtime did not return a response. Run get_app_state before retrying.", true)
 	}
 	if !response.OK {
+		s.invalidateSnapshot(app)
 		return nil, textResult(response.Error, true)
 	}
-	if response.Snapshot == nil && response.ObservationError != "" {
-		// The observed indexes describe a window that changed or closed; the next action has to observe it again.
-		previous := s.currentSnapshot(app)
-		for alias, cached := range s.snapshots {
-			if cached == previous || (previous != nil && cached.App.PID == previous.App.PID) {
-				delete(s.snapshots, alias)
-			}
+	if response.ObservationError != "" {
+		s.invalidateSnapshot(app)
+		if request.Tool == "get_app_state" {
+			return nil, textResult(response.ObservationError, true)
 		}
 		return nil, textResult("The "+request.Tool+" action was delivered, but reading "+app+" afterwards failed: "+response.ObservationError+"\nRun get_app_state before the next action instead of repeating this one.", false)
 	}
 	if response.Snapshot == nil {
-		return nil, textResult("Windows runtime did not return an app snapshot.", true)
+		s.invalidateSnapshot(app)
+		return nil, textResult("Windows runtime did not return an app snapshot. Run get_app_state before retrying.", true)
 	}
 	if request.IncludeScreenshot != nil && !*request.IncludeScreenshot {
 		response.Snapshot.ScreenshotPNGBase64 = ""

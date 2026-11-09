@@ -133,6 +133,16 @@ try {
     Assert ($LASTEXITCODE -eq 0 -and ($cli -join "`n") -match "include_screenshot=false") "CLI flag not forwarded"
     & node (Join-Path $PSScriptRoot "windows-observation-js-smoke.mjs") $NativePath ([string]$fixture.Id) $stateFile
     Assert ($LASTEXITCODE -eq 0) "Worker JS desktop smoke failed"
+    $beforeClose = Call-Tool "get_app_state" @{ include_screenshot = $false }
+    $matches = [regex]::Matches((Text $beforeClose), '(?m)^\s*(\d+)\s+[^\r\n]+? Close fixture(?:\s|$)')
+    Assert ($matches.Count -eq 1) (Text $beforeClose)
+    $closeIndex = $matches[0].Groups[1].Value
+    $closed = Call-Tool "click" @{ element_index = $closeIndex; click_method = 'accessibility' }
+    Wait-For { (Test-Path ($stateFile + '.closed')) -and $fixture.HasExited } 'click actually closed fixture'
+    Assert (-not $closed.isError -and (Text $closed) -match 'click action was delivered' -and (Text $closed) -match 'afterwards failed') (Text $closed)
+    $stale = Call-Tool "click" @{ element_index = $closeIndex; click_method = 'accessibility' }
+    Assert ($stale.isError -and (Text $stale) -match 'Run get_app_state') (Text $stale)
+    Write-Output 'Real WPF close: receiver confirmed click and process exit; observation warning preserved delivery and stale indexes refused.'
     Write-Output "Windows real WPF/native MCP/CLI: channels, stale indexes, AX recovery, coordinate refusal, Unicode text update, 1x1/minimized/cloaked screenshot filtering passed."
 } finally {
     if ($null -ne $native -and -not $native.HasExited) {

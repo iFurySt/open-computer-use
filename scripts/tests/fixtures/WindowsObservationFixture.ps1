@@ -44,6 +44,14 @@ $passwordBox.Height = 30
 [System.Windows.Automation.AutomationProperties]::SetName($passwordBox, "Observation password")
 [void]$panel.Children.Add($inputBox)
 [void]$panel.Children.Add($passwordBox)
+$closeButton = New-Object System.Windows.Controls.Button
+$closeButton.Content = "Close fixture"
+$closeButton.Height = 30
+$closeButton.Add_Click({
+    [IO.File]::WriteAllText(($StatePath + '.closed'), 'clicked')
+    $window.Close()
+})
+[void]$panel.Children.Add($closeButton)
 $window.Content = $panel
 $state = @{ sequence = 0; text = ""; width = 0; height = 0; minimized = $false; cloakHResult = 0; cloaked = 0 }
 $stateEncoding = New-Object System.Text.UTF8Encoding($false)
