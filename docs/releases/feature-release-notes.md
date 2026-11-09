@@ -4,7 +4,16 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
-| 2026-11-08 | Windows 元素重新定位 | 控件重建后，点击、设值等动作不再落到另一个同名控件（同名按钮、共用 AutomationId 的列表行）。 | RuntimeId 失效后要求类型、AutomationId、名称同时一致且唯一，多个匹配时拒绝并要求重新观察；按 `text_limit` 截断的名称也能匹配。补 `windows-element-resolution.test.ps1` 并接入 Windows CI。 |
+| 2026-11-08 | Windows 元素重新定位 | 控件重建后，点击、设值等动作不再落到另一个同名控件（同名按钮、共用 AutomationId 的列表行）。 | RuntimeId、类型、AutomationId 和完整名称摘要必须一致，失效或变化要求重新观察，不按名称猜替代目标；展示截断不影响身份比较。补 `windows-element-resolution.test.ps1` 并接入 Windows CI。 |
+| 2026-11-08 | macOS 元素序号核对 | 快照之后控件被 app 复用或改名时，不会按到另一个控件。 | 动作前核对序号对应元素的 role / 名称 / identifier；身份变化、失效或无法读取时要求重新观察，不自动寻找同名替代控件。 |
+| 2026-11-08 | Linux 只读字段 | set_value 不再改写用户无法编辑的字段。 | 写入前按 `READ_ONLY` / `EDITABLE` 拒绝只读字段，什么都不写；修复前 Qt 6 只读 `QLineEdit` 被改写并返回成功，GTK 3 等待 0.6 秒后报告“可能已改变”。见 [写入验证](../set-value-verification.md)。 |
+| 2026-11-08 | Linux 输入框点击 | 点击 GTK 3 输入框会把光标放进去，不再替用户按 Enter 提交。 | GTK 3 文本字段的 `activate` 是 Enter 键，不再作为点击 action；`auto` 改用指针点击。修复前点击输入框触发了它的 activate（提交），焦点也没有进入。 |
+| 2026-11-08 | macOS 鼠标释放 | 锁屏或 Locked Use 租约在拖拽、点击中途结束时，鼠标键不再一直按着。 | 抬起事件不再被会话检查拒绝；拖拽中途出错先在停下的位置松开再报错。 |
+| 2026-11-09 | Linux 会话发现 | Flatpak 进程不再污染宿主辅助功能连接。 | 不从其他进程导入 AT_SPI_BUS_ADDRESS，排除沙盒候选并忽略 argv 参数中的桌面进程名称；显式配置保留。 |
+| 2026-11-09 | Windows Chromium 选区 | 避免可选选区读取拖垮整个观察或动作调用。 | 原生窗口类识别 Chromium，未知窗口和嵌入式 Chromium 同样省略选区；普通原生文本选区保留。 |
+| 2026-11-08 | macOS 点击投递 | 一次点击不会因为 app 回了错误码而被再按一次。 | 点击链只在返回码证明 app 什么都没做时才换下一种方式；可能已生效的返回码直接报错并提示先读状态。 |
+| 2026-11-08 | macOS 密码框 | 往已有内容的密码框 type_text 不再把整个密码换成新输入；set_value 不再误报失败；密码不会进入快照和 query。 | 读取 AXValue 前先看 subrole，`AXSecureTextField` 的值从不读取；type_text 改走键盘输入，set_value 不回读。 |
+| 2026-11-08 | Linux 密码字段 | GTK 4 密码框的明文不再出现在快照里，Windows 同时保护密码值与选区。 | role 为 `password text` 的字段不读取值和选区；修复前 `GtkPasswordEntry` 的密码以明文出现在 `value` 和 tree 行。 |
 | 2026-11-07 | Locked Use 输入监控 | 兼容独占设备时仍检查键盘、指针等输入类别，避免误报健康。 | 逐设备管理回调与清理，热插拔 / 输入错误使当前监控失效；现有回归通过，按维护者决定先合并，Karabiner / Secure Input 接管实测留待发版后贡献者复测。见 [说明](../locked-use-input-monitor.md)。 |
 | 2026-11-07 | Locked Use 副屏遮罩 | 遮罩从创建时就放在目标屏幕上，避免依赖后续定位修正。 | 初始化改用屏幕局部坐标，保留严格覆盖检查；补物理双屏与左侧虚拟屏的真实前后对照。报告者锁屏环境的最终失败尚未完整复现，见 [验证说明](../locked-use-shield-placement.md)。 |
 | 2026-11-06 | macOS 截图与几何健壮性 | 部分出屏的窗口截图完整、坐标不偏移；AX 给出 NaN frame 时不再崩溃。 | 出屏时改走 ScreenCaptureKit 整窗捕获并校验尺寸；快照、查询与点击重读过滤非法 frame，补真实 AppKit 修复前后对照。见 [验证记录](../macos-snapshot-geometry.md)。 |

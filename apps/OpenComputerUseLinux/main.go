@@ -651,6 +651,15 @@ func linuxRuntimeEnvironment(base []string) []string {
 
 func linuxRuntimeEnvironmentFrom(base []string, uid int, processEnvs []map[string]string) []string {
 	env := envSliceToMap(base)
+	// A sandbox process's DISPLAY, XAUTHORITY and bus names belong to its
+	// namespace, not necessarily the caller's desktop session.
+	var hostEnvs []map[string]string
+	for _, candidate := range processEnvs {
+		if !sandboxedProcessEnvironment(candidate) {
+			hostEnvs = append(hostEnvs, candidate)
+		}
+	}
+	processEnvs = hostEnvs
 	runtimeDir := chooseRuntimeDir(env, processEnvs, uid)
 	if runtimeDir != "" {
 		env["XDG_RUNTIME_DIR"] = runtimeDir
@@ -672,7 +681,6 @@ func linuxRuntimeEnvironmentFrom(base []string, uid int, processEnvs []map[strin
 		"DESKTOP_SESSION",
 		"GDK_BACKEND",
 		"QT_QPA_PLATFORMTHEME",
-		"AT_SPI_BUS_ADDRESS",
 	} {
 		if strings.TrimSpace(env[key]) == "" {
 			if value := firstSessionValue(processEnvs, key); value != "" {
@@ -681,7 +689,14 @@ func linuxRuntimeEnvironmentFrom(base []string, uid int, processEnvs []map[strin
 		}
 	}
 
+	// Do not import AT_SPI_BUS_ADDRESS from another process, even if its socket
+	// happens to exist here. libatspi resolves org.a11y.Bus.GetAddress on the
+	// caller's session bus. Explicit caller overrides remain untouched.
 	return envMapToSlice(base, env)
+}
+
+func sandboxedProcessEnvironment(env map[string]string) bool {
+	return strings.TrimSpace(env["FLATPAK_ID"]) != "" || strings.TrimSpace(env["container"]) != ""
 }
 
 func chooseRuntimeDir(env map[string]string, processEnvs []map[string]string, uid int) string {
@@ -850,7 +865,7 @@ func desktopProcessEnvironments(uid int) []map[string]string {
 			continue
 		}
 		processEnv := readProcEnviron(procDir)
-		if !hasSessionEnvSignal(processEnv) {
+		if sandboxedProcessEnvironment(processEnv) || !hasSessionEnvSignal(processEnv) {
 			continue
 		}
 		candidates = append(candidates, rankedProcessEnv{
@@ -880,8 +895,10 @@ func processSearchText(procDir string) string {
 		parts = append(parts, string(bytes.TrimSpace(data)))
 	}
 	if data, err := os.ReadFile(filepath.Join(procDir, "cmdline")); err == nil {
-		data = bytes.Trim(data, "\x00")
-		parts = append(parts, strings.ReplaceAll(string(data), "\x00", " "))
+		// Arguments may contain Xwayland authentication paths or other process
+		// names. Only comm and argv[0] identify the process being ranked.
+		program := bytes.SplitN(data, []byte{0}, 2)[0]
+		parts = append(parts, filepath.Base(string(program)))
 	}
 	return strings.ToLower(strings.Join(parts, " "))
 }
@@ -916,7 +933,7 @@ func desktopProcessRank(text string) int {
 		{"tilix", 65},
 		{"codex", 50},
 		{"dbus-daemon", 45},
-		{"systemd --user", 40},
+		{"systemd", 40},
 	}
 
 	rank := 0
@@ -1306,10 +1323,10 @@ func toolDefinitions() []toolDefinition {
 			Description: "Get the state of an already running app's key window. By default returns a screenshot and accessibility tree; include_ax/include_screenshot can opt out of either collection. This must be called once per assistant turn before interacting with the app. This tool is part of plugin `Computer Use`.",
 			Annotations: readOnlyAnnotations(),
 			InputSchema: objectSchema(map[string]any{
-				"app":              stringProperty("App name or bundle identifier"),
-				"text_limit":       textLimitProperty("Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
-				"max_tree_nodes":   positiveIntegerProperty("Maximum accessibility tree nodes to render. Defaults to 1200."),
-				"max_tree_depth":   positiveIntegerProperty("Maximum accessibility tree depth to render. Defaults to 64."),
+				"app":            stringProperty("App name or bundle identifier"),
+				"text_limit":     textLimitProperty("Maximum text characters to return. Use \"max\" for full text. Defaults to 500."),
+				"max_tree_nodes": positiveIntegerProperty("Maximum accessibility tree nodes to render. Defaults to 1200."),
+				"max_tree_depth": positiveIntegerProperty("Maximum accessibility tree depth to render. Defaults to 64."),
 
 				"include_ax":         map[string]any{"type": "boolean", "default": true, "description": "Include accessibility tree, focus and selection. False skips AX collection and invalidates prior element indexes; coordinate actions remain available."},
 				"include_screenshot": map[string]any{"type": "boolean", "default": true, "description": "Capture and return a screenshot. False skips capture and PNG encoding."},
