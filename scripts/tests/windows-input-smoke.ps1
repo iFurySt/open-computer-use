@@ -28,10 +28,10 @@ function Wait-For($test,$description){
 function State {Read-WindowsFixtureState $stateFile}
 function Command($kind){
  $script:sequence++
- [IO.File]::WriteAllText(($stateFile+".command"),(@{sequence=$script:sequence;kind=$kind}|ConvertTo-Json -Compress),[Text.Encoding]::UTF8)
+ Write-WindowsFixtureCommand ($stateFile+".command") (@{sequence=$script:sequence;kind=$kind})
  Wait-For {(State).sequence -eq $script:sequence} "fixture command $kind"
  Start-Sleep -Milliseconds 200
- Assert (-not (State).commandError) "Fixture command failed"
+ Assert (-not (State).commandError) ("Fixture command $kind failed: " + (State).commandError)
 }
 function Stop-Native {
  if($null -ne $script:native -and -not $script:native.HasExited){

@@ -109,6 +109,7 @@ $timer.Add_Tick({
      }
      "uncover" {if($null -ne $cover.window){$cover.window.Close();$cover.window=$null}}
     }
+    $state.commandError=""
     $state.sequence=$command.sequence
    }
   } catch { $state.commandError=$_.Exception.Message }
