@@ -29,3 +29,9 @@
 - 同一测试在 origin/main 的 runtime 上失败（两个 OK 解析到第一个），本分支通过；逐项对照：origin/main 把 `b.txt`、`c.txt` 都解析成 `a.txt`，截断名称找不到；本分支分别是拒绝、`b.txt`、找不到、找到。
 - 现有 `windows-observation` / `windows-input` / `windows-set-value` / `windows-tree-budget` / `windows-target` 决策测试在 pwsh 7.5 下通过；`go vet`、`go test -race`、`GOOS=windows go vet`、windows amd64 / arm64 构建通过。
 - 真实 UIA provider 在什么情况下换 RuntimeId、以及 PowerShell 5.1 下的运行，只能在 Windows 桌面（本仓库的 windows-observation CI）上确认。
+
+### Maintainer review: final behavior
+
+与 macOS #183 统一为不自动改绑：原 RuntimeId、type、AutomationId 和完整名称摘要均匹配才动作。RuntimeId 失效、名称变更或读取失败要求重新观察。使用 SHA-256 保存完整名称身份，不把 text_limit 的省略号当成任意前缀匹配，也不扩大呈现文本。
+
+真实 WPF fixture 增加改名和原位重建输入框；旧索引 set_value 必须报错且实际文本不变，重新观察后可写。生产函数测试覆盖改名/类型/AutomationId 变化、长名称截断后的变化和无名替代控件。测试接入已有观察脚本，无需另改 workflow。

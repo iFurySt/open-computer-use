@@ -849,15 +849,23 @@ function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
     }
 }
 
+function Get-NameDigest([string]$name) {
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { [Convert]::ToBase64String($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($name))) }
+    finally { $hash.Dispose() }
+}
+
 function Get-ElementRecord($element, [int]$index, $windowBounds, $TextLimit = $script:DefaultTextLimit) {
     $frame = Get-ElementFrame $element $windowBounds
+    $fullName = Get-ElementString $element "Name"
     $runtimeId = @()
     try { $runtimeId = @($element.GetRuntimeId()) } catch {}
     [pscustomobject]@{
         index = $index
         runtimeId = $runtimeId
         automationId = Get-ElementString $element "AutomationId"
-        name = Limit-Text (Get-ElementString $element "Name") $TextLimit
+        name = Limit-Text $fullName $TextLimit
+        nameDigest = Get-NameDigest $fullName
         controlType = Get-ElementControlTypeName $element
         localizedControlType = Get-ElementString $element "LocalizedControlType"
         className = Get-ElementString $element "ClassName"
@@ -922,6 +930,7 @@ function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
             runtimeId = @($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty))
             automationId = $info.AutomationId
             name = Limit-Text $info.Name $TextLimit
+            nameDigest = Get-NameDigest $info.Name
             controlType = $info.ControlType.ProgrammaticName
             localizedControlType = $info.LocalizedControlType
             className = $info.ClassName
@@ -1219,47 +1228,20 @@ function Get-AllElements($root) {
 }
 
 function Find-Element($process, $record) {
-    if ($null -eq $record) {
-        return $null
-    }
-    $elements = Get-AllElements (Get-MainElement $process)
-    foreach ($element in $elements) {
+    if ($null -eq $record) { return $null }
+    foreach ($element in (Get-AllElements (Get-MainElement $process))) {
         try {
-            if (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId)) {
+            if (-not (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId))) { continue }
+            $current = $element.Current
+            if ($current.ControlType.ProgrammaticName -ceq $record.controlType -and
+                ([string]$current.AutomationId) -ceq ([string]$record.automationId) -and
+                -not [string]::IsNullOrEmpty($record.nameDigest) -and
+                (Get-NameDigest $current.Name) -ceq $record.nameDigest) {
                 return $element
             }
-        } catch {
-        }
+        } catch { }
     }
-    # The RuntimeId is gone (the provider rebuilt the control), so take the one control left with the same type,
-    # AutomationId and name. Several such controls ("OK", "Delete", list rows) are refused: the first of them
-    # may not be the one observed. Snapshot names are cut at text_limit and end in "...".
-    if ([string]::IsNullOrWhiteSpace($record.automationId) -and [string]::IsNullOrWhiteSpace($record.name)) {
-        return $null
-    }
-    $name = [string]$record.name
-    $cut = if ($name.EndsWith("...")) { $name.Substring(0, $name.Length - 3) } else { $null }
-    $twins = @($elements | Where-Object {
-        try {
-            $current = $_.Current
-            if ($current.ControlType.ProgrammaticName -ne $record.controlType -or
-                ([string]$current.AutomationId) -cne ([string]$record.automationId)) {
-                return $false
-            }
-            $currentName = [string]$current.Name
-            $currentName -ceq $name -or ($null -ne $cut -and $currentName.Length -gt $cut.Length -and
-                $currentName.StartsWith($cut, [StringComparison]::Ordinal))
-        } catch {
-            $false
-        }
-    })
-    if ($twins.Count -gt 1) {
-        throw "Element $($record.index) now matches $($twins.Count) controls with the same type, AutomationId and name, so acting could hit the wrong one. Run get_app_state and use the new index."
-    }
-    if ($twins.Count -eq 1) {
-        return $twins[0]
-    }
-    return $null
+    throw "Element $($record.index) changed or is no longer available. Run get_app_state again before acting; nothing was sent."
 }
 
 function Invoke-VerifiedSetValue($pattern, [string]$value) {

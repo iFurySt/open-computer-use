@@ -65,6 +65,17 @@ $timer.Add_Tick({
                         $window.Hide()
                         $tinyWindow.handle = [ObservationDwm]::CreateTinyWindow()
                     }
+                    "rename-input" { [System.Windows.Automation.AutomationProperties]::SetName($inputBox, "Renamed input") }
+                    "restore-input-name" { [System.Windows.Automation.AutomationProperties]::SetName($inputBox, "Observation input") }
+                    "rebuild-input" {
+                        $text = $inputBox.Text
+                        [void]$panel.Children.Remove($inputBox)
+                        $script:inputBox = New-Object System.Windows.Controls.TextBox
+                        $inputBox.Text = $text; $inputBox.Height = 30
+                        $inputBox.Margin = New-Object System.Windows.Thickness(20)
+                        [System.Windows.Automation.AutomationProperties]::SetName($inputBox, "Observation input")
+                        $panel.Children.Insert(0, $inputBox)
+                    }
                     "selection" { [void]$window.Activate(); [void]$inputBox.Focus(); $inputBox.SelectAll() }
                     "password" { [void]$window.Activate(); [void]$passwordBox.Focus(); $passwordBox.SelectAll() }
                     "minimize" { $window.WindowState = "Minimized" }
