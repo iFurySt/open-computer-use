@@ -64,7 +64,7 @@ def smoke(native):
                         if error:
                             assert error in h.text(result),h.text(result)
                             if mode == 'readonly':
-                                assert json.loads(state_file.read_text())[mode] == 'old', 'read-only value changed' 
+                                assert json.loads(state_file.read_text())[mode] == 'old', 'read-only value changed'
                         else: h.wait_for(lambda:json.loads(state_file.read_text())[mode]==(float(value) if mode=='number' else value),'Exact receiver value')
                         print(f'Real GTK read-back={read_back}, mode={mode}, expectedError={error}: passed.',flush=True)
                     client.close();client=None

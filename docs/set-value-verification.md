@@ -28,3 +28,5 @@ Linux 在写入前拒绝只读字段，什么都不写：AT-SPI 状态含 `READ_
 测试使用自有窗口和数据，不修改个人应用。
 
 macOS 已标记的密码框例外：只确认 AX 写入被接受，不读取秘密验证；成功不表示内容已验证。普通控件仍使用上述回读验证。密码观察和平台差异见 [密码字段](password-fields.md)。
+
+Qt 6 只读回归：在已安装 PyQt6 的私有 Xvfb/D-Bus 会话运行 `QT_LINUX_ACCESSIBILITY_ALWAYS_ON=1 python3 scripts/tests/linux-qt-readonly-smoke.py --native /path/to/binary`。修复前 binary 可加 `--expect-baseline-write` 验证错误写入；脚本只操作自己创建的控件，同时检查普通文本框和 spin box。

@@ -25,3 +25,10 @@
 - `scripts/tests/linux-set-value-smoke.py`
 - `docs/set-value-verification.md`
 - `docs/releases/feature-release-notes.md`
+
+### Maintainer validation
+
+- 基于最新 main 保留密码保护与 #180 输入框点击修复，解决测试辅助类冲突。
+- 新增真实 Qt 6 原生 MCP 回归脚本：旧版会将只读 QLineEdit 的 fixed 改为 changed；新版拒绝且内容保持 fixed。可写 QLineEdit 与不带 EDITABLE 的 QSpinBox 仍正常写入。
+- 真实 GTK 3 set_value 两种回读模式通过，补只读字段最终值断言。Linux Go 全套、48 项 Python 测试、文档和 diff 检查通过。
+- Qt 测试需等待 AT-SPI 注册，并用 fixture PID 定向，不依赖应用名称。所有窗口位于私有 D-Bus/Xvfb，不操作用户桌面。
