@@ -97,8 +97,9 @@ foreach ($status in @($true, $null)) {
     $node | Add-Member ScriptMethod GetCurrentPattern { param($pattern) $this.reads++; throw 'Must not read' }
     Assert ((Get-ElementValue $node) -eq '' -and $node.reads -eq 0) 'Password pattern requested'
 }
-$selectionSource = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Get-SelectedText' }, $true).Extent.Text
+$selectionSource = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Read-SafeSelectedText' }, $true).Extent.Text
 Assert ($selectionSource.IndexOf('Test-PasswordElement') -lt $selectionSource.IndexOf('$textPattern =')) 'Selection guard missing'
 $cacheSource = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'New-TreeCacheRequest' }, $true).Extent.Text
 Assert (-not $cacheSource.Contains('ValuePattern]::ValueProperty')) 'Bulk cache requests secret values'
 Write-Output 'Password value guards and bulk-read exclusion passed.'
+& (Join-Path $PSScriptRoot 'windows-observation-selection.test.ps1') -RuntimePath $RuntimePath

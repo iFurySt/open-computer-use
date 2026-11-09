@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-09 | Windows Chromium 选区 | 避免可选选区读取拖垮整个观察或动作调用。 | 原生窗口类识别 Chromium，未知窗口和嵌入式 Chromium 同样省略选区；普通原生文本选区保留。 |
 | 2026-11-08 | macOS 点击投递 | 一次点击不会因为 app 回了错误码而被再按一次。 | 点击链只在返回码证明 app 什么都没做时才换下一种方式；可能已生效的返回码直接报错并提示先读状态。 |
 | 2026-11-08 | macOS 密码框 | 往已有内容的密码框 type_text 不再把整个密码换成新输入；set_value 不再误报失败；密码不会进入快照和 query。 | 读取 AXValue 前先看 subrole，`AXSecureTextField` 的值从不读取；type_text 改走键盘输入，set_value 不回读。 |
 | 2026-11-08 | Linux 密码字段 | GTK 4 密码框的明文不再出现在快照里，Windows 同时保护密码值与选区。 | role 为 `password text` 的字段不读取值和选区；修复前 `GtkPasswordEntry` 的密码以明文出现在 `value` 和 tree 行。 |
