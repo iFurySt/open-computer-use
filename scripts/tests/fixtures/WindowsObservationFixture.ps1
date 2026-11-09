@@ -65,6 +65,7 @@ $timer.Add_Tick({
                         $window.Hide()
                         $tinyWindow.handle = [ObservationDwm]::CreateTinyWindow()
                     }
+                    "selection" { [void]$window.Activate(); [void]$inputBox.Focus(); $inputBox.SelectAll() }
                     "password" { [void]$window.Activate(); [void]$passwordBox.Focus(); $passwordBox.SelectAll() }
                     "minimize" { $window.WindowState = "Minimized" }
                     "cloak" {

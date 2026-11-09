@@ -81,6 +81,9 @@ try {
     $passwordState = Call-Tool "get_app_state" @{ include_screenshot = $false }
     Assert (-not $passwordState.isError -and (Text $passwordState) -notmatch "ocu-password-fixture") "Focused password disclosed"
     Write-Output "Real WPF password and focused selection withheld from native MCP."
+    Change-Window "selection"
+    $selectedState = Call-Tool "get_app_state" @{ include_screenshot = $false }
+    Assert (-not $selectedState.isError -and (Text $selectedState) -match 'Selected text:.*initial-value') 'Ordinary WPF selection missing'
     $oldIndex = Input-Index $passwordState
     $image = Call-Tool "get_app_state" @{ include_ax = $false }
     Assert (-not $image.isError -and (Images $image).Count -eq 1) (Text $image)
@@ -126,3 +129,5 @@ try {
     if (Test-Path -LiteralPath $fixtureError) { Get-Content -LiteralPath $fixtureError | Write-Output }
     Remove-Item -LiteralPath $directory -Recurse -Force
 }
+
+& (Join-Path $PSScriptRoot 'windows-observation-browser-smoke.ps1') -NativePath $NativePath
