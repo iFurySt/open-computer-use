@@ -525,6 +525,40 @@ class RuntimeActionReadBackTests(unittest.TestCase):
         self.snapshot.assert_not_called()
 
 
+class ClickActionTests(unittest.TestCase):
+    def setUp(self):
+        self.runtime = load_runtime()
+
+    def node(self, role, toolkit, version, actions):
+        node = mock.Mock()
+        node.get_role_name.return_value = role
+        node.get_toolkit_name.return_value = toolkit
+        node.get_toolkit_version.return_value = version
+        node.get_n_actions.return_value = len(actions)
+        node.get_action_name.side_effect = lambda i: actions[i][0]
+        node.get_action_description.side_effect = lambda i: actions[i][1]
+        return node
+
+    def test_gtk3_text_field_takes_a_pointer_click_not_its_enter_action(self):
+        for role in ("text", "entry", "password text", "spin button"):
+            node = self.node(role, "gtk", "3.24.49", [("activate", "Activates the entry")])
+            self.assertIsNone(self.runtime.preferred_action_index(node))
+        with mock.patch.object(self.runtime, "resolve_app"), \
+             mock.patch.object(self.runtime, "main_window", return_value=(0, object())), \
+             mock.patch.object(self.runtime, "find_element", return_value=node), \
+             mock.patch.object(self.runtime, "screen_point", return_value=(5, 6)), \
+             mock.patch.object(self.runtime, "send_mouse_click") as pointer:
+            result = self.runtime.perform_operation({"tool": "click", "app": "Editor", "element": {"name": "Search"},
+                                                     "windowBounds": {"x": 0, "y": 0}, "skip_read_back": True})
+        self.assertEqual(result, {"ok": True})
+        node.do_action.assert_not_called()
+        pointer.assert_called_once_with(5, 6, "left", 1)
+
+    def test_other_activate_actions_still_click(self):
+        for role, toolkit, version in [("text", "GTK", "4.18.6"), ("entry", "Gecko", "128.5.0"),
+                                       ("entry", "Chromium", "142.0"), ("push button", "gtk", "3.24.49")]:
+            node = self.node(role, toolkit, version, [("activate", "")])
+            self.assertEqual(self.runtime.preferred_action_index(node), 0, (role, toolkit))
 
 
 class TreeBudgetTests(unittest.TestCase):
