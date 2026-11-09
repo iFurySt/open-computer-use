@@ -702,6 +702,39 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertFalse(prefersPointerDeliveryOverAXPress(role: nil))
     }
 
+    func testIWorkSpreadsheetClickRoleIsScopedToIWorkTables() {
+        let numbers = "com.apple.Numbers"
+        XCTAssertTrue(isIWorkSpreadsheetClickRole(role: kAXColumnRole as String, bundleIdentifier: numbers))
+        XCTAssertTrue(isIWorkSpreadsheetClickRole(role: kAXRowRole as String, bundleIdentifier: numbers))
+        XCTAssertTrue(isIWorkSpreadsheetClickRole(role: kAXCellRole as String, bundleIdentifier: numbers))
+        let pages = "com.apple.iWork.Pages"
+        XCTAssertTrue(isIWorkSpreadsheetClickRole(role: kAXTableRole as String, bundleIdentifier: pages))
+        XCTAssertFalse(isIWorkSpreadsheetClickRole(role: kAXButtonRole as String, bundleIdentifier: numbers))
+        XCTAssertFalse(isIWorkSpreadsheetClickRole(role: "AXLayoutArea", bundleIdentifier: numbers))
+        XCTAssertFalse(isIWorkSpreadsheetClickRole(role: kAXCellRole as String, bundleIdentifier: "com.apple.finder"))
+        XCTAssertFalse(isIWorkSpreadsheetClickRole(role: kAXCellRole as String, bundleIdentifier: nil))
+        XCTAssertFalse(isIWorkSpreadsheetClickRole(role: nil, bundleIdentifier: numbers))
+    }
+
+    func testSpreadsheetCellContainingPicksSmallestFrameAroundPoint() {
+        let cells: [(element: String, frame: CGRect)] = [
+            (element: "table", frame: CGRect(x: 0, y: 0, width: 400, height: 300)),
+            (element: "B2", frame: CGRect(x: 100, y: 50, width: 100, height: 25)),
+            (element: "C2", frame: CGRect(x: 200, y: 50, width: 100, height: 25)),
+            (element: "B3", frame: CGRect(x: 100, y: 75, width: 100, height: 25))
+        ]
+
+        XCTAssertEqual(spreadsheetCellContaining(point: CGPoint(x: 150, y: 60), cells: cells), "B2")
+        XCTAssertEqual(spreadsheetCellContaining(point: CGPoint(x: 250, y: 60), cells: cells), "C2")
+        // 命中边界：CGRect.contains 含 min 边、不含 max 边，所以 y=75 属于下一行。
+        XCTAssertEqual(spreadsheetCellContaining(point: CGPoint(x: 150, y: 75), cells: cells), "B3")
+        // 点只落在大框里时返回大框：函数只做几何筛选（面积最小的包含者），不判断角色。
+        XCTAssertEqual(spreadsheetCellContaining(point: CGPoint(x: 10, y: 10), cells: cells), "table")
+        XCTAssertNil(spreadsheetCellContaining(point: CGPoint(x: 500, y: 500), cells: cells))
+        let noCells: [(element: String, frame: CGRect)] = []
+        XCTAssertNil(spreadsheetCellContaining(point: CGPoint(x: 150, y: 60), cells: noCells))
+    }
+
     func testIWorkCanvasFocusTypesThroughKeyboard() {
         let numbers = "com.apple.Numbers"
         XCTAssertTrue(prefersKeyboardTextInput(role: kAXTableRole as String, bundleIdentifier: numbers))

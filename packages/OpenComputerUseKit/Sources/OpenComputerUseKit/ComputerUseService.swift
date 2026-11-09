@@ -530,6 +530,11 @@ func canUseKeyboardTextFallback(role: String?, roleDescription: String?, isValue
         || roleDescription.contains("text entry")
 }
 
+/// Numbers 的 bundle id 没有 iWork 前缀（com.apple.Numbers），Pages / Keynote 才有。
+let iWorkBundleIdentifiers: Set<String> = [
+    "com.apple.Numbers", "com.apple.iWork.Numbers", "com.apple.iWork.Pages", "com.apple.iWork.Keynote"
+]
+
 /// AXPress 对这些角色是空操作（Numbers 的 AXColumn），点击必须经指针路径投递才会落到单元格。
 func prefersPointerDeliveryOverAXPress(role: String?) -> Bool {
     role == "AXColumn"
@@ -537,12 +542,29 @@ func prefersPointerDeliveryOverAXPress(role: String?) -> Bool {
 
 /// 焦点停在 iWork 画布（表格或版面区域）时，文本只能靠键盘事件进入当前选中的单元格 / 对象。
 func prefersKeyboardTextInput(role: String?, bundleIdentifier: String?) -> Bool {
-    // Numbers 的 bundle id 没有 iWork 前缀（com.apple.Numbers），Pages / Keynote 才有。
-    let iWorkBundleIdentifiers: Set<String> = [
-        "com.apple.Numbers", "com.apple.iWork.Numbers", "com.apple.iWork.Pages", "com.apple.iWork.Keynote",
-    ]
     guard let bundleIdentifier, iWorkBundleIdentifiers.contains(bundleIdentifier), let role else { return false }
     return role == kAXTableRole as String || role == "AXLayoutArea"
+}
+
+/// iWork 表格里点到这些角色时，先尝试写 AXTable 的 AXSelectedCells 选中单元格，再考虑指针路径。
+/// 限定 iWork bundle：普通 AXTable 的单击由 AXPress / 列表选中路径处理，不走这一层。
+func isIWorkSpreadsheetClickRole(role: String?, bundleIdentifier: String?) -> Bool {
+    guard let bundleIdentifier, iWorkBundleIdentifiers.contains(bundleIdentifier), let role else { return false }
+    let spreadsheetRoles: Set<String> = [
+        kAXTableRole as String, kAXColumnRole as String, kAXRowRole as String, kAXCellRole as String
+    ]
+    return spreadsheetRoles.contains(role)
+}
+
+/// 在同一坐标系下挑出包含 `point` 的最小单元格框。合并单元格 / 表头与整表框可能同时包含该点，取面积最小者；
+/// 都不包含时返回 nil，调用方据此放弃 AX 路径而不是猜一个最近的格子。
+func spreadsheetCellContaining<Cell>(point: CGPoint, cells: [(element: Cell, frame: CGRect)]) -> Cell? {
+    cells
+        .filter { $0.frame.contains(point) }
+        .min { lhs, rhs in
+            lhs.frame.width * lhs.frame.height < rhs.frame.width * rhs.frame.height
+        }?
+        .element
 }
 
 func isElectronScopedWebRowClickOptimizationTarget(appName: String, bundleIdentifier: String?) -> Bool {
@@ -1492,6 +1514,98 @@ public final class ComputerUseService {
         return nil
     }
 
+    /// iWork 表格的 AX 选中路径：把点中的 AXCell 写进所属 AXTable 的 AXSelectedCells，并读回确认。
+    /// 任何一步拿不到证据（找不到表、点不在任何可见单元格内、属性不可写、读回没有该单元格）都返回 false，
+    /// 让调用方继续走 AXPress / 指针路径；这里绝不"猜"成功。
+    /// 只接左键单击：双击在 Numbers 里是进入编辑态，写选区表达不了这个语义。
+    /// `windowPoint` 为 nil 时（element_index 点击）用该元素自己的点击点定位。
+    private func selectSpreadsheetCellThroughAccessibility(
+        for record: ElementRecord,
+        snapshot: AppSnapshot,
+        button: MouseButtonKind,
+        clickCount: Int,
+        windowPoint: CGPoint?
+    ) throws -> Bool {
+        guard button == .left, clickCount <= 1, let element = record.element else {
+            return false
+        }
+
+        let bundleIdentifier = snapshot.app.bundleIdentifier
+        guard isIWorkSpreadsheetClickRole(role: spreadsheetRole(of: record), bundleIdentifier: bundleIdentifier),
+              let table = nearestSpreadsheetTable(from: element),
+              let cell = try spreadsheetCell(hit: record, table: table, snapshot: snapshot, windowPoint: windowPoint),
+              isSettable(element: table, attribute: kAXSelectedCellsAttribute as String)
+        else {
+            return false
+        }
+
+        return try writeSelectedCell(cell, to: table)
+    }
+
+    /// 命中测试产生的 record 不带 role，退回去问元素本身。
+    private func spreadsheetRole(of record: ElementRecord) -> String? {
+        record.role ?? record.element.flatMap { stringValue(of: $0, attribute: kAXRoleAttribute) }
+    }
+
+    /// 命中的已是 AXCell 时直接用它；命中整列 / 整行 / 整表时靠 AXVisibleCells 的屏幕框反查点中的那格。
+    /// 单元格框只用 AXPosition + AXSize（windowBounds 传 nil 即全局坐标），与点击点同一坐标系。
+    private func spreadsheetCell(
+        hit record: ElementRecord,
+        table: AXUIElement,
+        snapshot: AppSnapshot,
+        windowPoint: CGPoint?
+    ) throws -> AXUIElement? {
+        if spreadsheetRole(of: record) == kAXCellRole as String {
+            return record.element
+        }
+
+        guard let localPoint = windowPoint ?? clickPoint(for: record, snapshot: snapshot) else {
+            return nil
+        }
+        let globalPoint = try windowPointToGlobalPoint(snapshot: snapshot, point: localPoint)
+        let visibleCells = copyElements(of: table, attribute: kAXVisibleCellsAttribute as String, limit: 4096)
+            .compactMap { candidate -> (element: AXUIElement, frame: CGRect)? in
+                guard let frame = localFrame(of: candidate, windowBounds: nil) else { return nil }
+                return (element: candidate, frame: frame)
+            }
+        debugClickDecision("spreadsheet visible cells=\(visibleCells.count) point=\(globalPoint)")
+        return spreadsheetCellContaining(point: globalPoint, cells: visibleCells)
+    }
+
+    /// 写 AXSelectedCells 并读回确认；与行 / 列表选中保持一致：每 5 ms 读一次，最多等 400 ms。
+    private func writeSelectedCell(_ cell: AXUIElement, to table: AXUIElement) throws -> Bool {
+        try requireUsableComputerUseSession()
+        let result = AXUIElementSetAttributeValue(table, kAXSelectedCellsAttribute as CFString, [cell] as CFArray)
+        switch result {
+        case .attributeUnsupported, .actionUnsupported, .illegalArgument, .noValue, .notImplemented:
+            // 这几个错误码说明写入根本没被接受，读回不会有变化，直接放弃。
+            return false
+        default:
+            // .success 不保证选区真的变了（Numbers 对无效写入也可能返回 success）；
+            // 其余错误码（failure / cannotComplete …）又不证明没生效。两者统一交给读回判定。
+            break
+        }
+
+        let deadline = Date().addingTimeInterval(0.4)
+        repeat {
+            let selected = copyElements(of: table, attribute: kAXSelectedCellsAttribute as String, limit: 4096)
+            if selected.contains(where: { CFEqual($0, cell) }) {
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        } while Date() < deadline
+
+        debugClickDecision("AXSelectedCells write was not reflected in read-back")
+        return false
+    }
+
+    /// 自身或最近的 AXTable 祖先；Numbers 的列 / 行 / 单元格都直接挂在表下，8 层足够。
+    private func nearestSpreadsheetTable(from element: AXUIElement) -> AXUIElement? {
+        sequence(first: element) { [self] in copyParent(of: $0) }
+            .prefix(8)
+            .first { stringValue(of: $0, attribute: kAXRoleAttribute) == kAXTableRole as String }
+    }
+
     private func performAXClickSequence(
         on record: ElementRecord,
         snapshot: AppSnapshot,
@@ -1521,6 +1635,15 @@ public final class ComputerUseService {
             canUseActivationOnlyClickFallback(role: stringValue(of: $0, attribute: kAXRoleAttribute))
         } == true
         if !preferContainingWebRowAXClick && !windowIndexClick {
+            // iWork 表格：先走 AXSelectedCells 选中单元格，不依赖全局指针门；选不中再落回下面的 AXPress / 指针路径。
+            if try selectSpreadsheetCellThroughAccessibility(
+                for: record, snapshot: snapshot, button: button, clickCount: clickCount, windowPoint: clickPoint
+            ) {
+                debugClickDecision("handled by AXSelectedCells \(clickDebugDescription(record))")
+                pauseBeforeReadBack(0.15)
+                return true
+            }
+
             if try performPreferredClick(on: record, button: button, clickCount: clickCount) {
                 debugClickDecision("handled by preferred target \(clickDebugDescription(record))")
                 pauseBeforeReadBack(0.15)
@@ -2124,13 +2247,18 @@ public final class ComputerUseService {
     }
 
     private func copyChildren(of element: AXUIElement) -> [AXUIElement] {
+        copyElements(of: element, attribute: kAXChildrenAttribute as String, limit: Int.max)
+    }
+
+    /// 读一个元素数组属性并截断到 `limit`：AXVisibleCells 这类属性在大表格上可能很长，上限防止一次点击拖住主线程。
+    private func copyElements(of element: AXUIElement, attribute: String, limit: Int) -> [AXUIElement] {
         var value: CFTypeRef?
-        let result = AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &value)
-        guard result == .success, let value else {
+        let result = AXUIElementCopyAttributeValue(element, attribute as CFString, &value)
+        guard result == .success, let value, let elements = value as? [AXUIElement] else {
             return []
         }
 
-        return value as? [AXUIElement] ?? []
+        return Array(elements.prefix(limit))
     }
 
     private func copyParent(of element: AXUIElement) -> AXUIElement? {
