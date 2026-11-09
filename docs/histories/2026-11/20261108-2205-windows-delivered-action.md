@@ -38,3 +38,5 @@
 合并最新 main。补 bridge 超时/通信错误/缺少响应或快照时清除同进程所有缓存别名；超时只说明结果未知，不声称一定送达。显式观察失败继续返回错误。真实 WPF fixture 增加关闭按钮，native MCP 点击后通过接收端标记和进程退出验证送达，检查回读警告和旧索引拒绝。测试接入现有 observation 入口。
 
 真实 WPF 关闭测试与 WinForms 输入回归已通过。整套物理输入回归另暴露测试命令文件原地写入的竞态：fixture 可能读到不完整 JSON，后续命令成功后仍保留旧错误。测试命令改为原子发布，成功执行清除旧错误，失败输出具体原因。
+
+维护者最终验证：完整 [Windows observation](https://github.com/iFurySt/open-computer-use/actions/runs/42649522891) 通过，含真实 WPF 关闭/旧索引拒绝、WinForms 焦点输入、物理键鼠、预算、遮挡截图与原始版本对照。#171 已 Squash 合并。

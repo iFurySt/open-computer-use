@@ -2,6 +2,10 @@
 
 这个模板自带一套不依赖具体语言栈的 CI/CD 骨架。
 
+## 基础门禁
+
+`.github/workflows/ci.yml` 在每个 PR、main push 和手动触发时，用 ubuntu-24.04（Node 24、Go 1.26.1，与 Windows 观察 workflow 相同）运行 `scripts/ci.sh`：文档骨架、仓库卫生、Action SHA 固定、脚本语法、Node / Python 单测，以及 Linux / Windows runtime 的 `go test`。只需 `contents: read`，不发布制品。`scripts/check-repo-hygiene.sh` 只要求仓库里真实存在、真被用到的文件。
+
 ## 当前 release 入口
 
 - `scripts/release-package.sh`：构建 universal `Open Computer Use.app`，cross-compile Linux / Windows runtime，stage 三个既有 root/alias npm 包；每个包都会内置 macOS app、Linux binaries 和 Windows exes，并暴露 `open-computer-use` / `ocu` 等 npm bin 入口。脚本同时调用 `scripts/package-github-release-assets.sh`，产出 npm tarballs、GitHub Release 直接下载制品与对应 manifest。正式 release 必须使用 Apple 签名身份并内嵌四个同团队、同架构的 Locked Use 组件；本地 debug/dev 构建可显式关闭 Locked Use 嵌入以使用 ad-hoc signing。
