@@ -1,129 +1,48 @@
-# macOS 后台拖拽修复：PR 说明草稿
+# macOS 原生后台拖拽修复
 
-状态：设计 / PR 草稿；尚未实现 OCU runtime 修复，不可据此标记 ready for review。
+状态：已实现，PR 保持 Draft；验收范围和实际测试结果见下方记录，不代表全部 macOS toolkit 已支持。
 
-执行计划：[macOS 后台拖拽修复](../exec-plans/active/20261110-macos-sky-drag.md)。以下内容可用于后续 Draft PR；实现和测试完成后应据实际 diff 更新措辞与检查项。
+- [执行计划](../exec-plans/completed/20261110-macos-sky-drag.md)
+- [实现、对照实验与回归说明](../macos-background-drag.md)
 
-## 建议 PR 标题
+## PR 标题
 
-`fix(macos): deliver drag events correctly to background windows`
+`fix(macos): improve background drag delivery`
 
-## 摘要
+## 问题
 
-拟修复 macOS 原生 `drag` 在部分后台窗口中已完成事件投递、但目标控件没有产生实际拖拽效果的问题。
+已安装 OCU 1.1.4 和本 checkout 修复前构建的默认 `drag` 在真实后台画布中返回 app_post 已投递，但没有画布事件或笔迹。Preview 也复现过相同现象。普通 PID 投递缺少可路由的窗口上下文；在本次 AppKit 实测中还需要目标的合成 key 状态。
 
-本次聚焦现有 `drag(app, from_x, from_y, to_x, to_y)` 的运行时实现，不新增工具，不增加曲线 / 贝塞尔 / points 参数，不预设 `drag_method` 或 `sky_drag` API。目标是调用方无需改变现有请求，即可在已验证的后台窗口场景中完成起点到终点的拖动。
+## 代码范围
 
-当前仅有可行性原型和一次原生工具复现，以下修复与测试仍待完成。
+- 保留原有 MCP / JS 起终点接口和全局输入安全门，不增加工具或方法参数。
+- `BackgroundDragDispatcher` 将窗口号和 window-local location 写入事件，后台目标复用已有 synthetic-active / make-key-window SPI，然后通过公开 `postToPid` 单次投递。
+- 保留原有 event source、10 步直线和 30 ms 事件间隔；不加入 primer、双投递、曲线或画布取消选中的额外点击。
+- 端点、窗口身份和几何检查；每次发送前校验会话；预先准备 release，取消后仍清理按钮和目标合成状态。实时读取系统 AX 前台应用，避免长驻 CLI 的 NSWorkspace 缓存误判；目标成为真实前台时不撤销它的真实状态。
+- 默认后台路径的初始观察和动作回读禁止激活 / raise 恢复。私有能力缺失或目标失效时明确失败，不自动改走 global。
+- 新增无真实输入副作用的单测、真实 AppKit/native MCP smoke，同步安全 / 架构 / skill / 用户说明 / history / release note。
 
-## 问题与复现
+## 实测与限制
 
-实测环境：macOS 26.6.2，已安装 OCU 1.1.4，Preview 绘制工具。源码调研基线为 `fccf49a`；尚未从该 checkout 构建并重跑复现，不能将已安装版本的结果写成该提交的构建验证。
+- 对照实验确定在本画布上需要 synthetic-active + key window + window ID + window-local location 组合；单独提供任意部分不足。未把这些观察推广为所有应用的内部机制。
+- 修复前本 checkout native MCP baseline：0 画布事件，无笔迹。
+- 修复后主场景三轮连续通过：每轮恰好 1 down / 10 dragged / 1 up，真实画布有路径，目标状态释放；覆盖窗口的 active/key/first responder/失焦计数、前台 PID、指针及 z-order 断言通过。
+- 扩展实机测试已完整通过：绘制回调、越界 / 移动 / 关闭守卫、同一长驻 MCP 进程内目标已在前台的兼容性。早期被桌面输入打断的轮次未计为通过；关闭动画文案预期与真实前台识别问题均已修正并复测。
+- 非 GUI 单测与 CI 结果、工具链 workaround 见实现说明。普通 `swift test` 在本机不直接可用，不能声称该命令原样通过。
+- WindowServer 管理的标题栏移动、Finder 拖放、其他 Space、其他 toolkit 仍未作为本次已验证能力。
 
-1. 在 Preview 打开一张测试自有的 800×650 白色 PNG，保持 Preview 为后台应用。
-2. 调用 `get_app_state` 获取新快照，并使用 `click_method=accessibility` 选中“绘制”。
-3. 保持全局指针选项未开启，按该次返回截图的像素坐标调用原生 `drag`。
+## 风险与迁移
 
-实测请求（当时返回截图为 1280×1256；其他窗口尺寸应重新选取画布内坐标）：
+调用参数不变，但默认后台事件语义发生改善并增加私有 SPI 依赖。默认端点必须位于观察窗口内；窗口移动后需要显式重新观察。跨窗口 WindowServer 手势不作保证。缺私有符号时拒绝，不保留静默不生效的成功结果或全局 fallback。
 
-```json
-{
-  "app": "com.apple.Preview",
-  "from_x": 400,
-  "from_y": 450,
-  "to_x": 850,
-  "to_y": 800
-}
-```
+对照和回归只使用测试自有窗口，不操作用户文档或修改已安装 OCU。真实桌面测试会短暂激活自有覆盖窗口，必须无人输入时进行。一般用户输入可能打断测试，其失败不能被忽略。
 
-**实际结果**：工具返回 `Drag delivered via app_post`，绘制工具保持选中，但动作返回截图和再次观察均显示画布空白。操作前后读取的前台应用均不是 Preview。该次鼠标位置两次读数不同，不以此声称该次实测证明了指针不动。
+## 合并前检查
 
-**预期结果**：画布产生对应的拖动笔迹，同时不激活或抬升 Preview、不移动系统指针、不破坏真实前台窗口的 key / first responder 状态。
+- [x] Runtime 修复和无 GUI 单测。
+- [x] 修复前 native MCP baseline、修复后主场景三轮实测。
+- [x] 本轮完整 XCTest 包 476 个测试（8 个跳过，0 失败），含 14 个新增单测；基础 CI 回归通过（工具链处理详情见验证说明）。
+- [x] 扩展实机 smoke 在无人操作桌面时完整跑通，包含目标已在前台的兼容性。
+- [ ] 维护者评审默认行为变化、私有能力失败语义和版本兼容范围。
 
-本复现仅说明 Preview 画笔场景失败，不宣称所有应用都无法接收现有 `app_post` 拖动。`Drag delivered` 描述投递路径，不应被解读为目标 UI 动作已成功。
-
-## 调研结论与待确定项
-
-目前调用链：
-
-```text
-ComputerUseToolDispatcher
-  -> ComputerUseService.drag
-  -> performDragEvent
-  -> InputSimulation.dragTargeted(from:to:pid:)
-  -> CGEvent.postToPid
-```
-
-默认实现生成 move / down / dragged / up，但 `dragTargeted` 只接收起终点与 PID，没有复用现有 SkyLight 输入代码的完整目标窗口 / 合成焦点处理。
-
-独立原型在 Preview 中组合使用以下处理后完成了后台落笔：
-
-- 目标应用 synthetic-active 与 make-key-window record；
-- 目标 PID / window、window-local location 及其他事件字段；
-- HID event source、事件间隔和公开 `CGEvent.postToPid` 投递；
-- 结束后撤销目标合成激活状态。
-
-原型未调用系统级 `.cghidEventTap`。各次原型绘制期间抽样未发现目标变为前台，绘制前后指针读数一致；这不是连续的完整焦点 / 窗口层级验证。
-
-**这些是组合可行性证据，不是最小根因证明。** 原型还有画布特定的取消选中点击，留下了额外小点；不能将该脚本直接搬进生产代码。需对焦点、窗口字段、event source 和时序分别做对照，确认最小处理和兼容性。
-
-## 拟修改范围
-
-1. 用真实 AppKit 画布和正常输入事件建立回归，不通过 FixtureBridge command 直接伪造成功结果。
-2. 根据对照测试，在现有后台拖动实现中补齐必要的窗口定向和输入状态处理；优先复用 `SkyLightSPI`，不复制私有符号桥。
-3. 保留既有起终点 API、截图像素坐标语义、显式启用的 global 路径及其安全门，不增加调用方迁移步骤。
-4. 在发送前验证目标窗口身份、几何、坐标及会话状态；动作中止后仍保证本次按下的按钮和合成状态得到清理。
-5. 后台路径的动作回读不得通过 activate / raise 补救。私有能力不可用或目标失效时明确报错，不偷偷改成全局鼠标；默认后台路径是否采用该机制须经维护者确认并有兼容性证据。
-6. 同步实现说明、使用文档、history 与面向用户的 release note。
-
-拟重点影响：
-
-- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
-- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/InputSimulation.swift`
-- 如有必要，新增独立拖动实现文件并复用 `SkyLightSPI.swift`。
-- 真实输入测试 fixture、故障清理单测及 opt-in live tests。
-
-不计划扩展 native schema、JS API 或修改 Windows / Linux 行为；既有跨平台 contract 仍须回归。若最终证明必须新增公开选项，应先更新设计并讨论，而不是在本 PR 中顺带扩大接口。
-
-## 安全、风险与兼容性
-
-- **私有 ABI 风险**：动态探测能力，缺失或失败时明确报告；不通过静默 global fallback 绕过非侵入边界。
-- **重复事件风险**：不能照搬 `sky_click` 的 primer / 双通道投递；验证每次只产生一组预期手势，不增加目标坐标外的点击。
-- **状态泄漏风险**：按下前准备 release；按下后所有异常路径尝试松开，清理不应因动作许可过期而被跳过；最后撤销合成焦点。
-- **默认行为变化**：即使请求格式不变，后台事件语义仍可能影响原本可用的应用；必须验证既有 app_post 用例和全局路径，不能仅凭 Preview 原型直接替换。
-- **能力范围**：首个目标是已验证画布上的后台拖动；未测试的 Chromium、其他 Space、标题栏移动、文本拖选、Finder 拖放不作兼容承诺。
-- **权限与桌面**：不改权限、安装、Locked Use 或虚拟显示器配置；真实 UI 测试显式 opt-in，先约定无人输入时段。
-
-## 验证与合并门槛
-
-已完成：
-
-- [x] 阅读贡献、协作、架构、安全与可靠性规范。
-- [x] 使用已安装 OCU 原生 drag 复现 Preview 后台画笔无效果。
-- [x] 独立脚本组合方案在同类画布后台落笔，记录验证局限。
-
-待实现 / 验证：
-
-- [ ] 对照测试确定必要的焦点、窗口字段、source 与时序处理。
-- [ ] 真实 AppKit 输入 fixture 收到且仅收到预期 down / dragged / up，并验证实际笔迹。
-- [ ] 目标窗口完全遮挡时验证拖拽效果。
-- [ ] 观察真实前台 PID、active、key、first responder、resign 计数和窗口层级，排除瞬时抢焦点。
-- [ ] 连续观察真实指针位置；完成后验证目标合成状态释放。
-- [ ] 注入缺符号、窗口关闭、会话失效、按下前 / 后及中途失败，检查停止、release 与焦点清理。
-- [ ] 验证截图坐标 / Retina / 窗口移动和窗口身份守卫。
-- [ ] 保持现有输入及 global 授权边界，动作回读不激活目标。
-- [ ] `swift test`。
-- [ ] `node --test scripts/node-repl/*.test.mjs scripts/tests/*.test.mjs`。
-- [ ] Windows / Linux runtime 的 `go test ./...`（按可用环境记录实际执行范围）。
-- [ ] 新增后台拖动 opt-in 实机回归；命令以最终测试名为准。
-- [ ] 最终 `make check-docs`、`make ci`，如有未执行项明确列出。
-- [ ] 补齐 `docs/histories/` 与 `docs/releases/feature-release-notes.md`，将已确认能力及限制写进说明。
-
-未执行的检查不得在最终 PR 中写成已通过。当前无 runtime 代码 diff，不能将本草稿作为已完成的修复提交。
-
-## 非目标
-
-- 不实现苹果形状、曲线生成、贝塞尔采样或路径规划；这些属于 Agent 的任务逻辑。
-- 不新增 points / 持续手势协议，不将多次独立 drag 宣称为一条连续曲线。
-- 不新增工具，不预设 sky_drag API，不复刻 Codex 的闭源实现。
-- 不 bump 版本、不发布制品、不修改用户已安装的 OCU。
+PR 保持 Draft，不自动标记 ready，不发布制品或 bump 版本。

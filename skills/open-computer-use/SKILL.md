@@ -46,7 +46,7 @@ controls by text and/or role without rendering a tree or taking a screenshot.
 - Do not assume Codex.app plugin helpers are available. Use the installed `open-computer-use` / `ocu` CLI or an explicit MCP config.
 - Use indexes returned by `get_app_state` or macOS `query` in the same native session; do not guess indexes across sessions or after large UI changes.
 - Prefer semantic actions and `set_value` for editable controls. Use coordinate `click`, `scroll`, and `drag` only when the element tree does not expose a safer target.
-- On macOS, do not enable `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` unless the user explicitly requested `click_method: "global"`, a `drag` that must drive a window-server drag session (window move, drag-select text, Finder drag-and-drop), or other diagnostic behavior that may move the real pointer. Without it `drag` reports `Drag delivered via app_post` and those operations have no effect; see `references/usage.md` for alternatives.
+- On macOS, do not enable `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` unless the user explicitly requested `click_method: "global"`, a `drag` that must drive a window-server drag session (window move, drag-select text, Finder drag-and-drop), or other diagnostic behavior that may move the real pointer. Default `drag` uses window-addressed `app_post` with target-only synthetic focus; observe the actual result, and do not assume all WindowServer-managed gestures work. Background failure never authorizes global fallback; see `references/usage.md` for alternatives.
 - On Windows and Linux, confirm the command is running inside the logged-in desktop session before assuming GUI automation is available.
 
 ## Common CLI Actions

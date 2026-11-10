@@ -2,7 +2,7 @@
 
 ## Cua Driver
 
-The macOS `sky_click` event recipe, the private SkyLight bridge shared by `sky_click` and `sky_key`, and the target-only activation record are derived from Cua Driver:
+The macOS `sky_click` event recipe, the private SkyLight bridge shared by `sky_click`, `sky_key`, and background drag, and the target-only activation record are derived from Cua Driver:
 
 - Project: https://github.com/trycua/cua
 - Source revision: `b8a0f32a06c75225ba24ebb5ab14f6507fa90d15`

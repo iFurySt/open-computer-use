@@ -8,6 +8,7 @@
 - 端到端 smoke：`./scripts/run-tool-smoke-tests.sh`
 - macOS SkyLight 实机回归：`OPEN_COMPUTER_USE_RUN_SKY_CLICK_LIVE_TEST=1 swift test --filter SkyClickLiveTests`
 - macOS SkyLight 后台键盘实机回归：`OPEN_COMPUTER_USE_RUN_SKY_KEY_LIVE_TEST=1 swift test --filter SkyKeyboardLiveTests`
+- macOS 原生后台拖拽单测：`swift test --filter BackgroundDragTests`。真实 AppKit / native MCP 回归：`node scripts/tests/macos-background-drag-smoke.mjs <authorized-ocu-executable>`；会短暂激活测试自有遮挡窗口，必须在无人输入时运行，不启用 global。未修复版本可加 `--expect-baseline`，只验证“已投递但无笔迹”的旧行为。覆盖事件序列、实际绘制、前台 active/key/first responder/失焦计数、指针和层级，以及越界、窗口移动 / 关闭拒绝；详见 [后台拖拽](macos-background-drag.md)。
 - macOS 被遮挡窗口 keep-alive 实机回归：`OPEN_COMPUTER_USE_RUN_OCCLUSION_LIVE_TEST=1 swift test --filter OcclusionKeepAliveLiveTests`
 - macOS 多 app 扫描（对运行中的每个 GUI app 做 read-only snapshot，并在空白文本框里输入再删除一个标记；会向真实 app 输入，只在无人使用时跑）：`OPEN_COMPUTER_USE_RUN_APP_MATRIX=1 swift test --filter AppMatrixLiveTests`；加 `OPEN_COMPUTER_USE_APP_MATRIX_PARK=1` 会把每个非全屏窗口停靠到 agent display 上做同样的事再移回原位。
 - macOS 后台输入基准（25 轮 `sky_click` + `sky_key`，输出成功数与 p50 / p95 / max）：`OPEN_COMPUTER_USE_RUN_BACKGROUND_BENCH=1 OPEN_COMPUTER_USE_BENCH_CYCLES=25 swift test --filter BackgroundInputBenchmarkLiveTests`

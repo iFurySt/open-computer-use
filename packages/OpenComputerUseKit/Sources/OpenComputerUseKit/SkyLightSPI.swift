@@ -95,8 +95,8 @@ protocol WindowOcclusionControlling: AnyObject {
     func setWindowOcclusionNotificationsEnabled(_ enabled: Bool, windowID: CGWindowID) throws -> Bool
 }
 
-/// Runtime-only bridge for the private SkyLight functions used by `sky_click`
-/// and `sky_key`.
+/// Runtime-only bridge for the private SkyLight functions used by `sky_click`,
+/// `sky_key`, and window-addressed background drag.
 ///
 /// The declarations, event-field recipe and key-window records are derived
 /// from the MIT-licensed Cua Driver and yabai implementations. Keep all
@@ -157,6 +157,9 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
     private let hardwareCaptureWindowListFunction: HardwareCaptureWindowListFunction?
 
     let capability: SkyLightSPICapability
+    /// Drag posts once through the public PID route. It does not require the
+    /// private click sender or integer-field setter, only window location/focus.
+    let dragCapability: SkyLightSPICapability
     /// Occlusion keep-alive (`WindowOcclusionKeepAlive`) is a separate optional
     /// capability so a missing symbol never disables `sky_click` / `sky_key`.
     let occlusionCapability: SkyLightSPICapability
@@ -195,6 +198,12 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
             missingSymbols.append(Self.getProcessForPIDSymbol)
         }
         capability = SkyLightSPICapability(missingSymbols: missingSymbols)
+        dragCapability = SkyLightSPICapability(
+            missingSymbols: missingSymbols.filter {
+                $0 != Self.postToPidSymbol && $0 != Self.setIntegerFieldSymbol
+            },
+            feature: "background drag"
+        )
 
         var missingOcclusionSymbols: [String] = []
         if mainConnectionFunction == nil {

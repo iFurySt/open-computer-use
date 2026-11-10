@@ -264,9 +264,8 @@ func actionReadBackEnabled(environment: [String: String]) -> Bool {
 /// How a `drag` is delivered. `drag` has no method argument; the path is decided
 /// by the same process-level gate that authorizes `click_method=global`.
 enum DragDeliveryPath: String, CaseIterable {
-    /// `CGEvent.postToPid`: never moves the system pointer, but the events do not
-    /// pass through the window server, so window-server drag sessions (window
-    /// moves, text selection, Finder drag-and-drop) are not driven.
+    /// Window-addressed `CGEvent.postToPid` with target-only synthetic focus.
+    /// Never moves the real pointer; window-server-managed drag/drop is not guaranteed.
     case appPost = "app_post"
     /// `.cghidEventTap`: drives window-server drag sessions and may move the
     /// real pointer or change foreground focus.
@@ -277,10 +276,14 @@ func dragDeliveryPath(environment: [String: String]) -> DragDeliveryPath {
     globalPointerFallbacksEnabled(environment: environment) ? .global : .appPost
 }
 
+func dragActionSnapshotRecoveryPolicy(for path: DragDeliveryPath) -> SnapshotRecoveryPolicy {
+    path == .appPost ? .readOnly : .allowActivation
+}
+
 func dragDeliveryNote(for path: DragDeliveryPath) -> String {
     switch path {
     case .appPost:
-        return "Drag delivered via app_post: mouse events were posted directly to the target process and the system pointer did not move. This path cannot drive window-server drag sessions such as window moves, text selection, or Finder drag-and-drop. If the drag had no effect, set OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 in the server process environment to use the global pointer path, which may move the real pointer and change foreground focus."
+        return "Drag delivered via app_post: window-addressed mouse events were posted once to the target process with target-only synthetic focus when needed; the system pointer was not moved. Delivery is not verification of the target UI result. Window-server-managed gestures such as window moves or Finder drag-and-drop are not guaranteed. Global input is never a fallback; it requires explicit OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 and may move the real pointer or change foreground focus."
     case .global:
         return "Drag delivered via global pointer path: OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS is enabled, so the real pointer may have moved and foreground focus may have changed."
     }
@@ -992,7 +995,12 @@ public final class ComputerUseService {
     }
 
     public func drag(app query: String, fromX: Double, fromY: Double, toX: Double, toY: Double) throws -> ToolCallResult {
-        let snapshot = try currentSnapshot(for: query)
+        guard [fromX, fromY, toX, toY].allSatisfy(\.isFinite) else {
+            throw ComputerUseError.invalidArguments("drag requires finite coordinates")
+        }
+        let deliveryPath = dragDeliveryPath(environment: ProcessInfo.processInfo.environment)
+        let recoveryPolicy = dragActionSnapshotRecoveryPolicy(for: deliveryPath)
+        let snapshot = try currentSnapshot(for: query, recoveryPolicy: recoveryPolicy)
         guard snapshot.observation.includeScreenshot else {
             throw ComputerUseError.stateUnavailable(SnapshotObservationOptions.screenshotOmittedNote + "; request a screenshot before screenshot-coordinate actions")
         }
@@ -1007,11 +1015,12 @@ public final class ComputerUseService {
         let path = try performDragEvent(
             from: start,
             to: end,
-            targetDescription: "from=(\(Int(fromX)), \(Int(fromY))) to=(\(Int(toX)), \(Int(toY)))",
-            snapshot: snapshot
+            targetDescription: "from=(\(fromX), \(fromY)) to=(\(toX), \(toY))",
+            snapshot: snapshot,
+            path: deliveryPath
         )
         return appendingDragDeliveryNote(
-            to: try actionResult(for: query),
+            to: try actionResult(for: query, recoveryPolicy: recoveryPolicy),
             path: path
         )
     }
@@ -1329,7 +1338,7 @@ public final class ComputerUseService {
         return dict
     }
 
-    func currentSnapshot(for query: String) throws -> AppSnapshot {
+    func currentSnapshot(for query: String, recoveryPolicy: SnapshotRecoveryPolicy = .allowActivation) throws -> AppSnapshot {
         if let snapshot = snapshotsByApp[query.lowercased()] {
             if snapshot.mode != .fixture {
                 do {
@@ -1345,7 +1354,7 @@ public final class ComputerUseService {
         if invalidatedSnapshotAliases.contains(query.lowercased()) {
             throw ComputerUseError.stateUnavailable(SnapshotObservationOptions.accessibilityOmittedNote)
         }
-        return try refreshSnapshot(for: query)
+        return try refreshSnapshot(for: query, recoveryPolicy: recoveryPolicy)
     }
 
     @discardableResult
@@ -2397,11 +2406,11 @@ public final class ComputerUseService {
         from start: CGPoint,
         to end: CGPoint,
         targetDescription: String,
-        snapshot: AppSnapshot
+        snapshot: AppSnapshot,
+        path: DragDeliveryPath
     ) throws -> DragDeliveryPath {
         let eventStart = inputEventPoint(fromScreenStatePoint: start)
         let eventEnd = inputEventPoint(fromScreenStatePoint: end)
-        let path = dragDeliveryPath(environment: ProcessInfo.processInfo.environment)
 
         switch path {
         case .global:
@@ -2413,7 +2422,10 @@ public final class ComputerUseService {
             InputSimulation.prepareAppForGlobalPointerInput(snapshot.app)
             try InputSimulation.dragGlobally(from: eventStart, to: eventEnd)
         case .appPost:
-            try InputSimulation.dragTargeted(from: eventStart, to: eventEnd, pid: snapshot.app.pid)
+            guard let windowID = snapshot.targetWindowID, let windowBounds = snapshot.windowBounds else {
+                throw ComputerUseError.stateUnavailable("drag requires an observed target window; run get_app_state again")
+            }
+            try InputSimulation.dragTargeted(from: eventStart, to: eventEnd, windowBounds: windowBounds, windowID: windowID, pid: snapshot.app.pid)
         }
 
         return path

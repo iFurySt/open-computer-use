@@ -17,15 +17,8 @@ final class DragReleaseTests: XCTestCase {
         }
     }
 
-    func testADragThatFailsPartwayReleasesTheButton() throws {
-        try startReading()
-        // Checks: move 1, press 2, first dragged step 3.
-        let countdown = Countdown(failingCall: 3)
-        XCTAssertThrowsError(try LockedUseActionScope.withValidator({ try countdown.check() }) {
-            try InputSimulation.dragTargeted(from: CGPoint(x: 300, y: 300), to: CGPoint(x: 400, y: 300), pid: getpid())
-        })
-        XCTAssertEqual(postedEvents(), [.mouseMoved, .leftMouseDown, .leftMouseUp])
-    }
+    // BackgroundDragTests covers drag cancellation at every send boundary with
+    // window-addressed events; the tests below retain the ordinary click checks.
 
     func testAClickWhoseCheckFailsAfterThePressStillReleases() throws {
         try startReading()

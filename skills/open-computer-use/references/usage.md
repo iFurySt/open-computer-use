@@ -266,12 +266,13 @@ turn/connection cleanup remain available when disabled.
 
 `drag` has no method parameter. On macOS the path it takes is decided by the same process-level gate that authorizes `click_method: "global"`:
 
-- Gate unset (default): mouse move / down / dragged / up events are posted directly to the target process with `CGEvent.postToPid`. The system pointer does not move and foreground focus is unchanged. Because the events never pass through the window server, this path cannot start a window-server drag session: window moves, drag-selecting text, and Finder drag-and-drop return without error but have no visible effect.
+- Gate unset (default): events are posted once with `CGEvent.postToPid`, addressed to the observed window using its window number and window-local location. A background target receives target-only synthetic activation and key-window records, released after mouse-up. No global event, primer click, real-pointer movement or window raise is used. Both endpoints must be inside the observed window; hidden, closed, moved or wrong-owner targets and missing private capabilities fail closed. An action must have a delivered screenshot. Re-observe after a window moves. Initial observation and action read-back use read-only recovery, never activation to repair a failed capture.
+- The background path is verified on a real, covered AppKit drawing fixture. It is not a guarantee that WindowServer-managed window moves, Finder drag-and-drop, other Spaces or every toolkit accept the gesture. Observe the actual result instead of treating dispatch as UI success.
 - `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` set for the server process: the drag uses the global pointer path, which drives window-server drag sessions but may move the real pointer and change foreground focus.
 
-Every non-fixture `drag` result includes a text item that begins `Drag delivered via app_post` or `Drag delivered via global pointer path`, so a default drag that did nothing is legible instead of looking like success. For an MCP server the variable belongs in the server entry's `env`, not in the calling shell, and the server must be restarted afterwards.
+Every non-fixture `drag` result includes a text item that begins `Drag delivered via app_post` or `Drag delivered via global pointer path`. This describes delivery, not verification of the target UI result. Background failure never switches to global input. For an MCP server the global-pointer variable belongs in the server entry's `env`, not in the calling shell, and the server must be restarted afterwards.
 
-When the gate is not enabled, treat window-server drags as unavailable and reach the same outcome another way: copy or move files with a shell command instead of a Finder drag, use `set_value` or keyboard selection instead of drag-selecting text, and use the app's own window controls instead of dragging a title bar.
+For unverified WindowServer-managed gestures, prefer another way to reach the outcome rather than assuming background drag support: copy or move files with a shell command instead of a Finder drag, use `set_value` or keyboard selection instead of drag-selecting text, and use the app's own window controls instead of dragging a title bar.
 
 ## Text Selection (macOS)
 
