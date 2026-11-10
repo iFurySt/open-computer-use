@@ -11,5 +11,3 @@
 ## 初始文档
 
 - `core-beliefs.md`
-- [macOS 后台拖拽修复](macos-background-drag.md)
-  - 保持现有 drag API 的后台窗口投递修复、实测结果与 Draft PR 验收边界。

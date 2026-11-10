@@ -17,7 +17,7 @@
 
 - 源码调研基线：`fccf49a`。
 - 原生工具复现环境：macOS 26.6.2，已安装 OCU 1.1.4；本 checkout 修复前构建也已通过真实 AppKit/native MCP baseline 复现。
-- [问题复现与 PR 说明草稿](../../design-docs/macos-background-drag.md)。
+- [问题复现与验证](../../macos-background-drag.md)。
 - [协作约定](../../REPO_COLLAB_GUIDE.md)、[架构](../../ARCHITECTURE.md)、[安全](../../SECURITY.md)、[可靠性](../../RELIABILITY.md)、[history 规范](../../HISTORY_GUIDE.md)、[release note 规范](../../releases/README.md)。
 - 主要实现：`ComputerUseService.drag` / `performDragEvent`、`InputSimulation.dragTargeted` / `withPressedMouseButton`，以及现有 `SkyLightSPI`、SkyClick / SkyKeyboard 实现。
 - 默认 drag 走普通 app_post，global 由现有环境门控选择。在 Preview 原生 drag 返回已投递但画布未变。
@@ -57,9 +57,9 @@
 - [x] 起草 PR 说明，明确已验证与待完成项。
 - [x] 完成真实画布对照：窗口号 + window-local location + synthetic-active/key 组合有效，保留原 source / 时序；去掉原型额外点击。
 - [x] 实现生产修复与无 GUI 单测；默认路径初始观察 / 回读保持 read-only。
-- [x] 主场景三轮真实遮挡画布 / native MCP 通过；最终 14 个新增单测、XCTest 完整包 476 个测试（8 个跳过，0 失败）和 make ci 回归通过；本机工具链限制已记录。
+- [x] 主场景三轮真实遮挡画布 / native MCP 通过。首次实现通过 14 个新增单测、XCTest 完整包 476 个测试（8 个跳过）和 make ci。本机工具链限制已记录。
 - [x] 扩展 opt-in 实机 smoke 在无人输入时完整通过：绘制回调、越界、移动 / 关闭，以及目标已在前台的兼容性。桌面输入打断的一轮未计为通过。
-- [x] 同步 history / release note 及 PR 设计说明，记录实际验证局限。
+- [x] 同步 history / release note，记录实际验证局限。
 
 ## 决策记录
 
@@ -68,3 +68,4 @@
 - 2026-11-10：原型只证明组合可行，额外点击、焦点和时序因素均须拆开验证，不能直接把原型当成完成的修复。
 - 2026-11-10：真实 AppKit 对照后，只保留窗口号 / window-local location / synthetic-active + key；不需要 click 的 primer、额外整数字段、HID source 或双通道。实现与验证细节见 [后台拖拽](../../macos-background-drag.md)。
 - 2026-11-10：长驻 MCP 前台兼容性回归暴露前台识别问题，改用同步系统 AX focused application；不依赖 NSWorkspace 的前台缓存，收尾时不撤销已成为真实前台的目标状态。
+- 2026-11-10：评审后合并重复文档。窗口寻址和合成焦点分开检测，目标在后台时才要求合成焦点符号。

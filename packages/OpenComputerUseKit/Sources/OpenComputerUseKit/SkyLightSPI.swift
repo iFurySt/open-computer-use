@@ -157,9 +157,10 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
     private let hardwareCaptureWindowListFunction: HardwareCaptureWindowListFunction?
 
     let capability: SkyLightSPICapability
-    /// Drag posts once through the public PID route. It does not require the
-    /// private click sender or integer-field setter, only window location/focus.
-    let dragCapability: SkyLightSPICapability
+    /// Window addressing is required for every app_post drag. Synthetic focus
+    /// is only needed when the target app is in the background.
+    let dragWindowLocationCapability: SkyLightSPICapability
+    let dragFocusCapability: SkyLightSPICapability
     /// Occlusion keep-alive (`WindowOcclusionKeepAlive`) is a separate optional
     /// capability so a missing symbol never disables `sky_click` / `sky_key`.
     let occlusionCapability: SkyLightSPICapability
@@ -198,11 +199,15 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
             missingSymbols.append(Self.getProcessForPIDSymbol)
         }
         capability = SkyLightSPICapability(missingSymbols: missingSymbols)
-        dragCapability = SkyLightSPICapability(
+        dragWindowLocationCapability = SkyLightSPICapability(
+            missingSymbols: missingSymbols.filter { $0 == Self.setWindowLocationSymbol },
+            feature: "drag window location"
+        )
+        dragFocusCapability = SkyLightSPICapability(
             missingSymbols: missingSymbols.filter {
-                $0 != Self.postToPidSymbol && $0 != Self.setIntegerFieldSymbol
+                $0 == Self.postEventRecordSymbol || $0 == Self.getProcessForPIDSymbol
             },
-            feature: "background drag"
+            feature: "background drag synthetic focus"
         )
 
         var missingOcclusionSymbols: [String] = []

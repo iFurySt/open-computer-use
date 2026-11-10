@@ -19,10 +19,12 @@ final class BackgroundDragTests: XCTestCase {
         var failMakeKey = false
         var failEnd = false
         var posted: ((CGEvent) -> Void)?
-        var capability = SkyLightSPICapability(missingSymbols: [], feature: "background drag")
+        var windowLocationCapability = SkyLightSPICapability(missingSymbols: [], feature: "drag window location")
+        var focusCapability = SkyLightSPICapability(missingSymbols: [], feature: "background drag synthetic focus")
         var io: BackgroundDragIO {
             BackgroundDragIO(
-                capability: capability,
+                windowLocationCapability: windowLocationCapability,
+                focusCapability: focusCapability,
                 validateWindow: { _ in
                     self.validations += 1
                     if self.validations == self.failValidation { throw ComputerUseError.stateUnavailable("window changed") }
@@ -74,13 +76,31 @@ final class BackgroundDragTests: XCTestCase {
         XCTAssertEqual(probe.locations.last, CGPoint(x: 180, y: 120))
     }
 
-    func testForegroundTargetDoesNotGetSyntheticActivationOrDeactivation() throws {
-        let probe = Probe(); probe.foreground = true
+    func testForegroundTargetCanDragWithoutSyntheticFocusSymbols() throws {
+        let probe = Probe()
+        probe.foreground = true
+        probe.focusCapability = SkyLightSPICapability(
+            missingSymbols: ["SLPSPostEventRecordTo", "GetProcessForPID"],
+            feature: "background drag synthetic focus"
+        )
         try BackgroundDragDispatcher.drag(target: target, io: probe.io, validateSession: {})
         XCTAssertFalse(probe.lifecycle.contains("activate"))
         XCTAssertFalse(probe.lifecycle.contains("key"))
         XCTAssertFalse(probe.lifecycle.contains("deactivate"))
-        XCTAssertEqual(probe.events.last?.type, .leftMouseUp)
+        XCTAssertEqual(probe.events.map(\.type), [.mouseMoved, .leftMouseDown] + Array(repeating: .leftMouseDragged, count: 10) + [.leftMouseUp])
+    }
+
+    func testBackgroundTargetWithoutSyntheticFocusSymbolsIsRejectedBeforeInput() {
+        let probe = Probe()
+        probe.focusCapability = SkyLightSPICapability(
+            missingSymbols: ["SLPSPostEventRecordTo"],
+            feature: "background drag synthetic focus"
+        )
+        XCTAssertThrowsError(try BackgroundDragDispatcher.drag(target: target, io: probe.io, validateSession: {})) { error in
+            XCTAssertTrue(String(describing: error).contains("SLPSPostEventRecordTo"))
+        }
+        XCTAssertTrue(probe.lifecycle.isEmpty)
+        XCTAssertTrue(probe.events.isEmpty)
     }
 
     func testTargetThatBecomesRealForegroundIsNotSyntheticallyDeactivated() throws {
@@ -94,7 +114,11 @@ final class BackgroundDragTests: XCTestCase {
 
     func testMissingCapabilityAndPreparationFailureHaveNoInputOrFocusSideEffects() {
         let missing = Probe()
-        missing.capability = SkyLightSPICapability(missingSymbols: ["CGEventSetWindowLocation"], feature: "background drag")
+        missing.foreground = true
+        missing.windowLocationCapability = SkyLightSPICapability(
+            missingSymbols: ["CGEventSetWindowLocation"],
+            feature: "drag window location"
+        )
         XCTAssertThrowsError(try BackgroundDragDispatcher.drag(target: target, io: missing.io, validateSession: {}))
         XCTAssertTrue(missing.lifecycle.isEmpty)
         let stamping = Probe(); stamping.failStamp = true

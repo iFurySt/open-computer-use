@@ -39,7 +39,8 @@ func validateBackgroundDragWindow(_ target: BackgroundDragTarget, windowInfo: [[
 /// A small I/O seam for failure tests. Production still uses the existing SPI
 /// bridge; no fixture command, global-pointer fallback, or second delivery route.
 struct BackgroundDragIO {
-    let capability: SkyLightSPICapability
+    let windowLocationCapability: SkyLightSPICapability
+    let focusCapability: SkyLightSPICapability
     var validateWindow: (BackgroundDragTarget) throws -> Void
     var needsFocus: (pid_t) throws -> Bool
     var beginFocus: (BackgroundDragTarget) throws -> SkyLightSyntheticFocusContext
@@ -55,7 +56,8 @@ struct BackgroundDragIO {
             CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]] ?? []
         }
         return BackgroundDragIO(
-            capability: spi.dragCapability,
+            windowLocationCapability: spi.dragWindowLocationCapability,
+            focusCapability: spi.dragFocusCapability,
             validateWindow: { target in
                 guard let app = NSRunningApplication(processIdentifier: target.pid), !app.isTerminated, !app.isHidden else {
                     throw ComputerUseError.stateUnavailable("drag target app is unavailable or hidden; run get_app_state again")
@@ -110,8 +112,8 @@ enum BackgroundDragDispatcher {
     ) throws {
         try validateSession()
         try target.validateGeometry()
-        guard io.capability.isAvailable else {
-            throw ComputerUseError.message("background drag is unavailable: \(io.capability.unavailableReason)")
+        guard io.windowLocationCapability.isAvailable else {
+            throw ComputerUseError.message("drag window targeting is unavailable: \(io.windowLocationCapability.unavailableReason)")
         }
         dispatchLock.lock()
         defer { dispatchLock.unlock() }
@@ -160,6 +162,9 @@ enum BackgroundDragDispatcher {
         do {
             if try io.needsFocus(target.pid) {
                 try validateSession()
+                guard io.focusCapability.isAvailable else {
+                    throw ComputerUseError.message("background drag is unavailable: \(io.focusCapability.unavailableReason)")
+                }
                 let context = try io.beginFocus(target)
                 focus = context
                 try validateSession()
