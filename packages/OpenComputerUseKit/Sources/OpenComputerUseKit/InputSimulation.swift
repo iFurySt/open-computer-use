@@ -163,22 +163,10 @@ enum InputSimulation {
         Thread.sleep(forTimeInterval: 0.03)
     }
 
-    static func dragTargeted(from start: CGPoint, to end: CGPoint, pid: pid_t) throws {
-        guard let source = CGEventSource(stateID: .combinedSessionState) else {
-            throw ComputerUseError.message("Failed to create targeted event source.")
-        }
-        let release = try mouseRelease(source: source, point: start, button: .left, clickState: 1)
-        try postMouseEventToPid(type: .mouseMoved, source: source, point: start, button: .left, clickState: 1, pid: pid)
-        try withPressedMouseButton(press: {
-            try postMouseEventToPid(type: .leftMouseDown, source: source, point: start, button: .left, clickState: 1, pid: pid)
-        }, release: { postPreparedRelease(release, pid: pid) }) {
-            for step in 1...10 {
-                let progress = CGFloat(step) / 10
-                let point = CGPoint(x: start.x + ((end.x - start.x) * progress), y: start.y + ((end.y - start.y) * progress))
-                try postMouseEventToPid(type: .leftMouseDragged, source: source, point: point, button: .left, clickState: 1, pid: pid)
-                release.location = point
-            }
-        }
+    static func dragTargeted(from start: CGPoint, to end: CGPoint, windowBounds: CGRect, windowID: CGWindowID, pid: pid_t) throws {
+        try BackgroundDragDispatcher.drag(target: BackgroundDragTarget(
+            start: start, end: end, windowBounds: windowBounds, windowID: windowID, pid: pid
+        ))
     }
 
     static func dragGlobally(from start: CGPoint, to end: CGPoint) throws {

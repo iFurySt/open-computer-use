@@ -768,7 +768,9 @@ final class OpenComputerUseKitTests: XCTestCase {
         )
         let dragDescription = tools["drag"]?.description ?? ""
         XCTAssertTrue(dragDescription.contains("OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1"))
-        XCTAssertTrue(dragDescription.contains("window moves, text selection, or Finder drag-and-drop"))
+        XCTAssertTrue(dragDescription.contains("window moves or Finder drag-and-drop"))
+        XCTAssertTrue(dragDescription.contains("Both points must be inside that window"))
+        XCTAssertTrue(dragDescription.contains("Delivery does not verify the UI result"))
         XCTAssertTrue(dragDescription.hasSuffix("This tool is part of plugin `Computer Use`."))
         let getAppStateSchema = tools["get_app_state"]?.inputSchema
         let getAppStateProperties = getAppStateSchema?["properties"] as? [String: [String: Any]]
@@ -1711,13 +1713,14 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(dragDeliveryPath(environment: ["OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS": " True "]), .global)
     }
 
-    func testDragDeliveryNoteExplainsWhyDefaultPathCannotDriveWindowServerDrags() {
+    func testDragDeliveryNoteDescribesWindowAddressedInputWithoutClaimingUISuccess() {
         let appPostNote = dragDeliveryNote(for: .appPost)
         XCTAssertTrue(appPostNote.hasPrefix("Drag delivered via app_post"))
-        XCTAssertTrue(appPostNote.contains("system pointer did not move"))
-        XCTAssertTrue(appPostNote.contains("window moves"))
-        XCTAssertTrue(appPostNote.contains("text selection"))
+        XCTAssertTrue(appPostNote.contains("system pointer was not moved"))
+        XCTAssertTrue(appPostNote.contains("window-addressed"))
+        XCTAssertTrue(appPostNote.contains("not verification"))
         XCTAssertTrue(appPostNote.contains("Finder drag-and-drop"))
+        XCTAssertTrue(appPostNote.contains("never a fallback"))
         XCTAssertTrue(appPostNote.contains("OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1"))
 
         let globalNote = dragDeliveryNote(for: .global)

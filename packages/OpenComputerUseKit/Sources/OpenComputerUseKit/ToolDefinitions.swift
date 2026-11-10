@@ -71,7 +71,7 @@ public enum ToolDefinitions {
         ),
         ToolDefinition(
             name: "drag",
-            description: "Drag from one point to another using pixel coordinates. By default mouse events are posted directly to the target app and the system pointer does not move; that path cannot drive window-server drag sessions such as window moves, text selection, or Finder drag-and-drop. Those require OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 in the server process environment, which may move the real pointer. The result reports which path was used. This tool is part of plugin `Computer Use`.",
+            description: "Drag from one point to another using pixel coordinates. On macOS the default path addresses the observed window and uses target-only synthetic focus when needed, without moving the system pointer or changing the foreground app. Both points must be inside that window. Delivery does not verify the UI result; window-server-managed gestures such as window moves or Finder drag-and-drop are not guaranteed. Global input requires explicit OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 and may move the real pointer or change foreground focus. The result reports which path was used. This tool is part of plugin `Computer Use`.",
             annotations: defaultAnnotations(),
             inputSchema: objectSchema(
                 properties: [

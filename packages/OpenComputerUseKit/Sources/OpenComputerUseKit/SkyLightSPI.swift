@@ -95,8 +95,8 @@ protocol WindowOcclusionControlling: AnyObject {
     func setWindowOcclusionNotificationsEnabled(_ enabled: Bool, windowID: CGWindowID) throws -> Bool
 }
 
-/// Runtime-only bridge for the private SkyLight functions used by `sky_click`
-/// and `sky_key`.
+/// Runtime-only bridge for the private SkyLight functions used by `sky_click`,
+/// `sky_key`, and window-addressed background drag.
 ///
 /// The declarations, event-field recipe and key-window records are derived
 /// from the MIT-licensed Cua Driver and yabai implementations. Keep all
@@ -157,6 +157,10 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
     private let hardwareCaptureWindowListFunction: HardwareCaptureWindowListFunction?
 
     let capability: SkyLightSPICapability
+    /// Window addressing is required for every app_post drag. Synthetic focus
+    /// is only needed when the target app is in the background.
+    let dragWindowLocationCapability: SkyLightSPICapability
+    let dragFocusCapability: SkyLightSPICapability
     /// Occlusion keep-alive (`WindowOcclusionKeepAlive`) is a separate optional
     /// capability so a missing symbol never disables `sky_click` / `sky_key`.
     let occlusionCapability: SkyLightSPICapability
@@ -195,6 +199,16 @@ final class SkyLightSPI: WindowOcclusionControlling, @unchecked Sendable {
             missingSymbols.append(Self.getProcessForPIDSymbol)
         }
         capability = SkyLightSPICapability(missingSymbols: missingSymbols)
+        dragWindowLocationCapability = SkyLightSPICapability(
+            missingSymbols: missingSymbols.filter { $0 == Self.setWindowLocationSymbol },
+            feature: "drag window location"
+        )
+        dragFocusCapability = SkyLightSPICapability(
+            missingSymbols: missingSymbols.filter {
+                $0 == Self.postEventRecordSymbol || $0 == Self.getProcessForPIDSymbol
+            },
+            feature: "background drag synthetic focus"
+        )
 
         var missingOcclusionSymbols: [String] = []
         if mainConnectionFunction == nil {
