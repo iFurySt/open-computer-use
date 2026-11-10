@@ -11,3 +11,5 @@
 ## 初始文档
 
 - `core-beliefs.md`
+- [macOS 后台拖拽修复：PR 说明草稿](macos-background-drag.md)
+  - 现有 drag 的问题复现、修复范围、风险和待完成验证；当前尚未实现 runtime 修复。
