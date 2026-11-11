@@ -6,13 +6,13 @@ import XCTest
 /// No system lock, credentials, privileged service or GUI is used here.
 final class LockedUseIncidentReplayTests: XCTestCase {
     private struct Replay {
-        let agent = LockedUseBrokerCoordinator.Context(id: UUID(), role: .agent, userID: 501, auditSessionID: 42)
-        let guardian = LockedUseBrokerCoordinator.Context(id: UUID(), role: .guardian, userID: 501, auditSessionID: 42)
-        let watchdog = LockedUseBrokerCoordinator.Context(id: UUID(), role: .guardian, userID: 501, auditSessionID: 42)
-        let plugin = LockedUseBrokerCoordinator.Context(id: UUID(), role: .plugin, userID: 88, auditSessionID: 42)
-        let locked = LockedUseSession(state: .locked, userID: 501, auditSessionID: 42)
-        let unlocked = LockedUseSession(state: .unlocked, userID: 501, auditSessionID: 42)
-        let healthy = LockedUseStateMachine.Guards(allDisplaysCovered: true, inputTapHealthy: true, watchdogHealthy: true, displayGeneration: 1)
+        var agent = LockedUseBrokerCoordinator.Context(id: UUID(), role: .agent, userID: 501, auditSessionID: 42)
+        var guardian = LockedUseBrokerCoordinator.Context(id: UUID(), role: .guardian, userID: 501, auditSessionID: 42)
+        var watchdog = LockedUseBrokerCoordinator.Context(id: UUID(), role: .guardian, userID: 501, auditSessionID: 42)
+        var plugin = LockedUseBrokerCoordinator.Context(id: UUID(), role: .plugin, userID: 88, auditSessionID: 42)
+        var locked = LockedUseSession(state: .locked, userID: 501, auditSessionID: 42)
+        var unlocked = LockedUseSession(state: .unlocked, userID: 501, auditSessionID: 42)
+        var healthy = LockedUseStateMachine.Guards(allDisplaysCovered: true, inputTapHealthy: true, watchdogHealthy: true, displayGeneration: 1)
         var broker = LockedUseBrokerCoordinator(enabled: true, backendValidated: true, requiresWatchdog: true)
         var policy: LockedUseGuardianPolicy
         var lease: UUID!
@@ -120,7 +120,7 @@ final class LockedUseIncidentReplayTests: XCTestCase {
             })
         XCTAssertEqual(try r.poll(r.locked, 32), [.releaseShield])
         XCTAssertEqual(try r.poll(r.unlocked, 32.6), [])
-        let watchdog = try r.send(.init(operation: .watchdogReport, leaseID: r.lease,
+        var watchdog = try r.send(.init(operation: .watchdogReport, leaseID: r.lease,
             session: r.locked, guards: r.healthy), r.watchdog, 32.7)
         XCTAssertTrue(watchdog.effects.contains("releaseWatchdog"))
         _ = try r.send(.init(operation: .watchdogReleased, leaseID: r.lease), r.watchdog, 32.8)
