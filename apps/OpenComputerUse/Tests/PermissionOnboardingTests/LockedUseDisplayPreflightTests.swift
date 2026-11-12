@@ -1,5 +1,6 @@
 import XCTest
 import os
+import IOKit.pwr_mgt
 @testable import OpenComputerUse
 import OpenComputerUseKit
 
@@ -14,7 +15,7 @@ final class LockedUseDisplayPreflightTests: XCTestCase {
         var clock: TimeInterval = 0
         let preflight = LockedUseDisplayPreflight(
             activeDisplayCount: { reads += 1; return counts.removeFirst() },
-            declareUserActivity: { wakes += 1 },
+            declareUserActivity: { _ in wakes += 1 },
             sleep: { _ in clock += clockStep },
             now: { clock },
             logger: Logger(subsystem: "test", category: "preflight")
@@ -81,4 +82,160 @@ final class LockedUseDisplayPreflightTests: XCTestCase {
                                                    poll: { _ in XCTFail("must not poll") }, now: { 0 })
         XCTAssertEqual(outcome, "statusUnavailable")
     }
+
+    func testWakeReusesLatestAssertionIDAndReleasesItAfterSuccess() {
+        var reads = 0
+        var suppliedIDs: [IOPMAssertionID] = []
+        var releasedIDs: [IOPMAssertionID] = []
+        let preflight = LockedUseDisplayPreflight(
+            activeDisplayCount: { reads += 1; return reads == 3 ? 1 : 0 },
+            declareUserActivity: { id in suppliedIDs.append(id); id += 10 },
+            releaseUserActivity: { releasedIDs.append($0) },
+            sleep: { _ in }, now: { 0 })
+        XCTAssertEqual(preflight.wakeForAcquisition(), "woke")
+        XCTAssertEqual(suppliedIDs, [0, 10])
+        XCTAssertEqual(releasedIDs, [20])
+    }
+
+    func testWakeTimeoutAlsoReleasesUserActivity() {
+        var clock: TimeInterval = 0
+        var releasedIDs: [IOPMAssertionID] = []
+        let preflight = LockedUseDisplayPreflight(
+            activeDisplayCount: { 0 },
+            declareUserActivity: { $0 = 12 },
+            releaseUserActivity: { releasedIDs.append($0) },
+            sleep: { clock += $0 }, now: { clock })
+        XCTAssertEqual(preflight.wakeForAcquisition(), "wakeTimedOut")
+        XCTAssertEqual(releasedIDs, [12])
+    }
+
+    func testFailedWakeDoesNotReleaseAnInvalidAssertion() {
+        var clock: TimeInterval = 0
+        let preflight = LockedUseDisplayPreflight(
+            activeDisplayCount: { 0 }, declareUserActivity: { _ in },
+            releaseUserActivity: { _ in XCTFail("no assertion was created") },
+            sleep: { clock += $0 }, now: { clock })
+        XCTAssertEqual(preflight.wakeForAcquisition(), "wakeTimedOut")
+    }
+
+    func testHoldSurvivesTerminalPhaseUntilBothGuardsHaveReleased() {
+        // Broker replay separately verifies both terminal phases can precede
+        // the final guard ACK. Cleanup uses the ACK field, never phase alone.
+        for phase in [LockedUseStateMachine.Phase.idle, .awaitingManualUnlock] {
+            var releases = 0
+            var reads = 0
+            var clock: TimeInterval = 0
+            let hold = LockedUseDisplayHold(releaseAssertion: { releases += 1 })
+            let replies = [false, false, true].map {
+                LockedUseIPCReply(id: UUID(), result: .ok, phase: phase, guardsReleased: $0)
+            }
+            let outcome = hold.waitForRelease(status: {
+                XCTAssertEqual(releases, 0, "display must remain awake while checking guard ACKs")
+                defer { reads += 1 }
+                return replies[reads].guardsReleased
+            }, poll: { clock += $0 }, now: { clock })
+            XCTAssertEqual(outcome, "guardsReleased")
+            XCTAssertEqual(reads, 3)
+            XCTAssertEqual(releases, 1)
+            hold.release()
+            XCTAssertEqual(releases, 1, "cleanup must be idempotent")
+        }
+    }
+
+    func testCleanupRetriesUnavailableObserverWithoutDroppingHold() {
+        var clock: TimeInterval = 0
+        var reads = 0
+        var releases = 0
+        let hold = LockedUseDisplayHold(releaseAssertion: { releases += 1 })
+        let outcome = hold.waitForRelease(status: {
+            XCTAssertEqual(releases, 0)
+            reads += 1
+            return reads < 3 ? nil : true
+        }, poll: { clock += $0 }, now: { clock })
+        XCTAssertEqual(outcome, "guardsReleased")
+        XCTAssertEqual(reads, 3)
+        XCTAssertEqual(releases, 1)
+    }
+
+    func testStuckCleanupExpiresWithoutHoldingDisplayForever() {
+        for available in [true, false] {
+            var clock: TimeInterval = 0
+            var releases = 0
+            let hold = LockedUseDisplayHold(releaseAssertion: { releases += 1 })
+            let outcome = hold.waitForRelease(status: { available ? false : nil }, timeout: 0.5,
+                poll: { clock += $0 }, now: { clock })
+            XCTAssertEqual(outcome, "displayReleaseWaitTimedOut")
+            XCTAssertEqual(clock, 0.5, accuracy: 0.001)
+            XCTAssertEqual(releases, 1)
+        }
+    }
+
+    func testAlreadyReleasedGuardsNeedNoPollingDelay() {
+        var releases = 0
+        let hold = LockedUseDisplayHold(releaseAssertion: { releases += 1 })
+        XCTAssertEqual(hold.waitForRelease(status: { true },
+            poll: { _ in XCTFail("must not sleep") }, now: { 0 }), "guardsReleased")
+        XCTAssertEqual(releases, 1)
+    }
+
+    func testAcquisitionConnectionErrorReleasesHoldInLongLivedClient() {
+        enum Failure: Error { case connection }
+        var releases = 0
+        let client = LockedUseConnection(clientSocket: -1,
+            prepareDisplay: { LockedUseDisplayHold(releaseAssertion: { releases += 1 }) },
+            connectForAcquisition: { _ in
+                XCTAssertEqual(releases, 0)
+                throw Failure.connection
+            })
+        XCTAssertThrowsError(try client.acquire(session: .init(state: .locked, userID: 501, auditSessionID: 42)))
+        XCTAssertEqual(releases, 1, "failure must release before the client connection is destroyed")
+        withExtendedLifetime(client) {}
+    }
+
+    func testDisconnectDuringPreflightReleasesHoldWithoutContactingBroker() {
+        var releases = 0
+        var client: LockedUseConnection!
+        client = LockedUseConnection(clientSocket: -1,
+            prepareDisplay: {
+                client.end(disconnecting: true)
+                return LockedUseDisplayHold(releaseAssertion: { releases += 1 })
+            }, connectForAcquisition: { _ in
+                XCTFail("a cancelled preflight must not begin a lease")
+                throw ComputerUseError.stateUnavailable("unexpected connection")
+            })
+        XCTAssertThrowsError(try client.acquire(session: .init(state: .locked, userID: 501, auditSessionID: 42)))
+        XCTAssertEqual(releases, 1)
+        client = nil
+    }
+
+    func testHoldDeinitReleasesAssertion() {
+        var releases = 0
+        var hold: LockedUseDisplayHold? = LockedUseDisplayHold(releaseAssertion: { releases += 1 })
+        XCTAssertNotNil(hold)
+        hold = nil
+        XCTAssertEqual(releases, 1)
+    }
+
+    func testNativeHoldCreatesAndReleasesPowerAssertion() throws {
+        guard ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_TEST_POWER_ASSERTIONS"] == "1" else {
+            throw XCTSkip("Opt-in native assertion test; does not wake, sleep or lock the display")
+        }
+        guard LockedUseSession.current().state == .unlocked else {
+            throw XCTSkip("Requires an already unlocked desktop")
+        }
+        func assertionCount() throws -> Int {
+            var raw: Unmanaged<CFDictionary>?
+            XCTAssertEqual(IOPMCopyAssertionsByProcess(&raw), kIOReturnSuccess)
+            let assertions = try XCTUnwrap(raw).takeRetainedValue() as NSDictionary
+            let owned = assertions[NSNumber(value: ProcessInfo.processInfo.processIdentifier)] as? [[String: Any]] ?? []
+            return owned.filter { $0[kIOPMAssertionNameKey] as? String == "Open Computer Use locked session" }.count
+        }
+        let before = try assertionCount()
+        let hold = try XCTUnwrap(LockedUseDisplayHold(logger: Logger(subsystem: "test", category: "power")))
+        defer { hold.release() }
+        XCTAssertEqual(try assertionCount(), before + 1)
+        hold.release()
+        XCTAssertEqual(try assertionCount(), before)
+    }
+
 }

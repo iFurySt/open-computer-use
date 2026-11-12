@@ -9,6 +9,8 @@ final class LockedUseConnection: @unchecked Sendable {
     private let mutex = NSLock()
     private let logger = Logger(subsystem: "dev.opencomputeruse.locked-use", category: "AgentRecovery")
     private let clientSocket: Int32
+    private let prepareDisplay: () -> LockedUseDisplayHold?
+    private let connectForAcquisition: (Int32) throws -> LockedUseIPCClient
     private var broker: LockedUseIPCClient?
     private var lease: UUID?
     private var guardian: Process?
@@ -28,7 +30,16 @@ final class LockedUseConnection: @unchecked Sendable {
         _exit(70)
     }
 
-    init(clientSocket: Int32) {
+    init(
+        clientSocket: Int32,
+        prepareDisplay: @escaping () -> LockedUseDisplayHold? = LockedUseConnection.prepareDisplay,
+        connectForAcquisition: @escaping (Int32) throws -> LockedUseIPCClient = {
+            try LockedUseIPCClient(endpoint: .agent,
+                brokerRequirement: LockedUseSigningIdentity.brokerRequirement(), clientSocket: $0)
+        }
+    ) {
+        self.prepareDisplay = prepareDisplay
+        self.connectForAcquisition = connectForAcquisition
         self.clientSocket = dup(clientSocket)
         if self.clientSocket >= 0 { _ = fcntl(self.clientSocket, F_SETFD, FD_CLOEXEC) }
     }
@@ -56,17 +67,30 @@ final class LockedUseConnection: @unchecked Sendable {
         return try body()
     }
 
-    private func acquire(session: LockedUseSession, recoveryProbe: Bool = false) throws {
+    private static func prepareDisplay() -> LockedUseDisplayHold? {
+        let logger = Logger(subsystem: "dev.opencomputeruse.locked-use", category: "DisplayPreflight")
+        let hold = LockedUseDisplayHold(logger: logger)
+        _ = LockedUseDisplayPreflight(logger: logger).wakeForAcquisition()
+        let observer = LockedUseDisplayReleaseObserver()
+        _ = lockedUseAwaitReleasedGuards(status: observer.status)
+        return hold
+    }
+
+    func acquire(session: LockedUseSession, recoveryProbe: Bool = false) throws {
         mutex.lock(); let existing = lease; let denied = stopped || clientDisconnected; mutex.unlock()
         if existing != nil || denied { try validateAction(); return }
         // Dark-display insurance before the broker's startup deadline starts counting:
         // wake a sleeping display and keep it awake through the whole episode. See
         // LockedUseDisplayPreflight for the failure modes this prevents.
-        _ = LockedUseDisplayPreflight(logger: preflightLogger).wakeForAcquisition()
-        mutex.lock(); if displayHold == nil { displayHold = LockedUseDisplayHold(logger: preflightLogger) }; mutex.unlock()
-        _ = lockedUseAwaitReleasedGuards(status: releasedGuardsStatus)
-        let connection = try LockedUseIPCClient(endpoint: .agent,
-            brokerRequirement: LockedUseSigningIdentity.brokerRequirement(), clientSocket: clientSocket)
+        let pendingHold = prepareDisplay()
+        var admitted = false
+        // Covers connection/handshake/request errors as well as denied replies.
+        defer { if !admitted { pendingHold?.release() } }
+        mutex.lock(); let cancelled = stopped || clientDisconnected; mutex.unlock()
+        guard !cancelled else {
+            throw ComputerUseError.stateUnavailable("Computer Use client disconnected during display preparation.")
+        }
+        let connection = try connectForAcquisition(clientSocket)
         let reply = try connection.request(.init(operation: recoveryProbe ? .beginRecoveryProbe : .begin, session: session))
         let now = ProcessInfo.processInfo.systemUptime
         let startupDeadline = reply.startupDeadline ?? now + LockedUseStateMachine.unlockTimeout
@@ -75,11 +99,13 @@ final class LockedUseConnection: @unchecked Sendable {
               startupDeadline <= now + LockedUseStateMachine.validationUnlockTimeout,
               let lease = reply.leaseID, let token = reply.token else {
             connection.close()
-            // No episode started; don't strand a display assertion in a long-lived agent.
-            mutex.lock(); displayHold?.release(); displayHold = nil; mutex.unlock()
             throw ComputerUseError.stateUnavailable("Locked Use is unavailable. Enable and validate it in Open Computer Use settings.")
         }
-        mutex.lock(); broker = connection; self.lease = lease; let disconnected = clientDisconnected; mutex.unlock()
+        mutex.lock()
+        broker = connection; self.lease = lease; displayHold = pendingHold
+        admitted = true
+        let disconnected = clientDisconnected
+        mutex.unlock()
         if recoveryProbe { mutex.lock(); recoveryProbeStarted = true; mutex.unlock() }
         // Follow the authenticated root's bounded deadline, plus its existing
         // two-second RPC budget for stop/drain. The client cannot extend it.
@@ -117,16 +143,6 @@ final class LockedUseConnection: @unchecked Sendable {
             }
             throw ComputerUseError.stateUnavailable("Locked Use could not observe a protected GUI session becoming unlocked.")
         } catch { end(); throw error }
-    }
-
-    /// Observer-side status for the release-barrier wait; nil when the observer cannot
-    /// be reached, which leaves admission entirely to the broker's own barriers.
-    private func releasedGuardsStatus() -> (phase: LockedUseStateMachine.Phase?, guardsReleased: Bool?)? {
-        guard let observer = try? LockedUseIPCClient(endpoint: .observer,
-            brokerRequirement: LockedUseSigningIdentity.brokerRequirement()) else { return nil }
-        defer { observer.close() }
-        guard let reply = try? observer.request(.init(operation: .status, session: .current())) else { return nil }
-        return (reply.phase, reply.guardsReleased)
     }
 
     private func validateAction() throws {
@@ -261,9 +277,19 @@ final class LockedUseConnection: @unchecked Sendable {
             // This acknowledgment follows Guardian's lock observation and drain.
             lease = nil
             if reply.phase == .idle { stopped = false }
-            // Lock-presentation evidence has formed (idle) or the episode is over
-            // (latched): the display no longer needs our protection.
-            displayHold?.release(); displayHold = nil
+            let hold = displayHold; displayHold = nil
+            if reply.guardsReleased == true {
+                hold?.release()
+            } else if let hold {
+                // Terminal phase precedes the guards' final release acknowledgments.
+                // Keep their display alive without delaying the client or changing
+                // the existing lease/recovery semantics. This worker owns the hold.
+                DispatchQueue(label: "ocu.locked-use.display-release").async { [preflightLogger] in
+                    let observer = LockedUseDisplayReleaseObserver()
+                    let outcome = hold.waitForRelease(status: { observer.status()?.guardsReleased })
+                    preflightLogger.notice("displayHoldCleanup outcome=\(outcome, privacy: .public)")
+                }
+            }
             broker?.close(); broker = nil
         }
     }

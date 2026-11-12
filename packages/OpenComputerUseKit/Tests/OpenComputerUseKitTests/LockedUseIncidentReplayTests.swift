@@ -48,6 +48,9 @@ final class LockedUseIncidentReplayTests: XCTestCase {
             _ = try send(.init(operation: .quiesced, leaseID: lease), agent, 31.7)
             XCTAssertEqual(broker.phase, .idle)
             XCTAssertFalse(broker.isFullyReleased)
+            let pending = try send(.init(operation: .status), agent, 31.71)
+            XCTAssertEqual(pending.phase, .idle)
+            XCTAssertEqual(pending.guardsReleased, false, "idle must not tell the agent to drop display protection")
         }
 
         mutating func send(_ message: LockedUseIPCMessage, _ peer: LockedUseBrokerCoordinator.Context, _ now: Double) throws -> LockedUseIPCReply {
@@ -92,9 +95,11 @@ final class LockedUseIncidentReplayTests: XCTestCase {
                 : [(.watchdogReleased, r.watchdog), (.guardianReleased, r.guardian)]
             _ = try r.send(.init(operation: acknowledgements[0].0, leaseID: r.lease), acknowledgements[0].1, 32.8)
             XCTAssertFalse(r.broker.isFullyReleased)
+            XCTAssertEqual(try r.send(.init(operation: .status), r.agent, 32.85).guardsReleased, false)
             XCTAssertThrowsError(try r.send(.init(operation: .begin, session: r.locked), r.agent, 32.9))
             _ = try r.send(.init(operation: acknowledgements[1].0, leaseID: r.lease), acknowledgements[1].1, 33)
             XCTAssertTrue(r.broker.isFullyReleased)
+            XCTAssertEqual(try r.send(.init(operation: .status), r.agent, 33.05).guardsReleased, true)
             XCTAssertEqual(try r.send(.init(operation: .begin, session: r.locked), r.agent, 33.1).phase, .preparing)
         }
     }

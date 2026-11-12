@@ -31,11 +31,11 @@ struct LockedUseDisplayPreflight {
         return Int(count)
     }
     /// Replaces the external wake; injected so tests observe call order and retries.
-    var declareUserActivity: () -> Void = {
-        var identifier: IOPMAssertionID = 0
+    var declareUserActivity: (inout IOPMAssertionID) -> Void = { identifier in
         _ = IOPMAssertionDeclareUserActivity("Open Computer Use locked session" as CFString,
                                              kIOPMUserActiveLocal, &identifier)
     }
+    var releaseUserActivity: (IOPMAssertionID) -> Void = { _ = IOPMAssertionRelease($0) }
     var sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
     var now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     var logger: Logger = Logger(subsystem: "dev.opencomputeruse.locked-use", category: "DisplayPreflight")
@@ -45,11 +45,15 @@ struct LockedUseDisplayPreflight {
     @discardableResult
     func wakeForAcquisition() -> String {
         if activeDisplayCount() > 0 { return "alreadyAwake" }
+        // The API can replace this ID on a retry. Reuse its latest value and
+        // release it even when the display never becomes active.
+        var activity: IOPMAssertionID = 0
+        defer { if activity != 0 { releaseUserActivity(activity) } }
         var attempts = 0
         let deadline = now() + Self.wakeTimeout
         while now() < deadline {
             attempts += 1
-            declareUserActivity()
+            declareUserActivity(&activity)
             sleep(Self.pollInterval)
             if activeDisplayCount() > 0 {
                 logger.notice("displayWakeSucceeded attempts=\(attempts, privacy: .public)")
@@ -61,17 +65,17 @@ struct LockedUseDisplayPreflight {
     }
 }
 
-/// The `caffeinate -d` half: held from before `.begin` until the Broker's state
-/// machine reports a terminal phase, so the relock's lock-presentation evidence can
-/// form even when the task ended while the display was about to sleep. Carries its
-/// own hard timeout so a crashed or wedged agent cannot hold the display forever
-/// (powerd also releases assertions at process exit).
-final class LockedUseDisplayHold {
-    private static let safetyTimeout: TimeInterval = LockedUseStateMachine.maximumLease + 60
-    private var identifier: IOPMAssertionID = 0
+/// One episode's prevent-idle-sleep assertion. Ownership starts before wake,
+/// transfers to the connection only after admission, and ends after BOTH guards
+/// have released. A terminal Broker phase alone is not release evidence.
+final class LockedUseDisplayHold: @unchecked Sendable {
+    static let releaseGrace: TimeInterval = 60
+    private static let safetyTimeout: TimeInterval = LockedUseStateMachine.maximumLease + releaseGrace
+    private var releaseAssertion: (() -> Void)?
     private let mutex = NSLock()
 
-    init?(logger: Logger) {
+    convenience init?(logger: Logger) {
+        var identifier: IOPMAssertionID = 0
         let properties: [String: Any] = [
             kIOPMAssertionTypeKey: kIOPMAssertionTypePreventUserIdleDisplaySleep,
             kIOPMAssertionNameKey: "Open Computer Use locked session",
@@ -83,21 +87,70 @@ final class LockedUseDisplayHold {
             logger.warning("displayHoldUnavailable; display may sleep mid-episode")
             return nil
         }
+        self.init(releaseAssertion: { _ = IOPMAssertionRelease(identifier) })
+    }
+
+    /// Also lets regression tests count releases without creating power assertions.
+    init(releaseAssertion: @escaping () -> Void) {
+        self.releaseAssertion = releaseAssertion
     }
 
     func release() {
         mutex.lock(); defer { mutex.unlock() }
-        if identifier != 0 { _ = IOPMAssertionRelease(identifier); identifier = 0 }
+        releaseAssertion?()
+        releaseAssertion = nil
+    }
+
+    /// Runs off the request/polling queue after a terminal reply. Unavailable
+    /// status is not evidence of release; retry within the cleanup grace period.
+    /// The native assertion also expires independently if this worker wedges.
+    @discardableResult
+    func waitForRelease(
+        status: () -> Bool?,
+        timeout: TimeInterval = LockedUseDisplayHold.releaseGrace,
+        poll: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) },
+        now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+    ) -> String {
+        defer { release() }
+        let deadline = now() + timeout
+        while now() < deadline {
+            if status() == true { return "guardsReleased" }
+            let remaining = deadline - now()
+            if remaining > 0 { poll(min(0.2, remaining)) }
+        }
+        return "displayReleaseWaitTimedOut"
     }
 
     deinit { release() }
 }
 
-/// Bounded wait for the release barrier to finish before `.begin` is sent again.
+/// Reuse one authenticated observer while polling instead of paying the cold
+/// handshake cost on every sample. A failed request closes it before retrying.
+final class LockedUseDisplayReleaseObserver {
+    private var connection: LockedUseIPCClient?
+
+    func status() -> (phase: LockedUseStateMachine.Phase?, guardsReleased: Bool?)? {
+        do {
+            if connection == nil {
+                connection = try LockedUseIPCClient(endpoint: .observer,
+                    brokerRequirement: LockedUseSigningIdentity.brokerRequirement())
+            }
+            guard let reply = try connection?.request(.init(operation: .status, session: .current())) else { return nil }
+            return (reply.phase, reply.guardsReleased)
+        } catch {
+            connection?.close(); connection = nil
+            return nil
+        }
+    }
+}
+
+/// Bounded polling for the release barrier to finish before `.begin` is sent again.
 /// After a lease ends the Broker stays `idle` with `guardsReleased == false` until
 /// both guards report lock-presentation evidence (which itself needs an active
 /// display — the reason a wake also unblocks this path). Waiting is strictly
 /// advisory: admission barriers are evaluated unchanged by the Broker afterwards.
+/// The polling budget excludes an in-flight status call, which has its own IPC
+/// deadlines (including the first reply's cold-authentication budget).
 func lockedUseAwaitReleasedGuards(
     status: () -> (phase: LockedUseStateMachine.Phase?, guardsReleased: Bool?)?,
     deadline: TimeInterval = 4,
@@ -105,10 +158,12 @@ func lockedUseAwaitReleasedGuards(
     now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
 ) -> String {
     let stop = now() + deadline
-    while true {
+    while now() < stop {
         guard let reply = status() else { return "statusUnavailable" }
         if reply.phase != .idle || reply.guardsReleased == true { return "ready" }
-        if now() >= stop { return "releaseWaitTimedOut" }
-        poll(0.2)
+        let remaining = stop - now()
+        if remaining <= 0 { return "releaseWaitTimedOut" }
+        poll(min(0.2, remaining))
     }
+    return "releaseWaitTimedOut"
 }
