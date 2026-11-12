@@ -6,13 +6,13 @@ import XCTest
 /// No system lock, credentials, privileged service or GUI is used here.
 final class LockedUseIncidentReplayTests: XCTestCase {
     private struct Replay {
-        let agent = LockedUseBrokerCoordinator.Context(id: UUID(), role: .agent, userID: 501, auditSessionID: 42)
-        let guardian = LockedUseBrokerCoordinator.Context(id: UUID(), role: .guardian, userID: 501, auditSessionID: 42)
-        let watchdog = LockedUseBrokerCoordinator.Context(id: UUID(), role: .guardian, userID: 501, auditSessionID: 42)
-        let plugin = LockedUseBrokerCoordinator.Context(id: UUID(), role: .plugin, userID: 88, auditSessionID: 42)
-        let locked = LockedUseSession(state: .locked, userID: 501, auditSessionID: 42)
-        let unlocked = LockedUseSession(state: .unlocked, userID: 501, auditSessionID: 42)
-        let healthy = LockedUseStateMachine.Guards(allDisplaysCovered: true, inputTapHealthy: true, watchdogHealthy: true, displayGeneration: 1)
+        var agent = LockedUseBrokerCoordinator.Context(id: UUID(), role: .agent, userID: 501, auditSessionID: 42)
+        var guardian = LockedUseBrokerCoordinator.Context(id: UUID(), role: .guardian, userID: 501, auditSessionID: 42)
+        var watchdog = LockedUseBrokerCoordinator.Context(id: UUID(), role: .guardian, userID: 501, auditSessionID: 42)
+        var plugin = LockedUseBrokerCoordinator.Context(id: UUID(), role: .plugin, userID: 88, auditSessionID: 42)
+        var locked = LockedUseSession(state: .locked, userID: 501, auditSessionID: 42)
+        var unlocked = LockedUseSession(state: .unlocked, userID: 501, auditSessionID: 42)
+        var healthy = LockedUseStateMachine.Guards(allDisplaysCovered: true, inputTapHealthy: true, watchdogHealthy: true, displayGeneration: 1)
         var broker = LockedUseBrokerCoordinator(enabled: true, backendValidated: true, requiresWatchdog: true)
         var policy: LockedUseGuardianPolicy
         var lease: UUID!
@@ -48,6 +48,9 @@ final class LockedUseIncidentReplayTests: XCTestCase {
             _ = try send(.init(operation: .quiesced, leaseID: lease), agent, 31.7)
             XCTAssertEqual(broker.phase, .idle)
             XCTAssertFalse(broker.isFullyReleased)
+            let pending = try send(.init(operation: .status), agent, 31.71)
+            XCTAssertEqual(pending.phase, .idle)
+            XCTAssertEqual(pending.guardsReleased, false, "idle must not tell the agent to drop display protection")
         }
 
         mutating func send(_ message: LockedUseIPCMessage, _ peer: LockedUseBrokerCoordinator.Context, _ now: Double) throws -> LockedUseIPCReply {
@@ -92,9 +95,11 @@ final class LockedUseIncidentReplayTests: XCTestCase {
                 : [(.watchdogReleased, r.watchdog), (.guardianReleased, r.guardian)]
             _ = try r.send(.init(operation: acknowledgements[0].0, leaseID: r.lease), acknowledgements[0].1, 32.8)
             XCTAssertFalse(r.broker.isFullyReleased)
+            XCTAssertEqual(try r.send(.init(operation: .status), r.agent, 32.85).guardsReleased, false)
             XCTAssertThrowsError(try r.send(.init(operation: .begin, session: r.locked), r.agent, 32.9))
             _ = try r.send(.init(operation: acknowledgements[1].0, leaseID: r.lease), acknowledgements[1].1, 33)
             XCTAssertTrue(r.broker.isFullyReleased)
+            XCTAssertEqual(try r.send(.init(operation: .status), r.agent, 33.05).guardsReleased, true)
             XCTAssertEqual(try r.send(.init(operation: .begin, session: r.locked), r.agent, 33.1).phase, .preparing)
         }
     }
@@ -120,7 +125,7 @@ final class LockedUseIncidentReplayTests: XCTestCase {
             })
         XCTAssertEqual(try r.poll(r.locked, 32), [.releaseShield])
         XCTAssertEqual(try r.poll(r.unlocked, 32.6), [])
-        let watchdog = try r.send(.init(operation: .watchdogReport, leaseID: r.lease,
+        var watchdog = try r.send(.init(operation: .watchdogReport, leaseID: r.lease,
             session: r.locked, guards: r.healthy), r.watchdog, 32.7)
         XCTAssertTrue(watchdog.effects.contains("releaseWatchdog"))
         _ = try r.send(.init(operation: .watchdogReleased, leaseID: r.lease), r.watchdog, 32.8)

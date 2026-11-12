@@ -161,6 +161,8 @@
 
 - 主 Guardian 与 watchdog 共用的遮罩在初始化时使用屏幕局部坐标，后续 `setFrame` 使用 Cocoa 全局坐标；WindowServer 覆盖仍以 Quartz 全局边界严格检查。旧版的后续定位可掩盖初始偏移，实测差异与复现见 [副屏遮罩坐标](locked-use-shield-placement.md)。
 
+- app agent 在 Locked Use 申请租约前唤醒暗屏并临时保活；保活持续到双保护释放，失败与失联都有清理上限，准入规则保持不变。实现与验证边界见 [显示器唤醒与保活](locked-use-display-readiness.md)。
+
 - Guardian 在重连后先处理握手回复中的指令，再发送普通报告；两类回复共用效果处理入口。Broker 回到 idle 后仍允许已认证 Guardian 完成清理。见 [事故回放](locked-use-incident-replay.md)。
 
 - `locked-use status [--json]` 和 `doctor` 增加只读 session / Input Monitoring / 插件诊断，由 app agent 提供真实 runtime 权限状态。 `doctor --json` 保持纯权限 JSON，不弹权限引导；定向 AX `query` 在读取前和返回结果前检查会话与当前租约。
