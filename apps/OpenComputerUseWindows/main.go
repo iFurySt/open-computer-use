@@ -700,6 +700,7 @@ func runPowerShell(request psRequest) (*psResponse, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", scriptPath, operationPath)
+	hideConsoleWindow(cmd)
 	output, err := cmd.CombinedOutput()
 	if ctx.Err() == context.DeadlineExceeded {
 		if request.Tool != "list_apps" && request.Tool != "get_app_state" {
