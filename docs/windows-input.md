@@ -13,10 +13,12 @@ $env:OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS="1"
 | `clickMethod:"app_post"` / `"accessibility"` | 各自指定的投递路径 | 保持指定路径 |
 | `app.drag(...)` | 窗口消息 | 真实指针 |
 | `app.scroll(index, direction, pages)` | ScrollPattern 优先，再窗口消息 | ScrollPattern 优先，再真实指针 |
-| `app.pressKey(key)` | 窗口消息 | 窗口消息 |
+| `app.pressKey(key)` | 窗口消息（组合键拒绝） | 窗口消息（组合键拒绝） |
 | `app.pressKey(key, {keyMethod:"global"})` | 拒绝 | 真实按键 |
 
 原生 MCP / CLI 参数使用 `click_method`、`key_method`。`type_text` 不提供 global 方式；`sky_click` / `sky_key` 是 macOS 能力。
+
+窗口消息形式的按键和字符发给目标窗口线程里有键盘焦点、且位于目标窗口内的控件（`GetGUIThreadInfo`）；线程没有报告这样的控件时发给窗口本身，与原来一致。应用从键盘状态读取 Ctrl / Shift / Alt，投递消息不会改变键盘状态，所以 `ctrl+a` 这类组合键用窗口消息只会变成单独的 `a`：auto 方式直接拒绝，需要组合键时用 `key_method=global`。`type_text` 先写入有焦点的 Edit / RichEdit 控件（只读时拒绝）；不知道焦点时，只有窗口里唯一的文本框才会被选中，有多个时拒绝，不再写入第一个。
 
 真实输入会移动系统指针，可能将目标放到前台。发送前核对已观察的进程 / 窗口、当前几何、前台及坐标命中窗口。按索引进行的物理输入还核对 UIA runtime ID 和当前元素位置，拒绝已消失、替换或移动的元素。窗口移动、被其他窗口遮挡或无法切换前台时会报错，需要重新观察或让目标可见。不会模拟 Alt 强行抢前台，也不会在指定 app_post / accessibility 失败时切到真实输入。
 

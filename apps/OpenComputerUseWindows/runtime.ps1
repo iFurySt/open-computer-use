@@ -21,6 +21,7 @@ Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public static class OCUWin32 {
     [StructLayout(LayoutKind.Sequential)]
@@ -70,6 +71,17 @@ public static class OCUWin32 {
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int count);
+
+    public static string WindowClass(IntPtr hwnd, uint expectedProcessId) {
+        uint pid;
+        if (hwnd == IntPtr.Zero || GetWindowThreadProcessId(hwnd, out pid) == 0 || pid != expectedProcessId)
+            return null;
+        var name = new System.Text.StringBuilder(256);
+        return GetClassName(hwnd, name, name.Capacity) > 0 ? name.ToString() : null;
+    }
+
     // Hit-test inside the requested window, never against the desktop occluder.
     public static IntPtr ClickTarget(IntPtr root, int x, int y) {
         uint rootPid; GetWindowThreadProcessId(root, out rootPid);
@@ -92,6 +104,37 @@ public static class OCUWin32 {
         }
         throw new InvalidOperationException("Click target hierarchy is too deep.");
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO {
+        public int cbSize, flags;
+        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
+
+    // The window with keyboard focus on the target window's own GUI thread, or zero when that thread has none.
+    public static IntPtr FocusedWindow(IntPtr window) {
+        uint pid;
+        uint thread = GetWindowThreadProcessId(window, out pid);
+        GUITHREADINFO info = new GUITHREADINFO();
+        info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+        if (thread == 0 || !GetGUIThreadInfo(thread, ref info)) return IntPtr.Zero;
+        uint focusPid;
+        if (info.hwndFocus == IntPtr.Zero || GetWindowThreadProcessId(info.hwndFocus, out focusPid) == 0 || focusPid != pid)
+            return IntPtr.Zero;
+        return info.hwndFocus;
+    }
+
+    public static string ClassName(IntPtr hwnd) {
+        StringBuilder name = new StringBuilder(256);
+        return GetClassName(hwnd, name, name.Capacity) > 0 ? name.ToString() : "";
+    }
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    public static extern int GetWindowLong(IntPtr hwnd, int index);
 
     [DllImport("user32.dll")]
     public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
@@ -189,6 +232,8 @@ $WM_KEYUP = 0x0101
 $WM_CHAR = 0x0102
 $EM_SETSEL = 0x00B1
 $EM_REPLACESEL = 0x00C2
+$GWL_STYLE = -16
+$ES_READONLY = 0x0800
 
 # Screenshot coordinates, UIA bounding rectangles and the windowBounds recorded in
 # the operation file are physical pixels, while a DPI-unaware PowerShell process
@@ -545,9 +590,27 @@ function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direc
     }
 }
 
+# A key typed on the keyboard reaches the control with keyboard focus, not the top-level window, which often
+# ignores key messages (a Win32 edit control's parent frame does). Posted keys go to the same control when its
+# thread reports one inside the target window, and to the window itself otherwise, as before.
+function Get-PostedKeyTarget([IntPtr]$hwnd) {
+    $focus = [OCUWin32]::FocusedWindow($hwnd)
+    if ($focus -ne [IntPtr]::Zero -and ($focus -eq $hwnd -or [OCUWin32]::IsChild($hwnd, $focus))) {
+        return $focus
+    }
+    return $hwnd
+}
+
+# Edit and RichEdit controls, including WinForms' superclasses (WindowsForms10.EDIT..., WindowsForms10.RichEdit20W...).
+function Test-EditWindowClass([string]$className) {
+    return $className -match '(^|\.)(Edit|RichEdit\w*)(\.|$)'
+}
+
 function Send-Text([IntPtr]$hwnd, [string]$text) {
     foreach ($char in $text.ToCharArray()) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)
+        if (-not [OCUWin32]::PostMessage($hwnd, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)) {
+            throw "PostMessage character delivery failed."
+        }
         Start-Sleep -Milliseconds 8
     }
 }
@@ -557,23 +620,10 @@ function Send-TextToEditHandle([IntPtr]$hwnd, [string]$text, $element) {
         return $false
     }
 
-    try {
-        [void][OCUWin32]::SendMessage($hwnd, $EM_SETSEL, [IntPtr](-1), [IntPtr](-1))
-        [void][OCUWin32]::SendMessage($hwnd, $EM_REPLACESEL, [IntPtr]1, $text)
-        return $true
-    } catch {
-    }
-
-    try {
-        $current = ""
-        if ($null -ne $element) {
-            $current = Get-ElementValue $element
-        }
-        [void][OCUWin32]::SendMessage($hwnd, $WM_SETTEXT, [IntPtr]::Zero, ($current + $text))
-        return $true
-    } catch {
-        return $false
-    }
+    # Preserve the receiver's selection. Once a write is attempted, do not retry
+    # through WM_SETTEXT: it could replace the entire value or duplicate input.
+    [void][OCUWin32]::SendMessage($hwnd, $EM_REPLACESEL, [IntPtr]1, $text)
+    return $true
 }
 
 function Get-VirtualKey([string]$key) {
@@ -639,30 +689,17 @@ function Send-Key([IntPtr]$hwnd, [string]$key, [string]$method = "auto") {
         }
         return
     }
-    $parts = $key -split "\+"
-    $main = $parts[$parts.Length - 1]
-    $modifiers = @()
-    for ($i = 0; $i -lt $parts.Length - 1; $i++) {
-        switch ($parts[$i].ToLowerInvariant()) {
-            "ctrl" { $modifiers += 0x11 }
-            "control" { $modifiers += 0x11 }
-            "shift" { $modifiers += 0x10 }
-            "alt" { $modifiers += 0x12 }
-            "super" { $modifiers += 0x5B }
-            "win" { $modifiers += 0x5B }
-            "cmd" { $modifiers += 0x5B }
-        }
+    # Apps read Ctrl, Shift and Alt from the keyboard state, which posted messages do not change, so a posted
+    # ctrl+a arrives as a plain "a".
+    if ($key.Length -gt 1 -and $key.Contains("+")) {
+        throw "Window messages cannot carry modifier keys, so '$key' would arrive as its last key alone. Use key_method=global (requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1)."
     }
-    foreach ($modifier in $modifiers) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
-    }
-    $vk = Get-VirtualKey $main
-    [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 25
-    [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
-    [array]::Reverse($modifiers)
-    foreach ($modifier in $modifiers) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
+    $vk = Get-VirtualKey $key
+    $target = Get-PostedKeyTarget $hwnd
+    if (-not [OCUWin32]::PostMessage($target, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)) { throw "PostMessage key delivery failed." }
+    try { Start-Sleep -Milliseconds 25 }
+    finally {
+        if (-not [OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)) { throw "PostMessage key release failed." }
     }
 }
 
@@ -818,7 +855,13 @@ function Limit-Text([string]$Text, $TextLimit = $script:DefaultTextLimit) {
     return $Text
 }
 
+# Unknown password status is not permission to read a potentially sensitive value.
+function Test-PasswordElement($element) {
+    try { return ($element.Current.IsPassword -ne $false) } catch { return $true }
+}
+
 function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
+    if (Test-PasswordElement $element) { return "" }
     try {
         $valuePattern = $element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
         $value = $valuePattern.Current.Value
@@ -832,15 +875,23 @@ function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
     }
 }
 
+function Get-NameDigest([string]$name) {
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { [Convert]::ToBase64String($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($name))) }
+    finally { $hash.Dispose() }
+}
+
 function Get-ElementRecord($element, [int]$index, $windowBounds, $TextLimit = $script:DefaultTextLimit) {
     $frame = Get-ElementFrame $element $windowBounds
+    $fullName = Get-ElementString $element "Name"
     $runtimeId = @()
     try { $runtimeId = @($element.GetRuntimeId()) } catch {}
     [pscustomobject]@{
         index = $index
         runtimeId = $runtimeId
         automationId = Get-ElementString $element "AutomationId"
-        name = Limit-Text (Get-ElementString $element "Name") $TextLimit
+        name = Limit-Text $fullName $TextLimit
+        nameDigest = Get-NameDigest $fullName
         controlType = Get-ElementControlTypeName $element
         localizedControlType = Get-ElementString $element "LocalizedControlType"
         className = Get-ElementString $element "ClassName"
@@ -866,12 +917,11 @@ function New-TreeCacheRequest {
     $cache = New-Object Windows.Automation.CacheRequest
     $cache.TreeScope = [Windows.Automation.TreeScope]::Element
     $cache.TreeFilter = [Windows.Automation.Condition]::TrueCondition
-    foreach ($name in @('ControlType', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
+    foreach ($name in @('ControlType', 'IsPassword', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
         'IsInvokePatternAvailable', 'IsTogglePatternAvailable', 'IsSelectionItemPatternAvailable', 'IsExpandCollapsePatternAvailable',
         'IsScrollItemPatternAvailable', 'IsScrollPatternAvailable', 'IsValuePatternAvailable')) {
         $cache.Add([Windows.Automation.AutomationElement]::($name + 'Property'))
     }
-    $cache.Add([Windows.Automation.ValuePattern]::ValueProperty)
     $cache.Add([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
     return $cache
 }
@@ -898,14 +948,15 @@ function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
             elseif ($state -eq [Windows.Automation.ExpandCollapseState]::Expanded) { $actions.Add('Collapse') }
         }
         $value = ''
-        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty)) {
-            $value = Limit-Text ([string]$element.GetCachedPropertyValue([Windows.Automation.ValuePattern]::ValueProperty)) $TextLimit
+        if ($info.IsPassword -eq $false) {
+            $value = Get-ElementValue $element $TextLimit
         }
         return [pscustomobject]@{
             index = $index
             runtimeId = @($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty))
             automationId = $info.AutomationId
             name = Limit-Text $info.Name $TextLimit
+            nameDigest = Get-NameDigest $info.Name
             controlType = $info.ControlType.ProgrammaticName
             localizedControlType = $info.LocalizedControlType
             className = $info.ClassName
@@ -1071,18 +1122,43 @@ function Get-FocusedSummary($processId, $TextLimit = $script:DefaultTextLimit) {
     return $null
 }
 
+# Three states: false is a known non-Chromium window; null means classification
+# failed. Unknown windows omit optional selected text instead of probing a risky provider.
+function Test-ChromiumWindow($processId) {
+    try {
+        $process = Get-Process -Id $processId -ErrorAction Stop
+        $className = [OCUWin32]::WindowClass($process.MainWindowHandle, [uint32]$processId)
+        if ([string]::IsNullOrEmpty($className)) { return $null }
+        return $className -like "Chrome_*"
+    } catch { return $null }
+}
+
+function Read-SafeSelectedText($focused, $TextLimit) {
+    if (Test-PasswordElement $focused) { return $null }
+    # Embedded Chromium controls can live under a non-Chromium host HWND.
+    if ($focused.Current.FrameworkId -eq 'Chrome' -or $focused.Current.ClassName -like 'Chrome_*') { return $null }
+    $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
+    $selection = $textPattern.GetSelection()
+    if ($selection.Count -gt 0) {
+        $maxLength = if ($null -eq $TextLimit) { -1 } else { [int]$TextLimit + 1 }
+        return Limit-Text ($selection.Item(0).GetText($maxLength)) $TextLimit
+    }
+    return $null
+}
+
 function Get-SelectedText($processId, $TextLimit = $script:DefaultTextLimit) {
+    # Chromium and Electron UIA providers raise an uncatchable AccessViolationException
+    # inside TextPatternRange.GetText, which terminates the PowerShell runspace and
+    # fails every observation/action for that app. Skip the selection read for them.
+    if ((Test-ChromiumWindow $processId) -ne $false) {
+        return $null
+    }
     try {
         $focused = [Windows.Automation.AutomationElement]::FocusedElement
         if ($null -eq $focused -or $focused.Current.ProcessId -ne $processId) {
             return $null
         }
-        $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
-        $selection = $textPattern.GetSelection()
-        if ($selection.Count -gt 0) {
-            $maxLength = if ($null -eq $TextLimit) { -1 } else { [int]$TextLimit + 1 }
-            return Limit-Text ($selection.Item(0).GetText($maxLength)) $TextLimit
-        }
+        return Read-SafeSelectedText $focused $TextLimit
     } catch {
     }
     return $null
@@ -1178,30 +1254,20 @@ function Get-AllElements($root) {
 }
 
 function Find-Element($process, $record) {
-    if ($null -eq $record) {
-        return $null
-    }
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
+    if ($null -eq $record) { return $null }
+    foreach ($element in (Get-AllElements (Get-MainElement $process))) {
         try {
-            if (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId)) {
+            if (-not (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId))) { continue }
+            $current = $element.Current
+            if ($current.ControlType.ProgrammaticName -ceq $record.controlType -and
+                ([string]$current.AutomationId) -ceq ([string]$record.automationId) -and
+                -not [string]::IsNullOrEmpty($record.nameDigest) -and
+                (Get-NameDigest $current.Name) -ceq $record.nameDigest) {
                 return $element
             }
-        } catch {
-        }
+        } catch { }
     }
-    foreach ($element in (Get-AllElements $root)) {
-        try {
-            $sameAutomationId = -not [string]::IsNullOrWhiteSpace($record.automationId) -and $element.Current.AutomationId -eq $record.automationId
-            $sameName = -not [string]::IsNullOrWhiteSpace($record.name) -and $element.Current.Name -eq $record.name
-            $sameType = $element.Current.ControlType.ProgrammaticName -eq $record.controlType
-            if (($sameAutomationId -or $sameName) -and $sameType) {
-                return $element
-            }
-        } catch {
-        }
-    }
-    return $null
+    throw "Element $($record.index) changed or is no longer available. Run get_app_state again before acting; nothing was sent."
 }
 
 function Invoke-VerifiedSetValue($pattern, [string]$value) {
@@ -1310,36 +1376,31 @@ function Invoke-Scroll($element, [string]$direction, [double]$pages) {
 }
 
 function Find-TextEntryElement($process) {
-    try {
-        $focused = [Windows.Automation.AutomationElement]::FocusedElement
-        if ($null -ne $focused -and $focused.Current.ProcessId -eq $process.Id) {
-            $focusedValue = Get-CurrentPatternOrNull $focused ([Windows.Automation.ValuePattern]::Pattern)
-            if ($null -ne $focusedValue -and -not $focusedValue.Current.IsReadOnly) {
-                return $focused
-            }
+    $focused = $null
+    try { $focused = [Windows.Automation.AutomationElement]::FocusedElement } catch { }
+    if ($null -ne $focused -and $focused.Current.ProcessId -eq $process.Id) {
+        $focusedValue = Get-CurrentPatternOrNull $focused ([Windows.Automation.ValuePattern]::Pattern)
+        if ($null -ne $focusedValue) {
+            if ($focusedValue.Current.IsReadOnly) { throw "The focused text field is read-only." }
+            return $focused
         }
-    } catch {
+        throw "The focused control is not a writable text field; refusing to choose another field."
     }
 
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
-        $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
+    # Count all textual controls, including read-only fields and Document controls
+    # without ValuePattern. Filtering by writability first can hide the real target.
+    $all = @(Get-AllElements (Get-MainElement $process))
+    $textFields = @($all | Where-Object { (Get-ElementControlTypeName $_) -match "Edit|Document" })
+    if ($textFields.Count -gt 1) {
+        throw "$($process.ProcessName) has $($textFields.Count) text fields and none has keyboard focus, so type_text cannot tell which one to type into. Click the field first, or use set_value."
+    }
+    if ($textFields.Count -eq 1) {
+        $valuePattern = Get-CurrentPatternOrNull $textFields[0] ([Windows.Automation.ValuePattern]::Pattern)
         if ($null -eq $valuePattern -or $valuePattern.Current.IsReadOnly) {
-            continue
+            throw "The only text field is read-only or has no writable ValuePattern."
         }
-        $controlType = Get-ElementControlTypeName $element
-        if ($controlType -like "*Edit*" -or $controlType -like "*Document*") {
-            return $element
-        }
+        return $textFields[0]
     }
-
-    foreach ($element in (Get-AllElements $root)) {
-        $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
-        if ($null -ne $valuePattern -and -not $valuePattern.Current.IsReadOnly) {
-            return $element
-        }
-    }
-
     return $null
 }
 
@@ -1371,31 +1432,27 @@ function Test-TextWindowHandleCandidate($process, $element) {
 }
 
 function Find-TextEntryWindowHandle($process, $preferredElement) {
+    # Do not replace a selected UIA target with some other child HWND.
     if (Test-TextWindowHandleCandidate $process $preferredElement) {
         return Get-NativeWindowHandle $preferredElement
     }
-
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
-        if (-not (Test-TextWindowHandleCandidate $process $element)) {
-            continue
-        }
-        $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
-        if ($null -ne $valuePattern -and -not $valuePattern.Current.IsReadOnly) {
-            return Get-NativeWindowHandle $element
-        }
-    }
-
-    foreach ($element in (Get-AllElements $root)) {
-        if (Test-TextWindowHandleCandidate $process $element) {
-            return Get-NativeWindowHandle $element
-        }
-    }
-
     return [IntPtr]::Zero
 }
 
 function Invoke-TypeText($process, [string]$text) {
+    # The edit control with keyboard focus is the one typing would reach. UI Automation's focused element only
+    # names it while the app is in the foreground; the window's own thread can name it otherwise.
+    $hwnd = [IntPtr]$process.MainWindowHandle
+    $focus = Get-PostedKeyTarget $hwnd
+    if ($focus -ne $hwnd -and (Test-EditWindowClass ([OCUWin32]::ClassName($focus)))) {
+        if (([OCUWin32]::GetWindowLong($focus, $GWL_STYLE) -band $ES_READONLY) -ne 0) {
+            throw "The focused text field is read-only."
+        }
+        return (Send-TextToEditHandle $focus $text $null)
+    }
+    if ($focus -ne $hwnd) {
+        throw "The focused control is not a supported text field; refusing to choose another field."
+    }
     $element = Find-TextEntryElement $process
     $targetHwnd = Find-TextEntryWindowHandle $process $element
     if ($targetHwnd -ne [IntPtr]::Zero -and (Send-TextToEditHandle $targetHwnd $text $element)) {
@@ -1531,7 +1588,7 @@ try {
             }
             "type_text" {
                 if (-not (Invoke-TypeText $process $operation.text)) {
-                    Send-Text $hwnd $operation.text
+                    Send-Text (Get-PostedKeyTarget $hwnd) $operation.text
                 }
             }
             "press_key" {
@@ -1551,7 +1608,13 @@ try {
         }
 
         Start-Sleep -Milliseconds 120
-        $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        # The action has been delivered. Failing to read the window afterwards (the click closed it) does not
+        # undo it, and reporting the action as failed invites a retry that acts twice.
+        try {
+            $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        } catch {
+            $response = [pscustomobject]@{ ok = $true; observationError = $_.Exception.Message }
+        }
     }
 } catch {
     $message = $_.Exception.Message

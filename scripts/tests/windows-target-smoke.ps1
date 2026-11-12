@@ -110,6 +110,7 @@ try {
   Assert ($r.isError -and (Text $r) -match 'geometry changed') 'Stale element geometry not refused'
   OK (Call 'get_app_state' @{})
   Command 'disable';$r=Click;Assert ($r.isError -and (Text $r) -match 'disabled') 'Disabled control not refused';Command 'enable'
+  OK (Call 'get_app_state' @{})
   Command 'move';$r=Click;Assert ($r.isError -and (Text $r) -match 'geometry changed') 'Stale geometry not refused'
   Command 'minimize';$r=Call 'get_app_state' @{};OK $r
   Assert (@($r.content|Where-Object type -eq 'image').Count -eq 0) 'Minimized screenshot should be unavailable'
