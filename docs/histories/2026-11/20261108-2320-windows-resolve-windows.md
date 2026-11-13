@@ -31,3 +31,13 @@
 - 同一组替身下，origin/main：`CalculatorApp.exe`、`Settings` 都是 `appNotFound`，`Calculator` 解析成 ApplicationFrameHost，`notepad` 解析成被禁用的主窗口 200，`list_apps` 只列出 ApplicationFrameHost 和 notepad。本分支：CalculatorApp（窗口 90）、SystemSettings（窗口 95）、CalculatorApp、对话框 201，`list_apps` 列出 CalculatorApp、notepad、SystemSettings。新测试在 origin/main 上失败，本分支通过。
 - 现有决策测试在 pwsh 7.5 下通过；内联 C# 按 C# 5 编译通过；`go vet`、`go test -race`、`GOOS=windows go vet`、windows amd64 / arm64 构建通过。
 - 真实 UWP 框架与 CoreWindow 的关系、模态对话框的 owner / 启用状态，只能在 Windows 桌面上确认；现有 smoke 都按 pid 指定 fixture，fixture 不弹模态对话框，主窗口选择规则与原来相同。
+
+### Maintainer review — 2026-11-13
+
+- 同步 main 并保留挂起探测、动作回读和窗口身份检查。
+- PID 查询不回退到标题 / 启动程序；空查询拒绝，标题子串按字面匹配，避免通配符误选应用。
+- 沿禁用 owner 的嵌套模态链解析，限制深度、检测循环；对话框关闭后旧 HWND 动作仍拒绝。
+- 只有 ApplicationFrameWindow 才解析 CoreWindow 的内容 PID；普通含同名子窗口的宿主不改归属。
+- 新发现的边界：跨进程宿主的 posted 按键原本会落到框架，不能保证到达内容。现在明确拒绝 hosted posted 回退；UIA / 显式全局路径保持现有授权规则，type_text 不新增全局回退。
+- 新增真实 WinForms 多窗口 / 两层 ShowDialog 测试，以实际按钮计数验证内外层关闭与旧快照拒绝；新增两个原生进程创建真实 frame/core HWND，验证映射、普通窗口负对照与宿主按键拒绝。后者不是打包 UWP 应用，不能写成所有 UWP 已验证。
+- 本地 PowerShell 解析 / 分派回归与 Windows 交叉编译通过；完整 Windows 原生结果以该提交的 Windows CI 为准。

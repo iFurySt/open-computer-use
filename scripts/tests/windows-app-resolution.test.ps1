@@ -70,3 +70,20 @@ Assert ((Resolve " ") -match 'must not be empty') "Empty query selected an arbit
 [OCUWin32]::Add(202, 400, "Nested", 201, $true)
 Assert ((Resolve "notepad").MainWindowHandle -eq [IntPtr]202) "Nested modal root was not followed"
 Write-Output "Strict PID, literal title, empty query and nested modal regressions passed."
+
+# Production dispatch must never post to the host frame when it is mapped to another app.
+$dispatch=@($ast.EndBlock.Statements|Where-Object{$_ -is [System.Management.Automation.Language.TryStatementAst] -and $_.Body.Extent.Text -match '\$operation\.tool'})
+function Resolve-App($query) { [pscustomobject]@{Id=300;ProcessName='hosted';MainWindowHandle=[IntPtr]90;Hosted=$true} }
+function Assert-InputAllowed($process) { }
+function Assert-WindowResponds($hwnd,$name) { }
+function Find-Element($process,$record) { $null }
+function Invoke-TypeText($process,$text) { $false }
+function Send-Key { throw 'Unexpected input delivery' }
+function Send-MouseClick { throw 'Unexpected input delivery' }
+function Send-Text { throw 'Unexpected input delivery' }
+foreach($tool in @('click','press_key','type_text')) {
+ $operation=[pscustomobject]@{tool=$tool;app='hosted';click_method='app_post';key_method='auto';key='Return';text='fixture'}
+ $response=$null;Invoke-Expression $dispatch[0].Extent.Text
+ Assert (-not $response.ok -and $response.error -match 'hosted app frame') "Hosted $tool was not refused: $($response|ConvertTo-Json -Compress)"
+}
+Write-Output 'Hosted posted click/key/text refusal passed.'

@@ -114,3 +114,27 @@ The first covered posted click changed the foreground HWND despite unchanged
 cursor coordinates. No explicit activation is performed by this path, but the
 receiving application may change focus; background delivery is not a guarantee
 of an unchanged foreground window.
+
+## Application and dialog selection
+
+Windows enumerates visible top-level windows, so a title can select a secondary
+window of the same process. Process names take precedence over title matches;
+title substrings are literal, not wildcard patterns. A numeric PID that no longer
+exists fails instead of selecting another application's numeric title.
+
+A disabled owner resolves through its modal dialog chain to the active dialog.
+After that dialog closes, input using its old snapshot is refused until a fresh
+observation identifies the current window.
+
+Only an `ApplicationFrameWindow` containing a `Windows.UI.Core.CoreWindow` is
+mapped to the content process. Other cross-process child windows retain their
+normal ownership. Hosted frames support observation and available UIA actions;
+posted click/key/scroll/text fallbacks are refused rather than sent to the host.
+Use supported UIA controls or explicitly enabled global input where appropriate;
+`type_text` requires a supported text field and does not gain a global fallback.
+
+`go -C apps/OpenComputerUseWindows test ./...` includes real WinForms secondary
+windows and nested modal dialogs, plus two actual processes with hosted Win32
+frame/content HWNDs. The latter validates enumeration, class filtering and
+refusal of posted keys. It does **not** establish compatibility with every
+packaged UWP application or renderer.
