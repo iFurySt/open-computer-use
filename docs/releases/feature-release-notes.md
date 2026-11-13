@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-08 | Windows 管理员窗口输入 | 目标 app 以管理员身份运行时，动作明确报错并说明原因，不再报成功却什么也没发生。 | 动作前比较目标进程与 runtime 的完整性级别，目标更高则在发送前拒绝；读不到级别时也拒绝输入，`get_app_state` 不变。补 `windows-elevated-target.test.ps1` 并接入 Windows CI。 |
 | 2026-11-08 | macOS 禁用控件 | 点击或对禁用控件执行动作时明确报错，不再报告一个什么都没发生的成功。 | click / perform_secondary_action 在输入前读当前 AXEnabled，为 false 时拒绝；菜单项放行。 |
 | 2026-11-08 | Windows 状态类动作验证 | 复选框、单选按钮、列表项、展开 / 折叠被控件忽略时不再误报成功；滚动不会因为中途被拒绝而多滚一遍。 | Toggle / Select / Expand / Collapse 发送一次后回读状态（0.6 秒），失败提示先观察再重试；ScrollPattern 调用抛错后停止，不再回退滚轮。补 `windows-pattern-readback.test.ps1` 并接入 Windows CI。见 [说明](../set-value-verification.md)。 |
 | 2026-11-08 | Windows 无响应窗口 | app 卡住时约 2 s 内明确报告“无响应”，不再每次调用等满 30 s 后返回笼统的超时。 | UI Automation 读取和动作前用 `IsHungAppWindow` 与 `SendMessageTimeout(WM_NULL)` 探测两次；动作在发送前拒绝，避免输入在 app 恢复后才落下。补 `windows-hung-window.test.ps1` 并接入 Windows CI。 |

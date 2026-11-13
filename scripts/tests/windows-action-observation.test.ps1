@@ -11,6 +11,7 @@ if ($dispatch.Count -ne 1) { throw "Production dispatch missing" }
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function Start-Sleep { param($Milliseconds) }
 function Resolve-App($query) { [pscustomobject]@{ Id = 42; ProcessName = "fixture"; MainWindowHandle = [IntPtr]42 } }
+function Assert-InputAllowed($process) { }
 function Find-Element($process, $record) { $null }
 function Send-Key($hwnd, $key, $method) { $script:sent++; if ($key -eq "broken") { throw "PostMessage key delivery failed." } }
 function Assert-WindowResponds($hwnd, $name) { }
