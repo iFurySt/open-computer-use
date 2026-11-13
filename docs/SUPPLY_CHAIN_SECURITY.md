@@ -19,6 +19,7 @@
 - `actions/attest-build-provenance`：为 release artifact 生成签名 provenance。
 - `ossf/scorecard-action`：分析仓库级安全信号，例如工作流权限、分支保护等。
 - `scripts/check-action-pinning.sh`：如果 workflow 里出现浮动 tag 而不是 SHA，直接让 CI 失败。
+- `scripts/check-secrets.sh`：用按 sha256 固定的 gitleaks 扫描每个 commit 里的凭据和隐私信息，见 [CI/CD 说明](CICD.md)。
 
 ## 限制和前提
 
