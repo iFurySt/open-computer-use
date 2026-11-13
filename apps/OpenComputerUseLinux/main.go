@@ -222,6 +222,9 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 		if windowPlacement != "keep" {
 			return textResult("window_placement '"+windowPlacement+"' is not supported on Linux", true)
 		}
+		if _, ok := args["window_id"]; ok {
+			return textResult("window_id is not supported on Linux", true)
+		}
 		includeAX, err := optionalBool(args, "include_ax")
 		if err != nil {
 			return textResult(err.Error(), true)
