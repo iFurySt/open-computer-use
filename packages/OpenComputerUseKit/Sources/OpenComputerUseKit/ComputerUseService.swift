@@ -570,6 +570,37 @@ func canUseActivationOnlyClickFallback(role: String?) -> Bool {
     return isSnapshotRootRole(role)
 }
 
+struct TextSelectionRange: Equatable {
+    let location: Int
+    let length: Int
+}
+
+/// AX 文本写入前后可比对的观察值：值与选区各自可能不可读。
+struct TextEntryObservation: Equatable {
+    let value: String?
+    let selection: TextSelectionRange?
+}
+
+/// 写入是否已落地：值或选区任一变化即落地；两者都不可比（前后至少一边读不到）返回 nil。
+/// 只比值不够：把 "abc" 打在已选中的 "abc" 上，值不变但选区从 (0,3) 变成 (3,0)。
+func textInsertionLanded(before: TextEntryObservation, after: TextEntryObservation) -> Bool? {
+    var comparable = false
+    if let previous = before.value, let current = after.value {
+        comparable = true
+        if current != previous { return true }
+    }
+    if let previous = before.selection, let current = after.selection {
+        comparable = true
+        if current != previous { return true }
+    }
+    return comparable ? false : nil
+}
+
+/// pid 会被系统复用：记下的启动时间和当前进程不一致，就不是同一个进程。两边都读不到时按同一进程处理。
+func processLaunchIdentityMatches(stored: Date?, current: Date?) -> Bool {
+    stored == current
+}
+
 func canUseKeyboardTextFallback(role: String?, roleDescription: String?, isValueSettable: Bool) -> Bool {
     if isValueSettable {
         return true
@@ -637,6 +668,8 @@ func shouldPreferContainingWebRowAXClickCandidate(
 
 public final class ComputerUseService {
     private var snapshotsByApp: [String: AppSnapshot] = [:]
+    /// 证实无视 AX 文本插入的进程：pid → 启动时间。pid 会被复用，启动时间不同就视为另一个进程。
+    private var processesIgnoringAXTextInsertion: [pid_t: Date?] = [:]
     private var invalidatedSnapshotAliases: Set<String> = []
     // Read per call: the app agent applies the caller's OPEN_COMPUTER_USE_* variables
     // for the duration of each request.
@@ -1041,8 +1074,31 @@ public final class ComputerUseService {
         guard let focused = Self.focusedElement(pid: snapshot.app.pid) else {
             throw ComputerUseError.stateUnavailable("type_text could not read the app's current focused element. Focus a text entry area and try again.")
         }
+        // 同一进程已经证实无视 AX 插入（Pages 正文、Chrome）：直接走键盘，省掉每次都等读回超时。
+        let knownToIgnoreAXInsertion = processIgnoresAccessibilityTextInsertion(pid: snapshot.app.pid)
+        if knownToIgnoreAXInsertion, canTypeTextUsingKeyboardFallback(on: focused) {
+            try requireCurrentTextFocus(focused, pid: snapshot.app.pid)
+            try InputSimulation.typeText(text, pid: snapshot.app.pid)
+            return try actionResult(for: query)
+        }
+
+        // Pages 的正文这类自绘文本视图接受 AXSelectedText / AXValue 写入却不改内容：写完读回仍是原值。
+        // 写入是在应答之后才生效的（Chrome 的 AXValue 写入 8–15 ms 后才读得到），所以读回要轮询到变化为止，
+        // 而不是写完立刻读一次；只有始终没变才判定被无视，改走键盘事件。写入前后都不可读则信任写入结果。
+        // 选区变化也算落地：`type_text("abc")` 盖在选中的 "abc" 上时值不变，只有光标位置变了。
+        let before = observeTextEntry(focused)
         if try typeTextUsingAccessibility(text, on: focused, pid: snapshot.app.pid) {
-            pauseBeforeReadBack(0.1)
+            let landed = waitForTextInsertion(on: focused, before: before)
+            if landed != false || !canTypeTextUsingKeyboardFallback(on: focused) {
+                return try actionResult(for: query)
+            }
+            try requireCurrentTextFocus(focused, pid: snapshot.app.pid)
+            // 发键之前再读一次：写入可能恰好在轮询截止后才落地，重打会把文本写两遍。
+            if textInsertionLanded(before: before, after: observeTextEntry(focused)) == true {
+                return try actionResult(for: query)
+            }
+            rememberProcessIgnoringAccessibilityTextInsertion(pid: snapshot.app.pid)
+            try InputSimulation.typeText(text, pid: snapshot.app.pid)
             return try actionResult(for: query)
         }
 
@@ -1934,6 +1990,35 @@ public final class ComputerUseService {
         guard let current = Self.focusedElement(pid: pid), CFEqual(element, current) else {
             throw ComputerUseError.stateUnavailable("type_text focus changed before input. Read the app state and try again.")
         }
+    }
+
+    private func observeTextEntry(_ element: AXUIElement) -> TextEntryObservation {
+        TextEntryObservation(
+            value: stringValue(of: element, attribute: kAXValueAttribute),
+            selection: selectedRange(of: element).map { TextSelectionRange(location: $0.location, length: $0.length) }
+        )
+    }
+
+    /// 每 5 ms 读一次，直到值或选区变化；300 ms 内都没变才返回 false。两者都不可读时返回 nil（信任写入）。
+    private func waitForTextInsertion(on element: AXUIElement, before: TextEntryObservation) -> Bool? {
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.3
+        while true {
+            let landed = textInsertionLanded(before: before, after: observeTextEntry(element))
+            if landed != false || ProcessInfo.processInfo.systemUptime >= deadline {
+                return landed
+            }
+            Thread.sleep(forTimeInterval: 0.005)
+        }
+    }
+
+    private func processIgnoresAccessibilityTextInsertion(pid: pid_t) -> Bool {
+        guard let stored = processesIgnoringAXTextInsertion[pid] else { return false }
+        let current = NSRunningApplication(processIdentifier: pid)?.launchDate
+        return processLaunchIdentityMatches(stored: stored, current: current)
+    }
+
+    private func rememberProcessIgnoringAccessibilityTextInsertion(pid: pid_t) {
+        processesIgnoringAXTextInsertion[pid] = NSRunningApplication(processIdentifier: pid)?.launchDate
     }
 
     private func selectedRange(of element: AXUIElement) -> CFRange? {
