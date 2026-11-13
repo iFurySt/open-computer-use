@@ -79,6 +79,9 @@ func TestRealCrossIntegrityInputIsRefused(t *testing.T) {
 			t.Fatalf("low child JSON: %v\n%s", err, output)
 		}
 		if result.Skip {
+			if os.Getenv("GITHUB_ACTIONS") == "true" {
+				t.Fatal("Hosted Windows test runner must exercise the cross-integrity test")
+			}
 			t.Skip("Cross-integrity desktop regression requires an elevated test runner")
 		}
 		if result.Own != 0x2000 || result.Target <= result.Own {
