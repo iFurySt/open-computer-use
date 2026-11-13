@@ -38,6 +38,7 @@
 | 2026-10-30 | 虚拟显示器显式启用 | 默认不向模型提供虚拟显示器参数，避免意外改变显示器布局。 | 新增 `virtualDisplay.enabled=false` 与环境覆盖；关闭时隐藏 schema/JS/遮挡提示，在运行入口和底层阻止创建，保留恢复与结束清理。 |
 | 2026-10-29 | macOS 权限引导定位 | 已有辅助功能权限时，拖拽引导紧贴目标权限列表，更容易看清拖放方向；首次未授权时继续跟随设置窗口底边。 | 优先使用上方列表的增删控件容器定位，读不到时自动退回窗口锚点；后台有界读取 AX，跳过应用行。 |
 | 2026-10-29 | macOS 权限引导 | 切换回系统设置后，权限引导浮窗的返回按钮与拖拽卡片完整显示。 | 修复入场动画中断后保留中间尺寸与透明度的问题，并固定动画结束尺寸。 |
+| 2026-10-23 | macOS 剪贴板读写 | Agent 复制后可读回 AX tree 中没有的文字（如画布绘制的文档），也可把准备好的文字放到剪贴板供粘贴。 | 新增 native `read_clipboard` / `write_clipboard` 和 JS `cua.readClipboard()` / `cua.writeClipboard(text)`，仅限纯文本；带 concealed / transient / auto-generated 标记的条目不返回，读取上限 100000 UTF-16 code units，受会话与 Locked Use 检查约束；Linux / Windows 返回 unsupportedTool。 |
 | 2026-10-23 | macOS 点击命中测试 | 截图与窗口比例不是 1:1 时（如 Retina），`auto` 点击不再按下目标旁边的控件；只取 AX 的 element_index 点击也不再误报需要截图。 | `hitTestElement` 的入参本就是窗口点，改用窗口点换算，不再按截图像素再除一次缩放比例；修复前点击表格行会命中并按下上方列表头。 |
 | 2026-10-23 | macOS 坐标点击 | 坐标点击点到空白处时，不再按下窗口里别处的按钮（例如关闭窗口）。 | 点击候选的子孙扫描只按下落在目标上的元素：坐标点击要求包含点击点，element_index 点击要求与目标重叠；空白处落到定向鼠标事件；窗口索引走 Raise，不扫描内部按钮，无效尺寸的子孙被过滤。修复前点空白处会按下窗口的关闭按钮。 |
 | 2026-10-23 | macOS sheet 与文件选择器 | 网页上传、保存等以 sheet 弹出的面板（含 Firefox 文件选择器）出现在 tree 和截图里，元素点击与坐标点击落在面板上。 | app 的 focused window 是 sheet 时，`get_app_state` / `query` 以 sheet 为 root，tree、截图和输入目标都绑定到 sheet 的窗口，`agent_display` 仍停靠 sheet 所在的窗口；sheet 根索引不误按内部按钮，query 通过父链确认控件归属；此前 sheet 被跳过，Firefox 只返回底下的网页。 |
