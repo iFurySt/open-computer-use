@@ -66,14 +66,14 @@ func TestRealSecondaryAndNestedModalWindows(t *testing.T) {
 	}
 	click := func(s *appSnapshot, name string) psRequest {
 		for _, e := range s.Elements {
-			if e.AutomationID == name {
-				return psRequest{Tool: "click", App: "OCU resolution main", ExpectedPID: fixture.Process.Pid, WindowHandle: s.WindowHandle, Element: &e, ClickMethod: "accessibility", MouseButton: "left", ClickCount: 1}
+			if e.Name == name {
+				return psRequest{Tool: "click", App: "OCU resolution main", ExpectedPID: fixture.Process.Pid, WindowHandle: s.WindowHandle, Element: &e, WindowBounds: s.WindowBounds, ClickMethod: "app_post", MouseButton: "left", ClickCount: 1}
 			}
 		}
 		t.Fatalf("missing %s: %#v", name, s.Elements)
 		return psRequest{}
 	}
-	old := click(nested, "close_inner")
+	old := click(nested, "Close inner")
 	response, err := runPowerShell(old)
 	if err != nil || !response.OK {
 		t.Fatalf("close inner: %#v %v", response, err)
@@ -87,7 +87,7 @@ func TestRealSecondaryAndNestedModalWindows(t *testing.T) {
 	if outer.WindowHandle != state.Outer {
 		t.Fatal("outer dialog not restored")
 	}
-	response, err = runPowerShell(click(outer, "close_outer"))
+	response, err = runPowerShell(click(outer, "Close outer"))
 	if err != nil || !response.OK {
 		t.Fatalf("close outer: %#v %v", response, err)
 	}

@@ -17,8 +17,10 @@ $outer.Text='OCU outer dialog';$outer.Width=400;$outer.Height=250
 $inner=New-Object Windows.Forms.Form
 $inner.Text='OCU inner dialog';$inner.Width=350;$inner.Height=220
 $closeOuter=New-Object Windows.Forms.Button
+$closeOuter.FlatStyle=[Windows.Forms.FlatStyle]::System
 $closeOuter.Text='Close outer';$closeOuter.Name='close_outer';$closeOuter.Width=150
 $closeInner=New-Object Windows.Forms.Button
+$closeInner.FlatStyle=[Windows.Forms.FlatStyle]::System
 $closeInner.Text='Close inner';$closeInner.Name='close_inner';$closeInner.Width=150
 $outer.Controls.Add($closeOuter);$inner.Controls.Add($closeInner)
 $script:innerClicks=0;$script:outerClicks=0;$script:started=$false;$script:nested=$false
