@@ -120,6 +120,7 @@ public enum ToolDefinitions {
                         description: "keep (default) leaves the window where it is. agent_display (macOS) parks the app's window on an invisible display owned by the agent so a covered or other-Space window renders, exposes its full tree and accepts input without touching the user's Space, focus or pointer; the window disappears from the user's desktop until restore or process exit. restore puts it back.",
                         enumValues: WindowPlacement.allCases.map(\.rawValue)
                     ),
+                    "settle_ms": positiveIntegerProperty(description: "Before reading, wait up to this many milliseconds (capped at 5000) while the window shows a busy sign: a busy or progress indicator, a web page still loading, or an element marked busy. A window showing none is read at once. Use it after an action whose result loads instead of a fixed sleep. A note in the result says whether the window settled and how long it waited."),
                 ],
                 required: ["app"]
             )

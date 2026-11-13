@@ -691,10 +691,20 @@ public final class ComputerUseService {
         textLimit: SnapshotTextLimit = .defaults,
         treeLimits: AccessibilityTreeLimits = .defaults,
         windowPlacement: WindowPlacement = .keep,
-        observation: SnapshotObservationOptions = .defaults
+        observation: SnapshotObservationOptions = .defaults,
+        settleMs: Int? = nil
     ) throws -> ToolCallResult {
         if windowPlacement == .agentDisplay { try VirtualDisplayConfig.current.requireEnabled() }
         try observation.validate()
+        if let settleMs {
+            let note = try waitForWindowToSettle(app: query, timeoutMs: settleMs)
+            let result = try getAppState(app: query, textLimit: textLimit, treeLimits: treeLimits,
+                                         windowPlacement: windowPlacement, observation: observation)
+            // After the state text and before the screenshot, so primaryText stays the state.
+            var content = result.content
+            content.insert(.text(note), at: content.firstIndex { $0.dictionary["type"] as? String == "image" } ?? content.endIndex)
+            return ToolCallResult(content: content, isError: result.isError)
+        }
         guard windowPlacement != .keep else {
             return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, observation: observation), style: .fullState)
         }
@@ -728,6 +738,23 @@ public final class ComputerUseService {
         }
 
         return snapshotResult(for: try refreshSnapshot(for: query, textLimit: textLimit, treeLimits: treeLimits, recoveryPolicy: .readOnly, observation: observation), style: .fullState)
+    }
+
+    /// Waits while the app's window shows a busy sign, for at most `timeoutMs` (capped at 5 s).
+    /// Read-only: no activation, no capture.
+    private func waitForWindowToSettle(app query: String, timeoutMs: Int) throws -> String {
+        try requireUsableComputerUseSession()
+        let start = ProcessInfo.processInfo.systemUptime
+        guard let context = try? SnapshotBuilder.resolveTargetWindow(for: try AppDiscovery.resolve(query)) else {
+            return "Settle skipped: no window to watch yet."
+        }
+        let settled = WindowSettle.wait(timeout: TimeInterval(min(timeoutMs, 5000)) / 1000) {
+            TimingLog.measure("get_app_state.settle_scan") { WindowSettle.busy(from: context.windowElement, read: WindowSettle.readAll) }
+        }
+        let waited = Int((ProcessInfo.processInfo.systemUptime - start) * 1000)
+        return settled
+            ? "Settled: the window shows no busy sign (waited \(waited) ms)."
+            : "Not settled: the window still showed a busy sign after \(waited) ms; this is its state at that point."
     }
 
     public func click(

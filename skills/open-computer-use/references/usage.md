@@ -179,6 +179,7 @@ open-computer-use snapshot --max-tree-nodes 3000 --max-tree-depth 96 "Google Chr
 - Prefer app names or bundle identifiers returned by `list_apps`.
 - Run `get_app_state` immediately before element-targeted actions.
 - Re-run `get_app_state` after navigation, modal changes, page reloads, or failed actions.
+- On macOS, when an action starts loading or animating, read with `settle_ms` instead of sleeping first (see below).
 - Use coordinate actions only when the rendered tree does not expose the target as an element.
 - On macOS, use `app.query` when you know the control's text or role. Bind with
   `await cua.getApp("Safari", { initialState: false })` to skip the initial snapshot.
@@ -189,6 +190,26 @@ open-computer-use snapshot --max-tree-nodes 3000 --max-tree-depth 96 "Google Chr
   Use persistent MCP or `ocu repl` for query then action; separate CLI calls cannot share indexes.
   Actions revalidate the process/window/control and current geometry. On failure, query again.
   See [targeted query](../../../docs/targeted-query.md) for options and examples.
+
+## Waiting for the Window to Settle (macOS)
+
+`get_app_state` takes `settle_ms`: before reading, it waits up to that many milliseconds
+(capped at 5000) while the window shows a busy sign: a busy or progress indicator, a web page
+that has not finished loading, or an element marked busy. A window showing none is read after
+one scan of a few milliseconds; a busy one is looked at again every 50 ms. A text note after
+the state says whether it settled and how long it waited:
+
+```sh
+ocu call --calls '[
+  {"tool":"click","args":{"app":"Safari","element_index":"12"}},
+  {"tool":"get_app_state","args":{"app":"Safari","settle_ms":5000}}
+]'
+```
+
+The scan reads the same window `get_app_state` will read, breadth first to 100 nodes, without
+activating it or taking a screenshot. It does not wait for content that changes without a busy
+sign, such as a ticking clock. In JavaScript: `await app.getAXState({ settleMs: 5000 })`.
+Action results keep their fixed short pause before read-back. Linux and Windows reject `settle_ms`.
 
 ## Choosing a Click Method
 

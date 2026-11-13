@@ -115,4 +115,78 @@ final class TargetedQuerySafetyTests: XCTestCase {
         XCTAssertEqual(failed.matches, [0])
         XCTAssertEqual(failed.stopReason, "ax_error")
     }
+
+    func testSettleMsRejectsAnythingButAPositiveInteger() {
+        let dispatcher = ComputerUseToolDispatcher()
+        for value: Any in [0, -1, 1.5, true, "300"] {
+            let result = dispatcher.callToolAsResult(name: "get_app_state", arguments: ["app": "NoSuchReviewApp", "settle_ms": value])
+            XCTAssertTrue(result.isError)
+            XCTAssertTrue(result.primaryText?.contains("settle_ms") == true, "\(value)")
+        }
+    }
+
+    func testSettleWaitLooksAgainWhileBusyAndHoldsTheCeiling() {
+        // A fake clock: sleeping advances it, and every look costs 7 ms.
+        var clock = 0.0
+        var looks: [Double] = []
+        func wait(timeout: Double = 5, busy: @escaping (Double) -> Bool) -> Bool {
+            clock = 0
+            looks = []
+            return WindowSettle.wait(timeout: timeout, now: { clock }, sleep: { clock += $0 }) {
+                looks.append(clock)
+                defer { clock += 0.007 }
+                return busy(clock)
+            }
+        }
+
+        // Showing no busy sign: one look, no wait.
+        XCTAssertTrue(wait { _ in false })
+        XCTAssertEqual(looks, [0])
+
+        // Loading until 0.3 s: looked at again every 50 ms, read on the first look after it ends.
+        XCTAssertTrue(wait { $0 < 0.3 })
+        XCTAssertEqual(looks.count, 7)
+        XCTAssertLessThan(clock, 0.36)
+
+        // Never done: gives up at the ceiling, and no look starts past it.
+        XCTAssertFalse(wait(timeout: 1) { _ in true })
+        XCTAssertLessThanOrEqual(looks.max() ?? 0, 1)
+        XCTAssertLessThan(clock, 1.01)
+    }
+
+    func testBusyScanReadsALevelAtOnceAndAnswersAsTheNodeByNodeWalk() {
+        typealias Signs = WindowSettle.Signs<Int>
+        // The walk as it would be one node at a time: breadth first, same caps, same signs.
+        func oneByOne(_ tree: [Int: Signs]) -> (Bool, [Int]) {
+            var nodes = [(0, 0)], visited: [Int] = [], next = 0
+            while next < nodes.count {
+                let (id, depth) = nodes[next]; next += 1; visited.append(id)
+                guard let node = tree[id] else { continue }
+                if node.role == "AXBusyIndicator" || (node.role == "AXWebArea" && node.loaded == false) || node.busy == true { return (true, visited) }
+                if depth < WindowSettle.scanDepth { nodes += node.children.prefix(max(0, WindowSettle.scanNodes - nodes.count)).map { ($0, depth + 1) } }
+            }
+            return (false, visited)
+        }
+        var generator = SystemRandomNumberGenerator()
+        for _ in 0..<500 {
+            var tree: [Int: Signs] = [:], parents = [0], nextID = 1
+            for _ in 0..<Int.random(in: 1...160, using: &generator) {
+                let parent = parents.randomElement(using: &generator)!
+                tree[parent] = Signs(role: tree[parent]?.role, children: (tree[parent]?.children ?? []) + [nextID], busy: tree[parent]?.busy, loaded: tree[parent]?.loaded)
+                let roll = Int.random(in: 0..<400, using: &generator)
+                tree[nextID] = Signs(role: roll == 0 ? "AXBusyIndicator" : roll == 1 ? "AXWebArea" : roll < 4 ? nil : "AXGroup",
+                                     children: [], busy: roll == 2 ? true : nil, loaded: roll == 1 ? false : roll == 5 ? true : nil)
+                if roll == 3 { tree[nextID] = nil }
+                parents.append(nextID); nextID += 1
+            }
+            var batched: [Int] = []
+            var reads = 0
+            let answer = WindowSettle.busy(from: 0) { ids in reads += 1; batched += ids; return ids.map { tree[$0] } }
+            let expected = oneByOne(tree)
+            XCTAssertEqual(answer, expected.0)
+            // Every node the node-by-node walk visits is read, in the same order; a batch may read the rest of a level past a busy node.
+            XCTAssertEqual(Array(batched.prefix(expected.1.count)), expected.1)
+            XCTAssertLessThanOrEqual(reads, WindowSettle.scanDepth + 1)
+        }
+    }
 }
