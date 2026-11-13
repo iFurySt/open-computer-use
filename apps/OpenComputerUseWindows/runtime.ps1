@@ -1319,6 +1319,46 @@ function Invoke-VerifiedSetValue($pattern, [string]$value) {
     }
 }
 
+# Toggle, Select, Expand and Collapse return nothing, and a control can ignore them (the app vetoes the change, or
+# holds the state in a binding it does not let go of). As with set_value, the state is read back for up to 0.6 s
+# and never sent twice; an unverified action may still apply, so the caller is told to observe before retrying.
+function Wait-PatternState([scriptblock]$reached) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $held = $false
+        try { $held = [bool](& $reached) } catch { }
+        if ($held) { return $true }
+        if ($clock.Elapsed.TotalSeconds -ge 0.6) { return $false }
+        Start-Sleep -Milliseconds 50
+    }
+}
+
+function Invoke-VerifiedToggle($pattern) {
+    $before = [string]$pattern.Current.ToggleState
+    $pattern.Toggle()
+    if (-not (Wait-PatternState { [string]$pattern.Current.ToggleState -ne $before })) {
+        throw "Toggle could not be verified: the control still reads $before. Read its state before retrying; the toggle may still apply."
+    }
+}
+
+function Invoke-VerifiedSelect($pattern) {
+    $pattern.Select()
+    if (-not (Wait-PatternState { $pattern.Current.IsSelected })) {
+        throw "Select could not be verified: the item is still not selected. Read its state before retrying; the selection may still apply."
+    }
+}
+
+function Invoke-VerifiedDisclosure($pattern, [bool]$expand) {
+    if ($expand) { $pattern.Expand() } else { $pattern.Collapse() }
+    if (-not (Wait-PatternState {
+        $state = [string]$pattern.Current.ExpandCollapseState
+        if ($expand) { $state -eq "Expanded" -or $state -eq "PartiallyExpanded" } else { $state -eq "Collapsed" }
+    })) {
+        $action = if ($expand) { "Expand" } else { "Collapse" }
+        throw "$action could not be verified: the item still reads $($pattern.Current.ExpandCollapseState). Read its state before retrying; the change may still apply."
+    }
+}
+
 function Get-CurrentPatternOrNull($element, $pattern) {
     try {
         return $element.GetCurrentPattern($pattern)
@@ -1335,12 +1375,12 @@ function Invoke-PreferredClick($element) {
     }
     $selection = Get-CurrentPatternOrNull $element ([Windows.Automation.SelectionItemPattern]::Pattern)
     if ($null -ne $selection) {
-        $selection.Select()
+        Invoke-VerifiedSelect $selection
         return $true
     }
     $toggle = Get-CurrentPatternOrNull $element ([Windows.Automation.TogglePattern]::Pattern)
     if ($null -ne $toggle) {
-        $toggle.Toggle()
+        Invoke-VerifiedToggle $toggle
         return $true
     }
     return $false
@@ -1354,19 +1394,19 @@ function Invoke-SecondaryAction($element, [string]$action) {
         }
         "toggle" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.TogglePattern]::Pattern)
-            if ($null -ne $pattern) { $pattern.Toggle(); return }
+            if ($null -ne $pattern) { Invoke-VerifiedToggle $pattern; return }
         }
         "select" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.SelectionItemPattern]::Pattern)
-            if ($null -ne $pattern) { $pattern.Select(); return }
+            if ($null -ne $pattern) { Invoke-VerifiedSelect $pattern; return }
         }
         "expand" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ExpandCollapsePattern]::Pattern)
-            if ($null -ne $pattern) { $pattern.Expand(); return }
+            if ($null -ne $pattern) { Invoke-VerifiedDisclosure $pattern $true; return }
         }
         "collapse" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ExpandCollapsePattern]::Pattern)
-            if ($null -ne $pattern) { $pattern.Collapse(); return }
+            if ($null -ne $pattern) { Invoke-VerifiedDisclosure $pattern $false; return }
         }
         "scrollintoview" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ScrollItemPattern]::Pattern)
@@ -1399,10 +1439,9 @@ function Invoke-Scroll($element, [string]$direction, [double]$pages) {
         try {
             $scroll.Scroll($horizontal, $vertical)
         } catch {
-            # ScrollPattern can exist while the element still refuses to scroll in
-            # its current state, for example a list with two rows. Fall through to
-            # the coordinate path instead of failing the whole tool call.
-            return $false
+            # A provider may act before throwing, even on the first page. Never
+            # replay an attempted pattern action through a second input method.
+            throw "ScrollPattern failed after $i completed page calls; scrolling may already have occurred. Run get_app_state before retrying. No wheel fallback was sent."
         }
         Start-Sleep -Milliseconds 40
     }
