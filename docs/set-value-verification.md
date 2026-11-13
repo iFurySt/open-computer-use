@@ -19,11 +19,15 @@ Linux 在写入前拒绝只读字段，什么都不写：AT-SPI 状态含 `READ_
 
 验证失败不代表控件完全没变化。先重新观察，再决定是否重试；OCU 不会自动改用键盘或其他输入路径。验证只确认读取时的值，不保证应用之后不会再次修改它。
 
+## Windows 状态类动作
+
+Windows 上 `perform_secondary_action` 的 Toggle、Select、Expand、Collapse，以及 `click` 落到 SelectionItem / Toggle pattern 时（复选框、单选按钮、列表项），同样回读控件状态：Toggle 要求状态改变，Select 要求已选中，Expand 要求 Expanded / PartiallyExpanded（不接受 LeafNode），Collapse 要求 Collapsed，最多轮询 0.6 秒，不重复发送。读不到预期状态时返回错误并提示先重新观察，因为动作可能稍后才生效，盲目重试会把 Toggle 切回去。ScrollPattern 翻页时，只要已经调用 pattern 后发生异常，就报告已完成的页调用数和结果不确定，不再交给滚轮回退；即使第一页抛错，也可能已经产生滚动。只有没有 ScrollPattern 时仍允许原来的回退。
+
 ## 回归测试
 
 - macOS：`node scripts/tests/macos-set-value-smoke.mjs <signed-native-executable>`，真实 AppKit 文本控件，覆盖正常、忽略、改写、延迟、清空、空白和 Unicode，同时检查关闭/开启完整回读和 JS 错误传播。
 - Linux：在私有 Xvfb / D-Bus 中运行 `python3 scripts/tests/linux-set-value-smoke.py --native <native-executable>`，真实 GTK / AT-SPI，覆盖正常、忽略、长度限制、延迟生效和只读；不代表所有 Wayland/toolkit。
-- Windows：`scripts/tests/windows-set-value-smoke.ps1 -NativePath <native-executable>`，真实 WPF 自定义 ValuePattern；已接入 Windows observation CI。
+- Windows：`scripts/tests/windows-set-value-smoke.ps1 -NativePath <native-executable>`，真实 WPF 自定义 ValuePattern；已接入 Windows observation CI。真实 WPF 状态类 provider 的正常 / 忽略写入、独立调用次数与状态检查由 Windows Go 测试 `TestRealPatternActionsVerifyStateWithoutResending` 执行。状态类动作的决策逻辑见 `scripts/tests/windows-pattern-readback.test.ps1`（pattern 替身，任意 pwsh 可运行）。
 
 测试使用自有窗口和数据，不修改个人应用。
 

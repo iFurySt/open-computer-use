@@ -14,6 +14,8 @@ on:
       - 'scripts/tests/fixtures/WindowsTreeBudgetFixture.ps1'
       - 'scripts/tests/windows-fixture-state.ps1'
       - 'scripts/tests/windows-elevated-target.test.ps1'
+      - 'scripts/tests/windows-pattern-readback.test.ps1'
+      - 'scripts/tests/windows-hung-window.test.ps1'
       - 'scripts/tests/fixtures/WindowsInputFixture.ps1'
       - 'scripts/tests/fixtures/WindowsObservationFixture.ps1'
       - '.github/workflows/windows-observation.yml'
@@ -62,6 +64,14 @@ jobs:
       - name: Input to elevated windows is refused
         run: |
           powershell.exe -NoProfile -NonInteractive -File ./scripts/tests/windows-elevated-target.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Pattern action read-back
+        run: |
+          powershell.exe -NoProfile -NonInteractive -File ./scripts/tests/windows-pattern-readback.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Hung windows fail fast
+        run: |
+          powershell.exe -NoProfile -NonInteractive -File ./scripts/tests/windows-hung-window.test.ps1 -RuntimePath apps/OpenComputerUseWindows/runtime.ps1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Real WPF set value verification
         run: ./scripts/tests/windows-set-value-smoke.ps1 -NativePath "$env:RUNNER_TEMP/ocu-observation.exe"

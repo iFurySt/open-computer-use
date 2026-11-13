@@ -14,6 +14,7 @@ function Resolve-App($query) { [pscustomobject]@{ Id = 42; ProcessName = "fixtur
 function Assert-InputAllowed($process) { }
 function Find-Element($process, $record) { $null }
 function Send-Key($hwnd, $key, $method) { $script:sent++; if ($key -eq "broken") { throw "PostMessage key delivery failed." } }
+function Assert-WindowResponds($hwnd, $name) { }
 function Resolve-ObservationOptions($operation) { [pscustomobject]@{ include_ax = $true; include_screenshot = $true } }
 function Resolve-TextLimit($value) { 500 }
 function Build-Snapshot { if ($script:windowClosed) { throw 'appNotFound("fixture")' }; [pscustomobject]@{ app = [pscustomobject]@{ pid = 42 } } }
