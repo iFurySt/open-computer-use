@@ -44,6 +44,7 @@ Assert ((Get-MainElement $process) -eq "window" -and [OCUWin32]::probes -eq 1) "
 
 function Start-Sleep { param($Milliseconds) }
 function Resolve-App($query) { $process }
+function Assert-InputAllowed($process) { }
 function Find-Element($proc, $record) { $null }
 function Send-Key($hwnd, $key, $method) { $script:sent++ }
 function Build-Snapshot { [pscustomobject]@{ app = [pscustomobject]@{ pid = 42 } } }
