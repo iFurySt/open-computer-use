@@ -203,6 +203,21 @@ public enum ToolDefinitions {
             )
         ),
         ToolDefinition(
+            name: "set_foreground",
+            description: "Bring an app to the foreground so popovers, menus, date pickers and inline editors that only appear while the app is frontmost can be observed and operated; remembers the previous foreground app. Call again with mode \"return\" when the foreground-only step is done. Observe the app again after switching. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(
+                properties: [
+                    "app": stringProperty(description: "App name or bundle identifier (required for mode \"borrow\")"),
+                    "mode": stringProperty(
+                        description: "\"borrow\" activates the app and remembers the previous foreground app; \"return\" gives focus back. Defaults to borrow.",
+                        enumValues: ["borrow", "return"]
+                    ),
+                ],
+                required: []
+            )
+        ),
+        ToolDefinition(
             name: "type_text",
             description: "Type literal text using keyboard input. This tool is part of plugin `Computer Use`.",
             annotations: defaultAnnotations(),
