@@ -2226,6 +2226,19 @@ final class OpenComputerUseKitTests: XCTestCase {
         }
     }
 
+    func testPressOnADisabledControlIsRefusedBeforeInput() {
+        XCTAssertEqual(
+            disabledControlRefusal(enabled: false, role: kAXButtonRole as String, elementIndex: "3"),
+            "element 3 is disabled, so nothing was sent. Wait for it to be enabled, or act on another element."
+        )
+        XCTAssertNil(disabledControlRefusal(enabled: true, role: kAXButtonRole as String, elementIndex: "3"))
+        // A window or group without AXEnabled is not refused.
+        XCTAssertNil(disabledControlRefusal(enabled: nil, role: kAXWindowRole as String, elementIndex: "0"))
+        // A closed menu reports its items as they were when it last opened.
+        XCTAssertNil(disabledControlRefusal(enabled: false, role: kAXMenuItemRole as String, elementIndex: "9"))
+        XCTAssertNil(disabledControlRefusal(enabled: false, role: kAXMenuBarItemRole as String, elementIndex: "8"))
+    }
+
     func testMakeVisualCursorTargetUsesWindowRelativeElementCenter() {
         let screenMappings = [
             VisualCursorScreenMapping(

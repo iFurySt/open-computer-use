@@ -236,3 +236,5 @@ Windows Chromium/Electron 的危险 TextPattern 选区读取在调用前跳过�
 Linux 会话发现排除沙盒进程，不再导入其他进程的 AT_SPI_BUS_ADDRESS；显式调用者值保留，默认使用 libatspi 的会话总线查询。见 [会话发现](linux-session-discovery.md)。
 
 macOS 快照元素动作在输入前核对原 AX 引用的 role/subrole、名称和 identifier；静态文字和弹出按钮额外核对值。身份变化、引用失效或读取失败要求重新观察，不搜索同名替代对象。普通输入值和勾选状态不作为身份；当前 role/subrole 确认后才按需读值，密码字段不读值。真实回归入口：`scripts/tests/macos-element-identity-smoke.mjs`。
+
+macOS 以元素索引点击或执行次要动作前，会重读 `AXEnabled`；明确禁用的普通控件拒绝输入。菜单项保留原行为，因为关闭的菜单可能暴露过期的启用状态。真实 AppKit 回归入口为 `scripts/tests/macos-disabled-control-smoke.mjs`。
