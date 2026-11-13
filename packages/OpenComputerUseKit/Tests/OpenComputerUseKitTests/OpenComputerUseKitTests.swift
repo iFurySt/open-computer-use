@@ -995,6 +995,37 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertFalse(isDescendantClickCandidateAtTarget(candidateFrame: nil, clickPoint: nil, targetFrame: card))
     }
 
+    func testClickSelectsContainingRowOnlyForRowsCellsOrUnpressableTargets() {
+        XCTAssertTrue(clickShouldSelectContainingRow(role: "AXRow", actions: ["AXPress"]))
+        XCTAssertTrue(clickShouldSelectContainingRow(role: "AXCell", actions: []))
+        XCTAssertTrue(clickShouldSelectContainingRow(role: "AXStaticText", actions: []))
+        XCTAssertTrue(clickShouldSelectContainingRow(role: "AXImage", actions: ["AXShowMenu"]))
+        // 行里的 checkbox / 展开三角有自己的 AXPress：点它们是按下去，不是选行。
+        XCTAssertFalse(clickShouldSelectContainingRow(role: "AXCheckBox", actions: ["AXPress"]))
+        XCTAssertFalse(clickShouldSelectContainingRow(role: "AXDisclosureTriangle", actions: ["axpress"]))
+        XCTAssertFalse(clickShouldSelectContainingRow(role: "AXButton", actions: ["AXPress", "AXShowMenu"]))
+    }
+
+    func testAccessibilityWriteErrorsThatProveNothingApplied() {
+        for error: AXError in [.attributeUnsupported, .actionUnsupported, .illegalArgument, .noValue, .notImplemented, .invalidUIElement] {
+            XCTAssertTrue(accessibilityWriteProvesNothingApplied(error), "\(error.rawValue)")
+        }
+        // AppKit 对已经执行的动作也会答 -25205 / -25200，不能当作没生效。
+        for error: AXError in [.success, .failure, .cannotComplete, .apiDisabled] {
+            XCTAssertFalse(accessibilityWriteProvesNothingApplied(error), "\(error.rawValue)")
+        }
+    }
+
+    func testClickDeliveryNotesPointAtVerification() {
+        for note in [clickFocusDeliveredUnverifiedNote, clickRowSelectionDeliveredUnverifiedNote] {
+            XCTAssertTrue(note.contains("get_app_state"))
+            XCTAssertFalse(note.lowercased().contains("permission"))
+        }
+        let result = appendingResultNote("note", to: ToolCallResult(content: [.text("snapshot"), .text("x")]))
+        XCTAssertEqual(result.content.count, 3)
+        XCTAssertEqual(result.content.last?.dictionary["text"] as? String, "note")
+    }
+
     func testContainingRowActionAcceptsTightClickableAncestor() {
         XCTAssertTrue(
             isLikelyContainingRowActionFrame(

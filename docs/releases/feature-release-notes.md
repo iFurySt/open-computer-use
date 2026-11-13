@@ -19,6 +19,7 @@
 | 2026-11-08 | macOS 密码框 | 往已有内容的密码框 type_text 不再把整个密码换成新输入；set_value 不再误报失败；密码不会进入快照和 query。 | 读取 AXValue 前先看 subrole，`AXSecureTextField` 的值从不读取；type_text 改走键盘输入，set_value 不回读。 |
 | 2026-11-08 | Linux 密码字段 | GTK 4 密码框的明文不再出现在快照里，Windows 同时保护密码值与选区。 | role 为 `password text` 的字段不读取值和选区；修复前 `GtkPasswordEntry` 的密码以明文出现在 `value` 和 tree 行。 |
 | 2026-11-07 | Locked Use 输入监控 | 兼容独占设备时仍检查键盘、指针等输入类别，避免误报健康。 | 逐设备管理回调与清理，热插拔 / 输入错误使当前监控失效；现有回归通过，按维护者决定先合并，Karabiner / Secure Input 接管实测留待发版后贡献者复测。见 [说明](../locked-use-input-monitor.md)。 |
+| 2026-11-06 | macOS 点击语义 | 点搜索框 / 文本框后可直接输入；点 outline / table 的行能真正选中。 | click 对文本框先设 AXFocused、对行设 AXSelected 并核实；方向键接受 `ArrowUp` 写法；REPL click 接受 `{ x, y }`。 |
 | 2026-11-07 | Locked Use 副屏遮罩 | 遮罩从创建时就放在目标屏幕上，避免依赖后续定位修正。 | 初始化改用屏幕局部坐标，保留严格覆盖检查；补物理双屏与左侧虚拟屏的真实前后对照。报告者锁屏环境的最终失败尚未完整复现，见 [验证说明](../locked-use-shield-placement.md)。 |
 | 2026-11-06 | macOS 截图与几何健壮性 | 部分出屏的窗口截图完整、坐标不偏移；AX 给出 NaN frame 时不再崩溃。 | 出屏时改走 ScreenCaptureKit 整窗捕获并校验尺寸；快照、查询与点击重读过滤非法 frame，补真实 AppKit 修复前后对照。见 [验证记录](../macos-snapshot-geometry.md)。 |
 | 2026-11-07 | v1.1.4 补丁发布 | 修复 Locked Use 任务结束和重连后的清理，改善三平台控件观察与写入反馈。 | 包含 #158、#145、#111；正式制品强制签名与公证。Locked Use 真实锁屏验证按维护者决定留待本版发布后。 |

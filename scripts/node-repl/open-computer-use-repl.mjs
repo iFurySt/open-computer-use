@@ -369,7 +369,12 @@ export function createCuaApi(native, activeOutput) {
         return images[0] ? { state, screenshot: Buffer.from(images[0].data, "base64") } : { state };
       },
       async click(target, options = {}) {
-        const targetArgs = Array.isArray(target) ? { x: target[0], y: target[1] } : { element_index: target };
+        // 坐标既接受 [x, y]，也接受 { x, y }：模型两种写法都会用，后者原来直接报参数错误。
+        const targetArgs = Array.isArray(target)
+          ? { x: target[0], y: target[1] }
+          : target !== null && typeof target === "object" && "x" in target && "y" in target
+            ? { x: target.x, y: target.y }
+            : { element_index: target };
         await call("click", { app, ...targetArgs, ...optionsToClickArgs(options) });
       },
       async drag(from, to) { await call("drag", { app, from_x: from[0], from_y: from[1], to_x: to[0], to_y: to[1] }); },
