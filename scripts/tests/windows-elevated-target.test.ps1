@@ -18,6 +18,7 @@ public static class OCUWin32 {
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
 function Start-Sleep { param($Milliseconds) }
 function Resolve-App($query) { [pscustomobject]@{ Id = 42; ProcessName = "fixture"; MainWindowHandle = [IntPtr]42 } }
+function Assert-WindowResponds($hwnd, $name) { }
 function Find-Element($process, $record) { $null }
 function Send-Key($hwnd, $key, $method) { $script:sent++ }
 function Resolve-ObservationOptions($operation) { [pscustomobject]@{ include_ax = $true; include_screenshot = $true } }
@@ -40,7 +41,9 @@ Assert ($r.ok -and $script:sent -eq 1) "Input from an elevated runtime to an ele
 $r = Dispatch "press_key" 0x2000 0x3000
 Assert ($r.ok -and $script:sent -eq 1) "Input to a lower level was refused"
 $r = Dispatch "press_key" -1 0x2000
-Assert ($r.ok -and $script:sent -eq 1) "An unreadable level was refused"
+Assert (-not $r.ok -and $r.error -match "Cannot verify" -and $script:sent -eq 0) "An unreadable target level allowed input"
+$r = Dispatch "press_key" 0x2000 -1
+Assert (-not $r.ok -and $r.error -match "Cannot verify" -and $script:sent -eq 0) "An unreadable runtime level allowed input"
 $r = Dispatch "get_app_state" 0x3000 0x2000
 Assert ($r.ok) "Observing an elevated window was refused"
-Write-Output "Integrity: elevated target refused before input, same/higher/lower/unknown levels and observation allowed passed."
+Write-Output "Integrity: elevated target refused before input, same/higher/lower levels allowed, unknown refused and observation allowed passed."

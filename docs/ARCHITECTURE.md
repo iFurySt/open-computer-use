@@ -136,7 +136,7 @@
 - Windows 截图通过 `PrintWindow(PW_RENDERFULLCONTENT)` 捕获目标 HWND，失败时省略图片，不回退到可能包含其他应用的桌面像素；捕获前后核对窗口几何。posted click 在目标子窗口层级内定位接收者，并核对窗口、元素和子控件局部坐标，检查消息投递结果，异常时尝试释放鼠标。真实遮挡截图与嵌套控件回归见 [Windows targeting](windows-targeting.md)；GPU / 受保护窗口仍取决于应用对 PrintWindow 的支持。
 - Windows 动作送达后，即使随后读取窗口失败（例如点击关闭了窗口），也报告动作已送达而不是失败：结果写明读取失败的原因，丢弃该 app 的旧快照，要求下一步先 `get_app_state`，避免模型重试导致重复动作。动作类工具在 30 s 超时或 bridge 通信失败时提示结果未知、可能已送达；这些失败同样作废所有同进程快照别名，不允许沿用旧索引。
 - Windows 元素动作核对原 RuntimeId、控件类型、AutomationId 与完整名称的 SHA-256 摘要；引用失效或身份变化时要求重新观察，不搜索同名替代对象。名称摘要独立于展示 text_limit，截断之后的变化也能检测。
-- 目标进程的完整性级别高于 Windows runtime（目标以管理员身份运行而 OCU 没有）时，所有动作在发送前拒绝：UIPI 会丢弃这类输入，SendInput 却仍报告成功。级别读不到时不拒绝；`get_app_state` 照常。
+- 目标进程的完整性级别高于 Windows runtime（目标以管理员身份运行而 OCU 没有）时，所有动作在发送前拒绝：UIPI 可能阻断这类输入，仅靠 SendInput 返回值不能判定阻断原因。级别读不到时也拒绝输入；`get_app_state` 照常。
 - Windows 的 Toggle / Select / Expand / Collapse（含 `click` 走 SelectionItem / Toggle pattern 的情况）发送一次后回读状态，最多 0.6 秒，未达到预期就报错并提示先重新观察；ScrollPattern 调用抛错时报告不确定结果，不再交给滚轮回退重复滚动。见 [写入验证](set-value-verification.md)。
 - 读取 UI Automation 和发送动作之前先探测目标窗口是否还在处理消息（`IsHungAppWindow`，以及 1 s 的 `SendMessageTimeout(WM_NULL, SMTO_ABORTIFHUNG)`）；超时连续两次没有回应就报告 app 无响应；权限拒绝等探测错误单独报告，不再让每次调用卡到 30 s 超时，也不把输入排进挂起窗口的消息队列。
 - Windows `click_method=accessibility` 使用 UIA，`app_post` 始终使用 HWND 消息。`click_method=global` 要求 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`；开启后，auto 点击及缺少 ScrollPattern 时的 scroll 回退、drag 也可使用真实指针。`press_key` 的 auto 始终使用窗口消息，发给窗口内有键盘焦点的控件，并拒绝窗口消息无法携带修饰键的组合键，真实按键需显式 `key_method=global` 及同一环境开关。物理输入通过 SendInput 检查返回值、finally 释放按键 / 鼠标，核对观察的 PID / HWND、最新几何、前台及坐标命中窗口；普通 SetForegroundWindow 失败就拒绝，不模拟 Alt 强行抢前台。macOS-only sky_click / sky_key 继续明确拒绝。见 [Windows 输入说明](windows-input.md)。

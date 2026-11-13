@@ -769,7 +769,10 @@ function Send-Key([IntPtr]$hwnd, [string]$key, [string]$method = "auto") {
 function Assert-InputAllowed($process) {
     $target = [OCUWin32]::IntegrityLevel([uint32]$process.Id)
     $own = [OCUWin32]::IntegrityLevel([uint32]$PID)
-    if ($target -ge 0 -and $own -ge 0 -and $target -gt $own) {
+    if ($target -lt 0 -or $own -lt 0) {
+        throw "Cannot verify process integrity levels; no input was sent. Check that the target is still running and accessible, then observe it again."
+    }
+    if ($target -gt $own) {
         throw "$($process.ProcessName) runs elevated, at a higher integrity level than Open Computer Use, so Windows drops the input sent to it. Run the app without elevation, or run Open Computer Use elevated."
     }
 }
