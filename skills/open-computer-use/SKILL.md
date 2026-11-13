@@ -24,6 +24,10 @@ first match. JavaScript exposes `app.selectText(elementIndex, text, options?)`. 
 macOS additionally exposes `query`: a targeted accessibility lookup that finds
 controls by text and/or role without rendering a tree or taking a screenshot.
 
+macOS also exposes `press_menu`, which presses a menu bar command by its path (`"File > Save As…"`)
+through accessibility, without activating the app. JavaScript exposes `app.pressMenu(path)`.
+Windows and Linux runtimes do not implement it.
+
 ## Core Workflow
 
 1. On macOS, run `sw_vers -productVersion` before invoking the CLI and require macOS 14.0 or later. On older versions, explain that the runtime cannot launch; do not recommend `doctor` or permission changes as a fix for binary incompatibility.

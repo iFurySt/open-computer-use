@@ -474,3 +474,21 @@ test("disabled virtual displays reject stale JS options before native dispatch",
   assert.equal(restored.isError, false);
   assert.equal(native.calls.at(-1).arguments.window_placement, "restore");
 });
+for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
+  test(`${Session.name}: pressMenu forwards the path without a snapshot and preserves native errors`, async t => {
+    const native = mockNative(), session = new Session({ native });
+    t.after(() => session.close?.());
+    let result = await session.run(`var menuApp = await cua.getApp("Text", { initialState: false }); await menuApp.pressMenu("Format > Font > Show Fonts");`);
+    assert.equal(result.isError, false, result.content.at(-1).text);
+    assert.deepEqual(native.calls, [{ name: "press_menu", arguments: { app: "Text", path: "Format > Font > Show Fonts" } }]);
+    for (const args of [``, `""`, `"  "`, `["File", "Save"]`]) {
+      result = await session.run(`await menuApp.pressMenu(${args});`);
+      assert.equal(result.isError, true, args);
+    }
+    assert.equal(native.calls.length, 1);
+    native.request = async () => textResult("No menu item 'Nope' in File. Items: New, Open…", true);
+    result = await session.run(`await menuApp.pressMenu("File > Nope");`);
+    assert.equal(result.isError, true);
+    assert.match(result.content.at(-1).text, /Items: New, Open…/);
+  });
+}
