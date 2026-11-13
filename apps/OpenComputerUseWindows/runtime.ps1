@@ -1350,7 +1350,10 @@ function Invoke-VerifiedSelect($pattern) {
 
 function Invoke-VerifiedDisclosure($pattern, [bool]$expand) {
     if ($expand) { $pattern.Expand() } else { $pattern.Collapse() }
-    if (-not (Wait-PatternState { ([string]$pattern.Current.ExpandCollapseState -ne "Collapsed") -eq $expand })) {
+    if (-not (Wait-PatternState {
+        $state = [string]$pattern.Current.ExpandCollapseState
+        if ($expand) { $state -eq "Expanded" -or $state -eq "PartiallyExpanded" } else { $state -eq "Collapsed" }
+    })) {
         $action = if ($expand) { "Expand" } else { "Collapse" }
         throw "$action could not be verified: the item still reads $($pattern.Current.ExpandCollapseState). Read its state before retrying; the change may still apply."
     }
@@ -1436,11 +1439,9 @@ function Invoke-Scroll($element, [string]$direction, [double]$pages) {
         try {
             $scroll.Scroll($horizontal, $vertical)
         } catch {
-            # ScrollPattern can exist while the element still refuses to scroll in
-            # its current state, for example a list with two rows. Fall through to
-            # the coordinate path instead of failing the whole tool call, unless a
-            # page already scrolled: the wheel would then scroll all pages again.
-            return $i -gt 0
+            # A provider may act before throwing, even on the first page. Never
+            # replay an attempted pattern action through a second input method.
+            throw "ScrollPattern failed after $i completed page calls; scrolling may already have occurred. Run get_app_state before retrying. No wheel fallback was sent."
         }
         Start-Sleep -Milliseconds 40
     }

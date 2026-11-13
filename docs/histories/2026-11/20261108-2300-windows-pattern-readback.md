@@ -32,3 +32,9 @@
 - 同一组替身下，origin/main 对被忽略的 Toggle（secondary action 与点击复选框）、Select（点击列表项）、Expand 都报成功；3 页滚动在第 1 页后被 pattern 拒绝时返回 false，交给滚轮再滚 3 页。本分支四种都报“could not be verified”，滚动返回 true。新测试在 origin/main 上失败，本分支通过。
 - 现有决策测试在 pwsh 7.5 下通过；`go vet`、`go test -race`、`GOOS=windows go vet`、windows amd64 / arm64 构建通过。
 - 哪些真实控件会忽略这些 pattern、状态更新是否都在 0.6 s 内可读，只能在 Windows 桌面上确认；现有 smoke 点击的都是 Invoke 按钮，不受影响。
+
+## Maintainer review — 2026-11-13
+
+Merged current main, retaining the hung-window checks and their CI coverage. Expand now accepts only Expanded / PartiallyExpanded, not LeafNode. Any exception after a ScrollPattern call stops with an uncertain-delivery error, including an exception on the first page: a provider can act before throwing. Only an absent pattern permits wheel fallback. Added regression cases for both behaviors.
+
+Added real WPF automation providers that apply or deliberately ignore Toggle, Select and Expand/Collapse. The Windows Go integration test uses the production bridge, verifies actual state and independent call counters, exercises click and secondary-action paths, and checks already-selected requests. It runs in the existing Windows workflow; local PowerShell doubles and cross-compilation are separate checks. Current final behavior supersedes the initial first-page fallback described above. CI evidence is attached to PR #175.

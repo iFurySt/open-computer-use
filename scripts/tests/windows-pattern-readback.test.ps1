@@ -56,6 +56,7 @@ $p = Pattern "Collapsed"; Invoke-SecondaryAction (Element @{ ExpandCollapse = $p
 $p = Pattern "Expanded" $false; Refuses { Invoke-SecondaryAction (Element @{ ExpandCollapse = $p }) "collapse" } "Collapse could not be verified"
 $p = Pattern "Expanded"; Invoke-SecondaryAction (Element @{ ExpandCollapse = $p }) "collapse"; Assert ($p.state -eq "Collapsed") "A collapse that applied was not accepted"
 $p = Pattern "Expanded" $false; Invoke-SecondaryAction (Element @{ ExpandCollapse = $p }) "expand"; Assert ($p.calls -eq 1) "Expanding an expanded item failed"
+$p = Pattern "LeafNode" $false; Refuses { Invoke-SecondaryAction (Element @{ ExpandCollapse = $p }) "expand" } "Expand could not be verified"
 Write-Output "Pattern read-back: toggle, select, expand and collapse applied, ignored (sent once) and already reached passed."
 
 # Scroll: a page that scrolled before the pattern refused is not scrolled again by the wheel fallback.
@@ -64,9 +65,15 @@ $scroll = [pscustomobject]@{}
 $scroll | Add-Member ScriptMethod Scroll { param($horizontal, $vertical) if ($script:pages -ge $script:limit) { throw "end of content" }; $script:pages++ }
 $scrollable = Element @{ Scroll = $scroll }
 $script:pages = 0; $script:limit = 1
-Assert ((Invoke-Scroll $scrollable "down" 3) -and $script:pages -eq 1) "A scroll that moved one page fell through to the wheel path"
+Refuses { Invoke-Scroll $scrollable "down" 3 } "after 1 completed page calls"
+Assert ($script:pages -eq 1) "A scroll was replayed after a partial result"
 $script:pages = 0; $script:limit = 0
-Assert (-not (Invoke-Scroll $scrollable "down" 1)) "A scroll the pattern refused outright did not fall through to the wheel path"
+Refuses { Invoke-Scroll $scrollable "down" 1 } "after 0 completed page calls"
 $script:pages = 0; $script:limit = 9
 Assert ((Invoke-Scroll $scrollable "up" 2) -and $script:pages -eq 2) "A full scroll failed"
-Write-Output "Scroll: partial pages kept, refused scroll falls through, full scroll passed."
+Assert (-not (Invoke-Scroll (Element @{}) "down" 1)) "Absent pattern must still permit the normal fallback"
+$scroll | Add-Member -Force ScriptMethod Scroll { param($horizontal, $vertical) $script:pages++; throw "acted then failed" }
+$script:pages = 0
+Refuses { Invoke-Scroll $scrollable "down" 3 } "scrolling may already have occurred"
+Assert ($script:pages -eq 1) "An uncertain first scroll was sent again"
+Write-Output "Scroll: partial/uncertain delivery never falls back, absent pattern and full scroll passed."
