@@ -24,8 +24,9 @@ var lowIntegrityDispatchScript string
 func TestRealCrossIntegrityInputIsRefused(t *testing.T) {
 	dir, fixture := startWindowsFixture(t, integrityFixtureScript)
 	var state struct {
-		Keys int   `json:"keys"`
-		HWND int64 `json:"hwnd"`
+		Keys       int   `json:"keys"`
+		Characters int   `json:"characters"`
+		HWND       int64 `json:"hwnd"`
 	}
 	read := func() { readWindowsFixtureJSON(t, filepath.Join(dir, "state.json"), &state) }
 	read()
@@ -39,6 +40,7 @@ func TestRealCrossIntegrityInputIsRefused(t *testing.T) {
 	if state.Keys != 1 {
 		t.Fatalf("same-level key not delivered: %d", state.Keys)
 	}
+	charactersBefore := state.Characters
 	helper := filepath.Join(dir, "low.ps1")
 	if err := os.WriteFile(helper, []byte(lowIntegrityDispatchScript), 0600); err != nil {
 		t.Fatal(err)
@@ -82,7 +84,7 @@ func TestRealCrossIntegrityInputIsRefused(t *testing.T) {
 			t.Fatalf("%s not refused by integrity guard: %+v", mode, result)
 		}
 		read()
-		if state.Keys != 1 {
+		if state.Keys != 1 || state.Characters != charactersBefore {
 			t.Fatalf("%s delivered input to the protected target: %d", mode, state.Keys)
 		}
 	}
