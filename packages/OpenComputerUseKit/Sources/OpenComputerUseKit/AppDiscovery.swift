@@ -511,7 +511,7 @@ enum AppDiscovery {
 
                 let lastUsed = dateAttribute(lastUsedDateRankingAttribute as CFString, item: item)
                     ?? dateAttribute(kMDItemLastUsedDate, item: item)
-                guard let lastUsed, lastUsed >= cutoffDate else {
+                guard let lastUsed, lastUsed.isAtOrAfter(cutoffDate) else {
                     continue
                 }
 
