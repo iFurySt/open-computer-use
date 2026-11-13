@@ -73,6 +73,30 @@ reports this. Coordinate actions use the newly observed window bounds; element
 actions require a fresh AX observation. Existing calls without these options keep
 their full native observation behavior. These flags are implemented on all three native platforms; action read-back is unchanged.
 
+### Set-of-marks and zoom (macOS)
+
+`marks: true` outlines each enabled, actionable element (press/pick/increment
+actions, text fields, rows) on the screenshot and labels it with its
+`element_index`, the same index the tree prints and `click`, `set_value` and the
+other element actions take. The tree text is unchanged apart from one note. Marks
+need both channels, so `include_ax: false` or `include_screenshot: false` with
+`marks: true` is rejected.
+
+`zoom: {x, y, width, height}` returns only that box of the window, as fractions
+of its width and height, at up to the capture's full resolution (still capped by
+`maxLongEdgePixels`). Click and drag `x`/`y` then refer to pixels of the zoomed
+image; the result notes the region in window points. Zoom works with or without
+marks and needs `include_screenshot`.
+
+```bash
+open-computer-use call get_app_state --args '{"app":"TextEdit","marks":true}'
+open-computer-use call get_app_state --args '{"app":"TextEdit","marks":true,"zoom":{"x":0.5,"y":0,"width":0.5,"height":0.5}}'
+```
+
+Marks are drawn after any resize, so labels stay readable at every image size and
+the image keeps the format, size and coordinates of an unmarked screenshot.
+Linux and Windows reject both options.
+
 These options select collection, not image deduplication. An unchanged screenshot
 is still returned when requested. macOS/Linux JS actions already disable automatic
 read-back, and getAXState does not emit images; includeScreenshot:false additionally skips

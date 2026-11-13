@@ -17,6 +17,8 @@ final class ElementRecord {
     let isSyntheticText: Bool
     /// What the snapshot showed at this index, checked before any action on it; nil where no check applies.
     let identity: ElementIdentity?
+    /// False when AXEnabled says the element is disabled.
+    let isEnabled: Bool
 
     init(
         index: Int,
@@ -29,7 +31,8 @@ final class ElementRecord {
         rawActions: [String],
         prettyActions: [String],
         isSyntheticText: Bool = false,
-        identity: ElementIdentity? = nil
+        identity: ElementIdentity? = nil,
+        isEnabled: Bool = true
     ) {
         self.index = index
         self.identifier = identifier
@@ -42,6 +45,7 @@ final class ElementRecord {
         self.prettyActions = prettyActions
         self.isSyntheticText = isSyntheticText
         self.identity = identity
+        self.isEnabled = isEnabled
     }
 }
 
@@ -279,15 +283,17 @@ enum SnapshotBuilder {
         observation: SnapshotObservationOptions
     ) -> AppSnapshot {
         let windowBounds = windowCapture.bounds
-        let screenshot = observation.includeScreenshot ? windowCapture.screenshotResult()
+        // A marked screenshot is encoded once, after the tree walk that gives the marks.
+        var screenshot = observation.includeScreenshot
+            ? (observation.marks ? ScreenshotEncodingResult(data: nil, note: nil) : windowCapture.screenshotResult(zoom: observation.zoom))
             : ScreenshotEncodingResult(data: nil, note: SnapshotObservationOptions.screenshotOmittedNote)
-        let screenshotData = screenshot.data
         guard observation.includeAX else {
             return AppSnapshot(app: app, windowTitle: windowTitle, windowBounds: windowBounds,
                                targetWindowID: windowCapture.windowID, targetWindowLayer: windowCapture.layer,
-                               screenshotData: screenshotData, mode: .accessibility, treeLines: [],
+                               screenshotData: screenshot.data, mode: .accessibility, treeLines: [],
                                focusedSummary: nil, focusedElement: nil, selectedText: nil,
-                               windowElement: rootElement, elements: [:], screenshotNote: screenshot.note,
+                               windowElement: rootElement, elements: [:],
+                               screenshotNote: screenshotNote(screenshot, observation: observation, windowSize: windowBounds.size),
                                observation: observation)
         }
         let focusedElement = preferredFocusedElement(appElement: appElement, appPID: app.pid, focusedApplication: focusedApplication, systemWide: systemWide)
@@ -341,13 +347,18 @@ enum SnapshotBuilder {
             treeLines.append(occlusionNote)
         }
 
+        if observation.marks {
+            let marks = screenshotMarks(for: renderer.records, windowSize: windowBounds.size)
+            screenshot = TimingLog.measure("snapshot.marks") { windowCapture.screenshotResult(zoom: observation.zoom, marks: marks) }
+        }
+
         return AppSnapshot(
             app: app,
             windowTitle: windowTitle,
             windowBounds: windowBounds,
             targetWindowID: windowCapture.windowID,
             targetWindowLayer: windowCapture.layer,
-            screenshotData: screenshotData,
+            screenshotData: screenshot.data,
             mode: .accessibility,
             treeLines: treeLines,
             focusedSummary: renderer.focusedSummary,
@@ -355,9 +366,23 @@ enum SnapshotBuilder {
             selectedText: selectedText,
             windowElement: rootElement,
             elements: renderer.records,
-            screenshotNote: screenshot.note,
+            screenshotNote: screenshotNote(screenshot, observation: observation, windowSize: windowBounds.size),
             observation: observation
         )
+    }
+
+    /// The encoder's note, or for a delivered marked or zoomed screenshot, what its numbers and
+    /// pixels stand for.
+    private static func screenshotNote(_ screenshot: ScreenshotEncodingResult, observation: SnapshotObservationOptions, windowSize: CGSize) -> String? {
+        guard screenshot.data != nil else { return screenshot.note }
+        var notes: [String] = []
+        if observation.marks {
+            notes.append("Numbers drawn on the screenshot are element_index values of actionable elements.")
+        }
+        if let zoom = observation.zoom {
+            notes.append("The screenshot shows the window region \(zoomRegion(zoom, of: windowSize).renderedLocalFrame) (window points); click and drag x/y are pixels of this zoomed image.")
+        }
+        return notes.isEmpty ? nil : notes.joined(separator: " ")
     }
 
     private static func recoverVisibleWindow(for app: RunningAppDescriptor, appElement: AXUIElement, preferredWindow: AXUIElement?) -> Bool {
@@ -670,9 +695,19 @@ private struct WindowCapture {
             ?? 1
     }
 
-    func screenshotResult() -> ScreenshotEncodingResult {
-        guard let image else { return ScreenshotEncodingResult(data: nil, note: nil) }
-        return encodeScreenshot(for: image, config: imageConfig)
+    /// `zoom` crops the capture to that box of the window; `marks` are in window points.
+    func screenshotResult(zoom: CGRect? = nil, marks: [ScreenshotMark] = []) -> ScreenshotEncodingResult {
+        guard var image else { return ScreenshotEncodingResult(data: nil, note: nil) }
+        var shown = CGRect(origin: .zero, size: bounds.size)
+        if let zoom {
+            guard let cropped = image.cropping(to: zoomRegion(zoom, of: CGSize(width: image.width, height: image.height)).integral) else {
+                return ScreenshotEncodingResult(data: nil, note: "Screenshot omitted: zoom crop failed")
+            }
+            image = cropped
+            shown = zoomRegion(zoom, of: bounds.size)
+        }
+        let pixels = rescaledScreenshotMarks(marks, from: shown, to: CGSize(width: image.width, height: image.height))
+        return encodeScreenshot(for: image, config: imageConfig, marks: pixels)
     }
 
 }
@@ -736,7 +771,15 @@ func boundedScreenshotData(for image: CGImage, config: ImageCaptureConfig) -> Da
     encodeScreenshot(for: image, config: config).data
 }
 
-func encodeScreenshot(for image: CGImage, config: ImageCaptureConfig) -> ScreenshotEncodingResult {
+/// Every picture a tool returns holds sRGB numbers and is tagged sRGB. A capture comes in the
+/// display's space: on a Display P3 screen, sRGB red 230,30,30 was returned as 211,55,46, tagged
+/// Display P3 in a PNG and untagged in a JPEG, so a reader that ignores the profile (as a model's
+/// vision input mostly does) saw other colours. Drawing into an sRGB context converts the pixels;
+/// a resize does it in the draw it makes anyway.
+let pictureColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+
+/// `marks` are in `image`'s pixels; they are drawn after any resize, at the delivered size.
+func encodeScreenshot(for image: CGImage, config: ImageCaptureConfig, marks: [ScreenshotMark] = []) -> ScreenshotEncodingResult {
     func omitted(_ reason: String) -> ScreenshotEncodingResult { .init(data: nil, note: "Screenshot omitted: " + reason) }
     guard image.width > 0, image.height > 0 else { return omitted("invalid dimensions") }
     guard config.maxDimension.map({ $0.isFinite && $0 >= 1 && $0.rounded(.down) == $0 }) ?? true else {
@@ -766,8 +809,11 @@ func encodeScreenshot(for image: CGImage, config: ImageCaptureConfig) -> Screens
     if isTiny(width, height) {
         return omitted("resizing would fall below discardBelowPixelCount \(config.discardBelowPixelCount)")
     }
-    guard let resized = scale == 1 ? image : resizedCGImage(image, scale: scale),
-          let data = encode(resized) else { return omitted("\(config.format) encoding failed") }
+    guard let resized = scale == 1 && image.colorSpace?.name == CGColorSpace.sRGB ? image : resizedCGImage(image, scale: scale),
+          let marked = marks.isEmpty ? resized : drawingScreenshotMarks(
+              rescaledScreenshotMarks(marks, from: CGRect(x: 0, y: 0, width: image.width, height: image.height),
+                                      to: CGSize(width: resized.width, height: resized.height)), on: resized),
+          let data = encode(marked) else { return omitted("\(config.format) encoding failed") }
     return .init(data: data, note: nil)
 }
 
@@ -779,7 +825,6 @@ private func pngData(for image: CGImage) -> Data? {
 private func resizedCGImage(_ image: CGImage, scale: CGFloat) -> CGImage? {
     let width = max(1, Int((CGFloat(image.width) * scale).rounded(.down)))
     let height = max(1, Int((CGFloat(image.height) * scale).rounded(.down)))
-    let colorSpace = CGColorSpaceCreateDeviceRGB()
     let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
 
     guard let context = CGContext(
@@ -788,7 +833,7 @@ private func resizedCGImage(_ image: CGImage, scale: CGFloat) -> CGImage? {
         height: height,
         bitsPerComponent: 8,
         bytesPerRow: 0,
-        space: colorSpace,
+        space: pictureColorSpace,
         bitmapInfo: bitmapInfo
     ) else {
         return nil
@@ -1124,7 +1169,8 @@ private struct TreeRenderer {
                 description: stringValue(of: root, attribute: kAXDescriptionAttribute),
                 identifier: stringValue(of: root, attribute: kAXIdentifierAttribute),
                 value: ElementIdentity.valueIsName.contains(role) ? stringValue(of: root, attribute: kAXValueAttribute) : nil
-            )
+            ),
+            isEnabled: !traits.contains("disabled")
         )
         records[index] = record
 
