@@ -40,6 +40,11 @@ $encoding=New-Object Text.UTF8Encoding($false)
 $timer=New-Object Windows.Forms.Timer
 $timer.Interval=30
 $timer.Add_Tick({
+ if('__MODE__' -eq 'core' -and (Test-Path (Join-Path $Directory 'hang')) -and -not (Test-Path (Join-Path $Directory 'resumed'))) {
+  [IO.File]::WriteAllText((Join-Path $Directory 'hung'),'true')
+  while(-not (Test-Path (Join-Path $Directory 'resume'))){[Threading.Thread]::Sleep(30)}
+  [IO.File]::WriteAllText((Join-Path $Directory 'resumed'),'true')
+ }
  $json=@{first=$first.ToInt64();second=$second.ToInt64();keys=[HostedFixture]::Keys}|ConvertTo-Json -Compress
  $temp=$statePath+'.tmp';[IO.File]::WriteAllText($temp,$json,$encoding)
  if(Test-Path $statePath){[IO.File]::Replace($temp,$statePath,$statePath+'.bak')}else{[IO.File]::Move($temp,$statePath)}

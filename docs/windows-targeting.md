@@ -127,7 +127,8 @@ After that dialog closes, input using its old snapshot is refused until a fresh
 observation identifies the current window.
 
 Only an `ApplicationFrameWindow` containing a `Windows.UI.Core.CoreWindow` is
-mapped to the content process. Other cross-process child windows retain their
+mapped to the content process. Both host and content must pass integrity and
+responsiveness checks before input. Other cross-process child windows retain their
 normal ownership. Hosted frames support observation and available UIA actions;
 posted click/key/scroll/text fallbacks are refused rather than sent to the host.
 Use supported UIA controls or explicitly enabled global input where appropriate;
@@ -136,5 +137,5 @@ Use supported UIA controls or explicitly enabled global input where appropriate;
 `go -C apps/OpenComputerUseWindows test ./...` includes real WinForms secondary
 windows and nested modal dialogs, plus two actual processes with hosted Win32
 frame/content HWNDs. The latter validates enumeration, class filtering and
-refusal of posted keys. It does **not** establish compatibility with every
+refusal of posted keys, and hung-content refusal/recovery. It does **not** establish compatibility with every
 packaged UWP application or renderer.

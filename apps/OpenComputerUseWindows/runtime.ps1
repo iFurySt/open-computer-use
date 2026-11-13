@@ -55,8 +55,8 @@ public static class OCUWin32 {
     public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int valueSize);
 
     public class TopWindow {
-        public IntPtr Handle, Owner;
-        public uint ProcessId;
+        public IntPtr Handle, Owner, ContentHandle;
+        public uint ProcessId, HostProcessId;
         public bool Enabled, Hosted;
         public string Title;
     }
@@ -82,12 +82,14 @@ public static class OCUWin32 {
             window.Owner = GetWindow(hwnd, 4 /* GW_OWNER */);
             window.Enabled = IsWindowEnabled(hwnd);
             GetWindowThreadProcessId(hwnd, out window.ProcessId);
+            window.HostProcessId = window.ProcessId;
             // Do not reinterpret an ordinary window just because it has a child with this class name.
             if (ClassName(hwnd) == "ApplicationFrameWindow") {
                 IntPtr core = FindWindowEx(hwnd, IntPtr.Zero, "Windows.UI.Core.CoreWindow", null);
                 uint corePid;
                 if (core != IntPtr.Zero && GetWindowThreadProcessId(core, out corePid) != 0 && corePid != 0) {
                     window.Hosted = corePid != window.ProcessId;
+                    window.ContentHandle = core;
                     window.ProcessId = corePid;
                 }
             }
@@ -809,17 +811,20 @@ function Send-Key([IntPtr]$hwnd, [string]$key, [string]$method = "auto") {
     }
 }
 
-# Windows drops window messages and SendInput aimed at a process with a higher integrity level (UIPI): an elevated
-# app gets nothing while SendInput still reports success, and UI Automation sees little more than its frame. A level
-# that cannot be read is not refused.
+# UIPI can block input to higher-integrity processes; SendInput cannot identify that cause.
+# For hosted windows, both the content process and the frame host must be allowed.
 function Assert-InputAllowed($process) {
-    $target = [OCUWin32]::IntegrityLevel([uint32]$process.Id)
     $own = [OCUWin32]::IntegrityLevel([uint32]$PID)
-    if ($target -lt 0 -or $own -lt 0) {
-        throw "Cannot verify process integrity levels; no input was sent. Check that the target is still running and accessible, then observe it again."
-    }
-    if ($target -gt $own) {
-        throw "$($process.ProcessName) runs elevated, at a higher integrity level than Open Computer Use, so Windows drops the input sent to it. Run the app without elevation, or run Open Computer Use elevated."
+    $targets = @([uint32]$process.Id)
+    if ($process.Hosted) { $targets += [uint32]$process.HostProcessId }
+    foreach ($targetId in $targets) {
+        $target = [OCUWin32]::IntegrityLevel($targetId)
+        if ($targetId -eq 0 -or $target -lt 0 -or $own -lt 0) {
+            throw "Cannot verify process integrity levels; no input was sent. Check that the target is still running and accessible, then observe it again."
+        }
+        if ($target -gt $own) {
+            throw "$($process.ProcessName) or its window host runs elevated, at a higher integrity level than Open Computer Use. No input was sent. Run the app without elevation, or run Open Computer Use elevated."
+        }
     }
 }
 
@@ -884,6 +889,8 @@ function Resolve-ModalWindow($match) {
         $match.MainWindowTitle = $dialog.Title
         $match.Enabled = $dialog.Enabled
         $match.Hosted = [bool]$dialog.Hosted
+        $match.HostProcessId = [int]$dialog.HostProcessId
+        $match.ContentWindowHandle = [long]$dialog.ContentHandle
     }
     return $match
 }
@@ -907,6 +914,8 @@ function Get-AppWindows {
             MainWindowTitle = $window.Title
             Enabled = $window.Enabled
             Hosted = [bool]$window.Hosted
+            HostProcessId = [int]$window.HostProcessId
+            ContentWindowHandle = [long]$window.ContentHandle
         }
     }
 }
@@ -922,6 +931,7 @@ function Assert-WindowResponds([IntPtr]$hwnd, [string]$name) {
 function Get-MainElement($process) {
     if ($process.MainWindowHandle -ne 0) {
         Assert-WindowResponds ([IntPtr]$process.MainWindowHandle) $process.ProcessName
+        if ($process.Hosted) { Assert-WindowResponds ([IntPtr]$process.ContentWindowHandle) $process.ProcessName }
         return [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$process.MainWindowHandle)
     }
     $condition = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ProcessIdProperty), $process.Id
@@ -1715,6 +1725,7 @@ try {
         Assert-InputAllowed $process
         # Before anything is sent: input posted to a hung window waits in its queue and lands whenever it recovers.
         Assert-WindowResponds $hwnd $process.ProcessName
+        if ($process.Hosted) { Assert-WindowResponds ([IntPtr]$process.ContentWindowHandle) $process.ProcessName }
         $windowBounds = $operation.windowBounds
         $element = Find-Element $process $operation.element
 

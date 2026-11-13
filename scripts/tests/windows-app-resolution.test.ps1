@@ -13,7 +13,7 @@ Add-Type -TypeDefinition @"
 using System;
 using System.Collections.Generic;
 public static class OCUWin32 {
- public class TopWindow { public IntPtr Handle, Owner; public uint ProcessId; public bool Enabled, Hosted; public string Title; }
+ public class TopWindow { public IntPtr Handle, Owner, ContentHandle; public uint ProcessId, HostProcessId; public bool Enabled, Hosted; public string Title; }
  public static List<TopWindow> windows = new List<TopWindow>();
  public static List<TopWindow> TopLevelWindows() { return windows; }
  public static void Add(long handle, uint processId, string title, long owner, bool enabled) {
@@ -74,7 +74,7 @@ Write-Output "Strict PID, literal title, empty query and nested modal regression
 # Production dispatch must never post to the host frame when it is mapped to another app.
 $dispatch=@($ast.EndBlock.Statements|Where-Object{$_ -is [System.Management.Automation.Language.TryStatementAst] -and $_.Body.Extent.Text -match '\$operation\.tool'})
 $script:windowEnabled=$true;$script:hosted=$true
-function Resolve-App($query) { [pscustomobject]@{Id=300;ProcessName='hosted';MainWindowHandle=[IntPtr]90;Hosted=$script:hosted;Enabled=$script:windowEnabled} }
+function Resolve-App($query) { [pscustomobject]@{Id=300;ProcessName='hosted';MainWindowHandle=[IntPtr]90;ContentWindowHandle=91;HostProcessId=600;Hosted=$script:hosted;Enabled=$script:windowEnabled} }
 function Assert-InputAllowed($process) { }
 function Assert-WindowResponds($hwnd,$name) { }
 function Find-Element($process,$record) { $null }

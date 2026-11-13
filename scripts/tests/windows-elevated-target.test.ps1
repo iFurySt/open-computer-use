@@ -11,8 +11,8 @@ if ($check.Count -ne 1 -or $dispatch.Count -ne 1) { throw "Production integrity 
 Invoke-Expression $check[0].Extent.Text
 Add-Type -TypeDefinition @"
 public static class OCUWin32 {
- public static int target = 0x2000, own = 0x2000;
- public static int IntegrityLevel(uint processId) { return processId == 42 ? target : own; }
+ public static int target = 0x2000, own = 0x2000, host = 0x2000;
+ public static int IntegrityLevel(uint processId) { return processId == 42 ? target : processId == 43 ? host : own; }
 }
 "@
 function Assert($condition, $message) { if (-not $condition) { throw $message } }
@@ -47,3 +47,8 @@ Assert (-not $r.ok -and $r.error -match "Cannot verify" -and $script:sent -eq 0)
 $r = Dispatch "get_app_state" 0x3000 0x2000
 Assert ($r.ok) "Observing an elevated window was refused"
 Write-Output "Integrity: elevated target refused before input, same/higher/lower levels allowed, unknown refused and observation allowed passed."
+
+[OCUWin32]::target=0x2000;[OCUWin32]::own=0x2000;[OCUWin32]::host=0x3000
+$failure=$null
+try { Assert-InputAllowed ([pscustomobject]@{Id=42;ProcessName='hosted';Hosted=$true;HostProcessId=43}) } catch { $failure=$_.Exception.Message }
+Assert ($failure -match 'host runs elevated') 'Higher-integrity host was ignored'

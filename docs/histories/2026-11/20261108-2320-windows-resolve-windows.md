@@ -43,3 +43,6 @@
 - 本地 PowerShell 解析 / 分派回归与 Windows 交叉编译通过；完整 Windows 原生结果以该提交的 Windows CI 为准。
 - 找不到可操作模态窗口且根窗口仍禁用时，观察可继续，动作明确拒绝，不尝试在禁用 owner 上执行 UIA。
 - 真实测试脚手架按 Win32 IsWindowEnabled 读取 ShowDialog 禁用状态（不读 WinForms 缓存属性），原生测试窗口统一 Unicode 注册 / 创建 / DefWindowProc，避免脚手架自身截断标题。
+- 合并 #172 后，hosted 输入同时核对内容进程和宿主进程的完整性级别；补宿主较高权限的反例。Windows CI 不允许静默跳过跨权限原生测试。
+- 实际 Windows 专项已通过：多窗口按标题定位、两层模态按钮投递 / 逐层恢复、旧 HWND 拒绝，以及跨进程宿主映射。组合 #172 后运行完整 Windows 工作流作为最终合并条件；归档本轮五个 PR 的执行计划。
+- hosted 窗口还需分别探测 frame 与 CoreWindow 的消息泵；避免宿主仍响应却掩盖内容进程挂起。真实拓扑测试新增内容进程挂起 / 恢复、观察和输入快速拒绝、恢复后无迟到按键。

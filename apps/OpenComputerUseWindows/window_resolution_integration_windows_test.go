@@ -126,5 +126,36 @@ func TestRealCrossProcessHostedWindowMapping(t *testing.T) {
 	if hostState.Keys != 0 || coreState.Keys != 0 {
 		t.Fatal("refused input was delivered")
 	}
+	// A responsive frame must not conceal a hung content process.
+	if err := os.WriteFile(filepath.Join(coreDir, "hang"), []byte("1"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var hung bool
+	readWindowsFixtureJSON(t, filepath.Join(coreDir, "hung"), &hung)
+	screenshot := false
+	for _, request := range []psRequest{
+		{Tool: "get_app_state", App: strconv.Itoa(core.Process.Pid), IncludeScreenshot: &screenshot},
+		{Tool: "press_key", App: strconv.Itoa(core.Process.Pid), ExpectedPID: core.Process.Pid, WindowHandle: hosted.WindowHandle, Key: "Return", KeyMethod: "global"},
+	} {
+		started := time.Now()
+		r, err := runPowerShell(request)
+		if err != nil || r.OK || !strings.Contains(r.Error, "not responding") {
+			t.Fatalf("hung content %s: %#v, %v", request.Tool, r, err)
+		}
+		if time.Since(started) > 12*time.Second {
+			t.Fatal("hung hosted content did not fail promptly")
+		}
+	}
+	if err := os.WriteFile(filepath.Join(coreDir, "resume"), []byte("1"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	readWindowsFixtureJSON(t, filepath.Join(coreDir, "resumed"), &hung)
+	if observeWindowFixture(t, strconv.Itoa(core.Process.Pid)).WindowHandle != hostState.First {
+		t.Fatal("hosted content did not recover")
+	}
+	readWindowsFixtureJSON(t, filepath.Join(coreDir, "state.json"), &coreState)
+	if coreState.Keys != 0 {
+		t.Fatal("input was queued while hosted content was hung")
+	}
 	t.Log("Real EnumWindows/child HWND mapping passed; fixture reproduces hosted topology, not a packaged UWP application.")
 }
