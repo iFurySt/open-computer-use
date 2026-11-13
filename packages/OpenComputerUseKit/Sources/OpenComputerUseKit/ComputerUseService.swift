@@ -562,6 +562,16 @@ func performClickActionSequence(action: String, repeatCount: Int,
     return true
 }
 
+/// The refusal for an element-index press on a control that says it is disabled, or nil to go ahead. AppKit answers
+/// AXPress on a disabled NSButton with success and runs nothing, so without this the click reads as delivered. A
+/// menu item is let through: a closed menu reports its items as they were when it last opened, and the app decides.
+func disabledControlRefusal(enabled: Bool?, role: String?, elementIndex: String) -> String? {
+    guard enabled == false, role != kAXMenuItemRole as String, role != kAXMenuBarItemRole as String else {
+        return nil
+    }
+    return "element \(elementIndex) is disabled, so nothing was sent. Wait for it to be enabled, or act on another element."
+}
+
 func canUseActivationOnlyClickFallback(role: String?) -> Bool {
     guard let role else {
         return false
@@ -787,6 +797,7 @@ public final class ComputerUseService {
 
         if let elementIndex {
             let record = try lookupElement(snapshot: snapshot, index: elementIndex)
+            try refuseDisabledControl(record, elementIndex: elementIndex)
             guard let windowPoint = clickPoint(for: record, snapshot: snapshot) else {
                 throw ComputerUseError.stateUnavailable("element \(elementIndex) has no clickable frame")
             }
@@ -936,6 +947,7 @@ public final class ComputerUseService {
         guard let element = record.element else {
             throw ComputerUseError.stateUnavailable("element \(elementIndex) has no backing accessibility object")
         }
+        try refuseDisabledControl(record, elementIndex: elementIndex)
 
         try requireUsableComputerUseSession()
         let result = AXUIElementPerformAction(element, rawAction as CFString)
@@ -1409,6 +1421,16 @@ public final class ComputerUseService {
         let now = try ElementIdentity.read(element)
         try ElementIdentity.validate(index: index, recorded: recorded, now: now)
         return record
+    }
+
+    /// Reads AXEnabled now, not from the snapshot: the control may have changed since the read.
+    private func refuseDisabledControl(_ record: ElementRecord, elementIndex: String) throws {
+        guard let element = record.element else { return }
+        var enabled: CFTypeRef?
+        _ = AXUIElementCopyAttributeValue(element, kAXEnabledAttribute as CFString, &enabled)
+        if let refusal = disabledControlRefusal(enabled: enabled as? Bool, role: record.role, elementIndex: elementIndex) {
+            throw ComputerUseError.message(refusal)
+        }
     }
 
     func matchingAction(requested: String, record: ElementRecord) -> String? {
