@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($RuntimePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-$names = @("Resolve-App", "Get-AppWindows", "List-Apps", "Test-EnvFlagEnabled")
+$names = @("Resolve-App", "Resolve-ModalWindow", "Get-AppWindows", "List-Apps", "Test-EnvFlagEnabled")
 $functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $names }, $true)
 if ($functions.Count -ne $names.Count) { throw "Production resolution functions missing: $($names | Where-Object { $_ -notin @($functions | ForEach-Object Name) })" }
 foreach ($function in $functions) { Invoke-Expression $function.Extent.Text }
@@ -13,7 +13,7 @@ Add-Type -TypeDefinition @"
 using System;
 using System.Collections.Generic;
 public static class OCUWin32 {
- public class TopWindow { public IntPtr Handle, Owner; public uint ProcessId; public bool Enabled; public string Title; }
+ public class TopWindow { public IntPtr Handle, Owner; public uint ProcessId; public bool Enabled, Hosted; public string Title; }
  public static List<TopWindow> windows = new List<TopWindow>();
  public static List<TopWindow> TopLevelWindows() { return windows; }
  public static void Add(long handle, uint processId, string title, long owner, bool enabled) {
@@ -58,3 +58,15 @@ $apps = (List-Apps) -split "`n"
 Assert ($apps.Count -eq 4 -and $apps[0] -match "^CalculatorApp .*pid=300, window=Calculator" -and $apps[3] -match "^SystemSettings .*pid=700") "list_apps did not list UWP apps by their own process: $($apps -join ' | ')"
 Assert ((Resolve "tips").Id -eq 500) "A window title was not matched"
 Write-Output "App resolution: UWP apps by name and title, modal dialog roots, process name before other apps' titles, enabled main window, not found and list_apps passed."
+
+# A dead PID must never select another app whose title happens to be that number.
+[OCUWin32]::Add(800, 500, "999999", 0, $true)
+Assert ((Resolve "999999") -match 'appNotFound') "Missing PID fell back to another window title"
+Assert ((Resolve "*") -match 'appNotFound') "Title query was interpreted as a wildcard"
+Assert ((Resolve " ") -match 'must not be empty') "Empty query selected an arbitrary app"
+# Main -> first dialog -> nested dialog, where both owners are disabled.
+@([OCUWin32]::windows | Where-Object { $_.Handle -eq [IntPtr]200 })[0].Enabled = $false
+@([OCUWin32]::windows | Where-Object { $_.Handle -eq [IntPtr]201 })[0].Enabled = $false
+[OCUWin32]::Add(202, 400, "Nested", 201, $true)
+Assert ((Resolve "notepad").MainWindowHandle -eq [IntPtr]202) "Nested modal root was not followed"
+Write-Output "Strict PID, literal title, empty query and nested modal regressions passed."

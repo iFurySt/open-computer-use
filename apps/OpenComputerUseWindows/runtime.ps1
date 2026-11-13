@@ -57,7 +57,7 @@ public static class OCUWin32 {
     public class TopWindow {
         public IntPtr Handle, Owner;
         public uint ProcessId;
-        public bool Enabled;
+        public bool Enabled, Hosted;
         public string Title;
     }
 
@@ -81,8 +81,16 @@ public static class OCUWin32 {
             window.Handle = hwnd;
             window.Owner = GetWindow(hwnd, 4 /* GW_OWNER */);
             window.Enabled = IsWindowEnabled(hwnd);
-            IntPtr core = FindWindowEx(hwnd, IntPtr.Zero, "Windows.UI.Core.CoreWindow", null);
-            GetWindowThreadProcessId(core != IntPtr.Zero ? core : hwnd, out window.ProcessId);
+            GetWindowThreadProcessId(hwnd, out window.ProcessId);
+            // Do not reinterpret an ordinary window just because it has a child with this class name.
+            if (ClassName(hwnd) == "ApplicationFrameWindow") {
+                IntPtr core = FindWindowEx(hwnd, IntPtr.Zero, "Windows.UI.Core.CoreWindow", null);
+                uint corePid;
+                if (core != IntPtr.Zero && GetWindowThreadProcessId(core, out corePid) != 0 && corePid != 0) {
+                    window.Hosted = corePid != window.ProcessId;
+                    window.ProcessId = corePid;
+                }
+            }
             System.Text.StringBuilder title = new System.Text.StringBuilder(512);
             GetWindowText(hwnd, title, title.Capacity);
             window.Title = title.ToString();
@@ -768,6 +776,7 @@ function Send-Key([IntPtr]$hwnd, [string]$key, [string]$method = "auto") {
 
 function Resolve-App([string]$query) {
     $normalized = $query.Trim()
+    if ([string]::IsNullOrWhiteSpace($normalized)) { throw "app query must not be empty" }
     $processQuery = $normalized
     if ($processQuery.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)) {
         $processQuery = $processQuery.Substring(0, $processQuery.Length - 4)
@@ -776,30 +785,21 @@ function Resolve-App([string]$query) {
     $pidValue = 0
     $isPid = [int]::TryParse($normalized, [ref]$pidValue)
     $match = $null
-    # A pid, then a process name, then a window title, each tried over every app window in z-order.
-    foreach ($test in @(
-        { $isPid -and $_.Id -eq $pidValue },
-        { $_.ProcessName -ieq $processQuery -or "$($_.ProcessName).exe" -ieq $normalized },
-        { $_.MainWindowTitle -ieq $normalized },
-        { $_.MainWindowTitle -ilike "*$normalized*" })) {
-        $match = $windows | Where-Object $test | Select-Object -First 1
-        if ($null -ne $match) {
-            break
+    # A numeric PID is an identity, never a fallback title or executable name.
+    if ($isPid) {
+        $match = $windows | Where-Object { $_.Id -eq $pidValue } | Select-Object -First 1
+        if ($null -eq $match) { throw "appNotFound(`"$query`")" }
+    } else {
+        foreach ($test in @(
+            { $_.ProcessName -ieq $processQuery },
+            { $_.MainWindowTitle -ieq $normalized },
+            { ([string]$_.MainWindowTitle).IndexOf($normalized, [StringComparison]::OrdinalIgnoreCase) -ge 0 })) {
+            $match = $windows | Where-Object $test | Select-Object -First 1
+            if ($null -ne $match) { break }
         }
     }
     if ($null -ne $match) {
-        # A modal dialog disables the window it belongs to; the dialog is what can take input, so it is the root.
-        $dialog = $null
-        if (-not $match.Enabled) {
-            $dialog = [OCUWin32]::TopLevelWindows() | Where-Object {
-                $_.Owner -eq $match.MainWindowHandle -and $_.ProcessId -eq $match.Id -and $_.Enabled
-            } | Select-Object -First 1
-        }
-        if ($null -ne $dialog) {
-            $match.MainWindowHandle = $dialog.Handle
-            $match.MainWindowTitle = $dialog.Title
-        }
-        return $match
+        return (Resolve-ModalWindow $match)
     }
 
     if (Test-EnvFlagEnabled "OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH") {
@@ -809,7 +809,7 @@ function Resolve-App([string]$query) {
                 Start-Sleep -Milliseconds 250
                 $candidate = Get-AppWindows | Where-Object { $_.Id -eq $started.Id } | Select-Object -First 1
                 if ($null -ne $candidate) {
-                    return $candidate
+                    return (Resolve-ModalWindow $candidate)
                 }
             }
         } catch {
@@ -817,6 +817,26 @@ function Resolve-App([string]$query) {
     }
 
     throw "appNotFound(`"$query`")"
+}
+
+# Follow disabled owners through nested modal dialogs, bounded even if providers race or cycle.
+function Resolve-ModalWindow($match) {
+    $seen = @{}
+    $windows = @([OCUWin32]::TopLevelWindows())
+    for ($depth = 0; -not $match.Enabled; $depth++) {
+        $key = [long]$match.MainWindowHandle
+        if ($depth -ge 32 -or $seen.ContainsKey($key)) { throw "Modal window chain changed; observe the app again." }
+        $seen[$key] = $true
+        $dialog = $windows | Where-Object {
+            $_.Owner -eq $match.MainWindowHandle -and $_.ProcessId -eq $match.Id
+        } | Select-Object -First 1
+        if ($null -eq $dialog) { break }
+        $match.MainWindowHandle = $dialog.Handle
+        $match.MainWindowTitle = $dialog.Title
+        $match.Enabled = $dialog.Enabled
+        $match.Hosted = [bool]$dialog.Hosted
+    }
+    return $match
 }
 
 # The apps' windows as (process, window) records, topmost first: every visible top-level window without an owner.
@@ -837,6 +857,7 @@ function Get-AppWindows {
             MainWindowHandle = $window.Handle
             MainWindowTitle = $window.Title
             Enabled = $window.Enabled
+            Hosted = [bool]$window.Hosted
         }
     }
 }
@@ -1589,7 +1610,8 @@ function Invoke-TypeText($process, [string]$text) {
     # The edit control with keyboard focus is the one typing would reach. UI Automation's focused element only
     # names it while the app is in the foreground; the window's own thread can name it otherwise.
     $hwnd = [IntPtr]$process.MainWindowHandle
-    $focus = Get-PostedKeyTarget $hwnd
+    $focus = $hwnd
+    if (-not $process.Hosted) { $focus = Get-PostedKeyTarget $hwnd }
     if ($focus -ne $hwnd -and (Test-EditWindowClass ([OCUWin32]::ClassName($focus)))) {
         if (([OCUWin32]::GetWindowLong($focus, $GWL_STYLE) -band $ES_READONLY) -ne 0) {
             throw "The focused text field is read-only."
@@ -1659,6 +1681,7 @@ try {
                         throw "click_method 'accessibility' could not click the requested element"
                     }
                 } elseif ($clickMethod -eq "app_post") {
+                    if ($process.Hosted) { throw "Posted input to a hosted app frame is unsupported; use accessibility or explicitly enabled global input." }
                     Assert-UsableWindowBounds $windowBounds
                     if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
                         $point = Get-ScreenPoint $operation.element.frame $windowBounds
@@ -1707,6 +1730,7 @@ try {
                             Send-GlobalMouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                         } else {
                             if ($null -ne $operation.element) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
+                            if ($process.Hosted) { throw "Posted input to a hosted app frame is unsupported; use accessibility or explicitly enabled global input." }
                             Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                         }
                     }
@@ -1727,6 +1751,7 @@ try {
                     Assert-UsableWindowBounds $windowBounds
                     $point = Get-ScreenPoint $operation.element.frame $windowBounds
                     if (Test-GlobalPointerFallbackEnabled) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
+                    if ($process.Hosted -and -not (Test-GlobalPointerFallbackEnabled)) { throw "Posted scroll to a hosted app frame is unsupported; use a ScrollPattern element or explicitly enabled global input." }
                     Send-Scroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages) $windowBounds
                 }
             }
@@ -1736,10 +1761,12 @@ try {
             }
             "type_text" {
                 if (-not (Invoke-TypeText $process $operation.text)) {
+                    if ($process.Hosted) { throw "Posted text to a hosted app frame is unsupported; use set_value on a supported text field." }
                     Send-Text (Get-PostedKeyTarget $hwnd) $operation.text
                 }
             }
             "press_key" {
+                if ($process.Hosted -and $operation.key_method -ne "global") { throw "Posted keys to a hosted app frame are unsupported; use key_method=global with global input explicitly enabled." }
                 Send-Key $hwnd $operation.key $operation.key_method
             }
             "set_value" {
