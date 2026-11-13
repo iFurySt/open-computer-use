@@ -37,6 +37,7 @@ UIPI 会丢弃从低完整性级别发往高级别窗口的消息和 SendInput�
 - 同步 main，完整性检查先于挂起探测，保留两道独立检查；更新两个使用生产 dispatch 的旧测试。
 - 目标或 runtime 的完整性级别读不到时明确拒绝，不能把未知当作同权限；只读观察不受此规则影响。
 - 修正文档：当前 main 已检查 PostMessage 返回值；SendInput 的错误信息不能识别 UIPI 原因，不应笼统宣称总是返回成功。
-- 新增 Windows 原生测试：自有 WinForms 窗口记录实际按键，同权限输入为正对照；仅降低测试 PowerShell 子进程的 token 完整性级别，直接运行生产 dispatch，覆盖 auto/global 按键及文字输入。断言真实级别为 low → higher，并核对接收计数不变。不修改用户账号、父进程、UAC 或文件系统权限。
+- 新增 Windows 原生测试：自有 WinForms 窗口记录实际按键，同权限输入为正对照；仅降低测试 PowerShell 子进程的 token 完整性级别，直接运行生产 dispatch，覆盖 auto/global 按键及文字输入。断言真实级别为 medium → high，并核对接收计数不变。不修改用户账号、父进程、UAC 或文件系统权限。
 - API 依据：[Microsoft Mandatory Integrity Control](https://learn.microsoft.com/en-us/windows/win32/secauthz/mandatory-integrity-control) 和 [TOKEN_MANDATORY_LABEL](https://learn.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-token_mandatory_label)。
 - 本地 PowerShell 完整性、挂起、动作观察测试通过；Windows 交叉编译通过。真实跨权限结果以该提交的 Windows CI 为准；不把普通同权限 smoke 计作跨权限证据。
+- 首轮真实测试调整：分别统计 WM_KEYDOWN 和 WM_CHAR，不将 Return 的字符消息计作额外按键。低完整性进程无法通过旧 Get-Process 路径枚举桌面窗口，测试改为更贴近问题的 medium → high；非提升权限的开发机明确跳过此用例，Windows CI 使用提升权限 runner。

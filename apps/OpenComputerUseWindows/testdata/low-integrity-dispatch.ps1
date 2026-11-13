@@ -28,13 +28,16 @@ public static class LowIntegrity {
   IntPtr token=IntPtr.Zero,sid=IntPtr.Zero;
   try {
    if(!OpenProcessToken(GetCurrentProcess(),0xA8,out token))throw new Win32Exception();
-   if(!ConvertStringSidToSid("S-1-16-4096",out sid))throw new Win32Exception();
+   if(!ConvertStringSidToSid("S-1-16-8192",out sid))throw new Win32Exception();
    Label label=new Label();label.Sid=sid;label.Attributes=0x20;
    if(!SetTokenInformation(token,25,ref label,Marshal.SizeOf(typeof(Label))+GetLengthSid(sid)))throw new Win32Exception();
   } finally {if(sid!=IntPtr.Zero)LocalFree(sid);if(token!=IntPtr.Zero)CloseHandle(token);}
  }
 }
 '@
+$targetBefore=[OCUWin32]::IntegrityLevel([uint32]$operation.expected_pid)
+if($targetBefore -lt 0){throw "Target integrity unavailable"}
+if($targetBefore -le 0x2000){ @{skip=$true;target=$targetBefore}|ConvertTo-Json -Compress;return }
 [LowIntegrity]::Lower()
 $own=[OCUWin32]::IntegrityLevel([uint32]$PID)
 $target=[OCUWin32]::IntegrityLevel([uint32]$operation.expected_pid)

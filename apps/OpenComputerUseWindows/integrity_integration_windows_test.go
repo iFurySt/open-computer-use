@@ -72,12 +72,16 @@ func TestRealCrossIntegrityInputIsRefused(t *testing.T) {
 		}
 		var result struct {
 			Own, Target int
+			Skip        bool
 			Response    psResponse
 		}
 		if err := json.Unmarshal(output, &result); err != nil {
 			t.Fatalf("low child JSON: %v\n%s", err, output)
 		}
-		if result.Own != 0x1000 || result.Target <= result.Own {
+		if result.Skip {
+			t.Skip("Cross-integrity desktop regression requires an elevated test runner")
+		}
+		if result.Own != 0x2000 || result.Target <= result.Own {
 			t.Fatalf("not a cross-integrity test: %+v", result)
 		}
 		if result.Response.OK || !strings.Contains(result.Response.Error, "runs elevated") {
@@ -88,5 +92,5 @@ func TestRealCrossIntegrityInputIsRefused(t *testing.T) {
 			t.Fatalf("%s delivered input to the protected target: %d", mode, state.Keys)
 		}
 	}
-	t.Log("Real low-integrity runtime refused auto/global/text input to higher-integrity fixture; equal-level key delivered once.")
+	t.Log("Real medium-integrity runtime refused auto/global/text input to higher-integrity fixture; equal-level key delivered once.")
 }
