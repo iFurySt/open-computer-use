@@ -1134,6 +1134,10 @@ public final class ComputerUseService {
 
         do {
             try requireUsableComputerUseSession()
+            if try setNumericValue(value, on: element, record: record) {
+                settleVisualCursor(at: cursorTarget)
+                return try actionResult(for: query)
+            }
             let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString)
             guard result == .success else {
                 throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
@@ -1156,6 +1160,232 @@ public final class ComputerUseService {
 
         settleVisualCursor(at: cursorTarget)
         return try actionResult(for: query)
+    }
+
+    /// 滑块 / 滚动条 / 步进器的 AXValue 是数值：写 CFString 得到 -25201；SwiftUI 的滑块（系统设置的音量）
+    /// 还会无视直接写入，只认 AXIncrement / AXDecrement。先按数值写并轮询核实，不行就按步进逼近到最接近的可达值，
+    /// 最终值由 action 结果里的状态回读给模型。AXValue 是布尔的控件（复选框）按布尔写；其他类型返回 false，
+    /// 走原来的字符串路径。
+    private func setNumericValue(_ requested: String, on element: AXUIElement, record: ElementRecord) throws -> Bool {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &raw) == .success,
+              let raw else { return false }
+        if CFGetTypeID(raw) == CFBooleanGetTypeID() {
+            try setBooleanValue(requested, on: element, record: record)
+            return true
+        }
+        guard CFGetTypeID(raw) == CFNumberGetTypeID(),
+              let current = Self.readNumericAXValue(of: element) else { return false }
+        guard let target = Self.parseNumericValue(requested, current: current.value) else {
+            throw ComputerUseError.invalidArguments(
+                "element \(record.index) holds a number (\(current.value)); value must be numeric, got '\(requested)'"
+            )
+        }
+        // 整数型控件：目标超出 Int 范围时 `Int(_:)` 会直接 trap，先按参数错误拒绝。
+        guard let integerTarget = Int(exactly: target.rounded()) ?? (current.isFloat ? 0 : nil) else {
+            throw ComputerUseError.invalidArguments(
+                "element \(record.index) holds an integer; value \(requested) is out of range"
+            )
+        }
+        let number: NSNumber = current.isFloat ? NSNumber(value: target) : NSNumber(value: integerTarget)
+        let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, number)
+        let tolerance = max(1e-6, abs(target) * 1e-3)
+        let readValue: () -> Double? = { Self.readNumericAXValue(of: element)?.value }
+        let stepper = NumericStepper(element: element, record: record, target: target, tolerance: tolerance,
+                                     read: readValue)
+        // 直接写入的生效也可能晚于返回，轮询到落在目标附近为止；写入被无视的控件等满 400 ms 后转步进。
+        let settled = result == .success
+            ? Self.pollNumericValue(read: readValue, until: { abs($0 - target) <= tolerance })
+            : nil
+        if let settled, abs(settled - target) <= tolerance {
+            // 直接写 AXValue 有些控件只改显示、不触发动作（Music 的音量滑块：AX 读回 0.5，应用仍是 100%）。
+            // 有步进动作就来回各走一步，让应用按新值真正处理一次；净值不变，最后再核对一遍。
+            if stepper.canIncrement, stepper.canDecrement { try stepper.nudge() }
+            return true
+        }
+        guard stepper.canIncrement || stepper.canDecrement, let start = readValue() else {
+            if result == .success {
+                throw ComputerUseError.message(
+                    "set_value could not verify the requested value \(requested) for element \(record.index); "
+                        + "the control still reports \(current.value)"
+                )
+            }
+            throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
+        }
+        _ = try stepper.step(from: start, directWriteResult: result)
+        return true
+    }
+
+    /// 直接读 AX，不用快照里的缓存值；AXValue 不是 CFNumber 时返回 nil。
+    private static func readNumericAXValue(of element: AXUIElement) -> (value: Double, isFloat: Bool)? {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &raw) == .success, let raw,
+              CFGetTypeID(raw) == CFNumberGetTypeID() else { return nil }
+        let number = unsafeDowncast(raw, to: CFNumber.self)
+        return ((number as NSNumber).doubleValue, CFNumberIsFloatType(number))
+    }
+
+    /// 复选框 / 开关的 AXValue 是 CFBoolean：写字符串得到 -25201，写 kCFBooleanTrue / kCFBooleanFalse 才行。
+    private func setBooleanValue(_ requested: String, on element: AXUIElement, record: ElementRecord) throws {
+        guard let target = Self.parseBooleanValue(requested) else {
+            throw ComputerUseError.invalidArguments(
+                "element \(record.index) holds a boolean; value must be true, false, 1 or 0, got '\(requested)'"
+            )
+        }
+        let value: CFBoolean = target ? kCFBooleanTrue : kCFBooleanFalse
+        let result = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value)
+        guard result == .success else {
+            throw ComputerUseError.message("AXUIElementSetAttributeValue failed with \(result.rawValue)")
+        }
+        try verifySetValueReadBack(requested: target ? "true" : "false", elementIndex: String(record.index), read: {
+            var actual: CFTypeRef?
+            let status = AXUIElementCopyAttributeValue(element, kAXValueAttribute as CFString, &actual)
+            return status == .success ? actual : nil
+        }, validate: { try requireUsableComputerUseSession() })
+    }
+
+    /// 用 AXIncrement / AXDecrement 把数值控件逼近目标。每一步都轮询读回，直到值变化为止；
+    /// 跨过目标且离得更远时退回一步，停在最接近的可达值（这算成功，最终值由状态回读给模型）；
+    /// 步进不再改变值或用满 1024 步仍在容差外时抛错，不让 set_value 在错误的值上报成功。
+    private struct NumericStepper {
+        let element: AXUIElement
+        let record: ElementRecord
+        let target: Double
+        let tolerance: Double
+        let canIncrement: Bool
+        let canDecrement: Bool
+        let read: () -> Double?
+
+        private static let increment = kAXIncrementAction as String
+        private static let decrement = kAXDecrementAction as String
+        private static let stepCap = 1024
+
+        init(
+            element: AXUIElement, record: ElementRecord, target: Double, tolerance: Double,
+            read: @escaping () -> Double?
+        ) {
+            func supports(_ action: String) -> Bool {
+                record.rawActions.contains { $0.caseInsensitiveCompare(action) == .orderedSame }
+            }
+            self.element = element
+            self.record = record
+            self.target = target
+            self.tolerance = tolerance
+            canIncrement = supports(Self.increment)
+            canDecrement = supports(Self.decrement)
+            self.read = read
+        }
+
+        /// 执行一步并等值变化；返回变化后的值，动作没跑或值没动时返回 nil。
+        /// 不能按返回码判断动作有没有生效：AppKit 对确实执行了的动作也会回 -25205（cannotComplete），
+        /// AXScrollDownByPage 翻了一页仍回 -25205。只有 actionUnsupported / illegalArgument / notImplemented
+        /// 证明动作没跑，其余一律以读回的值为准。
+        private func perform(_ action: String, from value: Double) -> Double? {
+            let result = AXUIElementPerformAction(element, action as CFString)
+            guard !ComputerUseService.axActionDidNotRun(result) else { return nil }
+            let next = ComputerUseService.pollNumericValue(read: read, until: { $0 != value })
+            guard let next, next != value else { return nil }
+            return next
+        }
+
+        /// 从 start 逐步逼近 target，返回停下时的值。
+        func step(from start: Double, directWriteResult: AXError) throws -> Double {
+            var value = start
+            var steps = 0
+            while abs(value - target) > tolerance {
+                let forward = value < target
+                let action = forward ? Self.increment : Self.decrement
+                guard steps < Self.stepCap, forward ? canIncrement : canDecrement else {
+                    throw stoppedShort(at: value, after: steps, directWriteResult: directWriteResult)
+                }
+                guard let next = perform(action, from: value) else {
+                    throw stoppedShort(at: value, after: steps, directWriteResult: directWriteResult)
+                }
+                steps += 1
+                if abs(next - target) > abs(value - target) {
+                    // 这一步跨过了目标且离得更远：退回上一步，停在更近的一侧。退回同样要等值变化。
+                    return perform(forward ? Self.decrement : Self.increment, from: next) ?? next
+                }
+                value = next
+            }
+            return value
+        }
+
+        /// 先 Increment 再 Decrement；顶到上限时 Increment 不动，就改成先 Decrement 再 Increment。
+        /// 来回之后不在目标附近时，再按步进拉回去。
+        func nudge() throws {
+            guard let before = read() else { return }
+            var value = before
+            if let raised = perform(Self.increment, from: before) {
+                value = perform(Self.decrement, from: raised) ?? raised
+            } else if let lowered = perform(Self.decrement, from: before) {
+                value = perform(Self.increment, from: lowered) ?? lowered
+            }
+            guard abs(value - target) > tolerance else { return }
+            _ = try step(from: value, directWriteResult: .success)
+        }
+
+        private func stoppedShort(at value: Double, after steps: Int, directWriteResult: AXError) -> ComputerUseError {
+            guard steps > 0 else {
+                let write = directWriteResult == .success ? "was ignored" : "was rejected"
+                return .message(
+                    "set_value could not change element \(record.index): direct write \(write) "
+                        + "and Increment/Decrement had no effect (value \(value))"
+                )
+            }
+            return .message(
+                "set_value stepped \(steps) times and stopped at \(value), short of \(target) "
+                    + "for element \(record.index)"
+            )
+        }
+    }
+
+    /// 只有这三个返回码证明动作没有执行；其余（包括 -25205 cannotComplete）都可能是执行了的动作，
+    /// 要靠读回的值判断。
+    static func axActionDidNotRun(_ result: AXError) -> Bool {
+        switch result {
+        case .actionUnsupported, .illegalArgument, .notImplemented: true
+        default: false
+        }
+    }
+
+    /// 每 5 ms 读一次，直到 predicate 成立或 timeout 用尽；返回最后读到的值，读不到时返回 nil。
+    /// 动作的效果可能晚于返回出现（fixture 滚动条在 AXScrollDownByPage 返回后 0.2–14.3 ms 才动），
+    /// 读一次就下结论会把迟到的一步当成没动；响应快的控件第一次读就命中，不多等。
+    static func pollNumericValue(
+        read: () -> Double?,
+        until predicate: (Double) -> Bool,
+        timeout: TimeInterval = 0.4,
+        now: () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
+        sleep: (TimeInterval) -> Void = { Thread.sleep(forTimeInterval: $0) }
+    ) -> Double? {
+        let deadline = now() + timeout
+        while true {
+            guard let value = read() else { return nil }
+            if predicate(value) { return value }
+            let remaining = deadline - now()
+            guard remaining > 0 else { return value }
+            sleep(min(0.005, remaining))
+        }
+    }
+
+    /// "true" / "false" / "1" / "0"，忽略大小写和首尾空白；其他文本返回 nil。
+    static func parseBooleanValue(_ requested: String) -> Bool? {
+        switch requested.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "true", "1": true
+        case "false", "0": false
+        default: nil
+        }
+    }
+
+    /// "0.25"、"25%"（当前值在 0…1 区间时按比例）、"3" 都接受。
+    static func parseNumericValue(_ requested: String, current: Double) -> Double? {
+        var text = requested.trimmingCharacters(in: .whitespacesAndNewlines)
+        var percent = false
+        if text.hasSuffix("%") { percent = true; text.removeLast(); text = text.trimmingCharacters(in: .whitespaces) }
+        guard let number = Double(text), number.isFinite else { return nil }
+        if percent { return (0 ... 1).contains(abs(current)) ? number / 100 : number }
+        return number
     }
 
     public func selectText(
