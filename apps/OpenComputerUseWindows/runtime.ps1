@@ -9,6 +9,7 @@ $AccessibilityTreeMaxNodeCount = 1200
 $AccessibilityTreeMaxDepth = 64
 $MinimumScreenshotDimension = 64
 $MinimumScreenshotArea = 20000
+$HangProbeTimeoutMs = 1000
 
 # Set output encoding to UTF-8 to properly handle non-ASCII characters
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -147,6 +148,30 @@ public static class OCUWin32 {
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr SendMessage(IntPtr hWnd, UInt32 msg, IntPtr wParam, string lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    private static extern bool IsHungAppWindow(IntPtr hWnd);
+    [DllImport("kernel32.dll", EntryPoint = "SetLastError")]
+    private static extern void ClearLastError(uint error);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, UInt32 msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+    // A window whose thread has stopped pumping messages: Windows already flags it hung, or it does not answer
+    // WM_NULL within timeoutMs. A handle that is no longer a window is not called hung.
+    public static bool IsHung(IntPtr hWnd, uint timeoutMs) {
+        IntPtr result;
+        if (!IsWindow(hWnd)) return false;
+        if (IsHungAppWindow(hWnd)) return true;
+        ClearLastError(0);
+        if (SendMessageTimeout(hWnd, 0 /* WM_NULL */, IntPtr.Zero, IntPtr.Zero,
+            0x0022 /* SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT */, timeoutMs, out result) != IntPtr.Zero) return false;
+        int error = Marshal.GetLastWin32Error();
+        if (error == 0 || error == 1460 /* ERROR_TIMEOUT */) return true;
+        // A rejected probe (e.g. UIPI) is not evidence that the app hung.
+        throw new System.ComponentModel.Win32Exception(error, "Window response probe failed");
+    }
 
     [DllImport("user32.dll")]
     public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
@@ -745,8 +770,17 @@ function Resolve-App([string]$query) {
     throw "appNotFound(`"$query`")"
 }
 
+# A window whose thread has stopped pumping messages holds every UI Automation call and SendMessage made on it, so
+# each call would run into the bridge timeout. Two unanswered probes tell a hung window from one busy for a moment.
+function Assert-WindowResponds([IntPtr]$hwnd, [string]$name) {
+    if ([OCUWin32]::IsHung($hwnd, $HangProbeTimeoutMs) -and [OCUWin32]::IsHung($hwnd, $HangProbeTimeoutMs)) {
+        throw "$name is not responding: its window did not answer within $(2 * $HangProbeTimeoutMs / 1000) s. Try again once it responds."
+    }
+}
+
 function Get-MainElement($process) {
     if ($process.MainWindowHandle -ne 0) {
+        Assert-WindowResponds ([IntPtr]$process.MainWindowHandle) $process.ProcessName
         return [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$process.MainWindowHandle)
     }
     $condition = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ProcessIdProperty), $process.Id
@@ -1532,6 +1566,8 @@ try {
             ($operation.windowHandle -gt 0 -and [long]$hwnd -ne $operation.windowHandle)) {
             throw "Target process/window changed; run get_app_state before acting."
         }
+        # Before anything is sent: input posted to a hung window waits in its queue and lands whenever it recovers.
+        Assert-WindowResponds $hwnd $process.ProcessName
         $windowBounds = $operation.windowBounds
         $element = Find-Element $process $operation.element
 
