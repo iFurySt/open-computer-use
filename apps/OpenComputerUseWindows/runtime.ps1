@@ -1662,6 +1662,7 @@ try {
             ($operation.windowHandle -gt 0 -and [long]$hwnd -ne $operation.windowHandle)) {
             throw "Target process/window changed; run get_app_state before acting."
         }
+        if ($process.Enabled -eq $false) { throw "Target window is disabled and no active modal window was found; observe the app again before input." }
         # Before anything is sent: input posted to a hung window waits in its queue and lands whenever it recovers.
         Assert-WindowResponds $hwnd $process.ProcessName
         $windowBounds = $operation.windowBounds

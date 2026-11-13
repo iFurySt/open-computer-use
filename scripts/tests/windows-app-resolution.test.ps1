@@ -73,7 +73,8 @@ Write-Output "Strict PID, literal title, empty query and nested modal regression
 
 # Production dispatch must never post to the host frame when it is mapped to another app.
 $dispatch=@($ast.EndBlock.Statements|Where-Object{$_ -is [System.Management.Automation.Language.TryStatementAst] -and $_.Body.Extent.Text -match '\$operation\.tool'})
-function Resolve-App($query) { [pscustomobject]@{Id=300;ProcessName='hosted';MainWindowHandle=[IntPtr]90;Hosted=$true} }
+$script:windowEnabled=$true;$script:hosted=$true
+function Resolve-App($query) { [pscustomobject]@{Id=300;ProcessName='hosted';MainWindowHandle=[IntPtr]90;Hosted=$script:hosted;Enabled=$script:windowEnabled} }
 function Assert-InputAllowed($process) { }
 function Assert-WindowResponds($hwnd,$name) { }
 function Find-Element($process,$record) { $null }
@@ -87,3 +88,8 @@ foreach($tool in @('click','press_key','type_text')) {
  Assert (-not $response.ok -and $response.error -match 'hosted app frame') "Hosted $tool was not refused: $($response|ConvertTo-Json -Compress)"
 }
 Write-Output 'Hosted posted click/key/text refusal passed.'
+
+$script:windowEnabled=$false;$script:hosted=$false
+$operation=[pscustomobject]@{tool='click';app='fixture';click_method='accessibility'}
+$response=$null;Invoke-Expression $dispatch[0].Extent.Text
+Assert (-not $response.ok -and $response.error -match 'Target window is disabled') 'Disabled unresolved window allowed input'

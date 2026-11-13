@@ -41,3 +41,5 @@
 - 新发现的边界：跨进程宿主的 posted 按键原本会落到框架，不能保证到达内容。现在明确拒绝 hosted posted 回退；UIA / 显式全局路径保持现有授权规则，type_text 不新增全局回退。
 - 新增真实 WinForms 多窗口 / 两层 ShowDialog 测试，以实际按钮计数验证内外层关闭与旧快照拒绝；新增两个原生进程创建真实 frame/core HWND，验证映射、普通窗口负对照与宿主按键拒绝。后者不是打包 UWP 应用，不能写成所有 UWP 已验证。
 - 本地 PowerShell 解析 / 分派回归与 Windows 交叉编译通过；完整 Windows 原生结果以该提交的 Windows CI 为准。
+- 找不到可操作模态窗口且根窗口仍禁用时，观察可继续，动作明确拒绝，不尝试在禁用 owner 上执行 UIA。
+- 真实测试脚手架按 Win32 IsWindowEnabled 读取 ShowDialog 禁用状态（不读 WinForms 缓存属性），原生测试窗口统一 Unicode 注册 / 创建 / DefWindowProc，避免脚手架自身截断标题。
