@@ -22,3 +22,10 @@
 ### 📁 Files Modified
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
+
+### Maintainer review — 2026-11-13
+
+- 同步最新 main，保留菜单项例外与未知 AXEnabled 的兼容行为；身份检查仍在读取实时启用状态之前完成。
+- 新增 `scripts/tests/macos-disabled-control-smoke.mjs` 和独立 AppKit fixture，覆盖禁用按钮 / 滑块、观察后重新启用，以及观察后禁用。支持 `--baseline` 对照。
+- 本机尝试真实 MCP 测试时，基线在首次观察即被已有 Locked Use 服务拒绝（`peerUnavailable(57)`），尚未到达目标动作。这不构成真实 GUI 回归通过的证据；没有修改本机服务或权限来绕过。
+- 修复版本也在首次观察遇到同一服务连接问题（connection reset）；Swift 全套 482 项、跳过 10 项、零失败，基础 CI 通过。新 GUI 脚本已提交供正常桌面环境复测，不能视作本机已通过。
