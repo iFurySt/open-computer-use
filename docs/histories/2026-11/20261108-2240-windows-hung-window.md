@@ -31,3 +31,9 @@ UI 线程不处理消息的窗口会让对它的 UI Automation 调用和 `SendMe
 - 同一组替身下，origin/main 对挂起窗口直接 `FromHandle`（UIA 读取 1 次），`press_key` 投递按键并返回 `ok: true`；本分支两次探测后拒绝，UIA 读取 0 次，按键 0 次。新测试在 origin/main 上失败，本分支通过。
 - 现有决策测试在 pwsh 7.5 下通过；内联 C# 按 C# 5 编译通过；`go vet`、`go test -race`、`GOOS=windows go vet`、windows amd64 / arm64 构建通过。
 - 真实挂起窗口下的耗时（UI Automation 等多久、探测是否在约 2 s 内返回）只能在 Windows 桌面上确认。
+
+## Maintainer review — 2026-11-13
+
+Distinguish probe timeouts from Win32 failures such as access denied; a failed probe still refuses the operation, but is not mislabeled as a hung app. Request `SMTO_ERRORONEXIT` and clear/read the native last error explicitly.
+
+Added a Windows-only Go integration test. An owned WinForms fixture stops its real UI message pump until a file signal resumes it. Production `runPowerShell` must refuse observation and input well before its 30-second timeout; after recovery the fixture must have received zero queued keys, then accept exactly one positive-control key. Tests never send input to user applications. The existing Windows workflow runs it with `go test ./...`; cross-compilation on macOS is only a build check. Results are recorded on PR #174.

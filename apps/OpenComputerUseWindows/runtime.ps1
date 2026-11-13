@@ -153,15 +153,24 @@ public static class OCUWin32 {
     private static extern bool IsWindow(IntPtr hWnd);
     [DllImport("user32.dll")]
     private static extern bool IsHungAppWindow(IntPtr hWnd);
-    [DllImport("user32.dll")]
+    [DllImport("kernel32.dll", EntryPoint = "SetLastError")]
+    private static extern void ClearLastError(uint error);
+    [DllImport("user32.dll", SetLastError = true)]
     private static extern IntPtr SendMessageTimeout(IntPtr hWnd, UInt32 msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
 
     // A window whose thread has stopped pumping messages: Windows already flags it hung, or it does not answer
     // WM_NULL within timeoutMs. A handle that is no longer a window is not called hung.
     public static bool IsHung(IntPtr hWnd, uint timeoutMs) {
         IntPtr result;
-        return IsWindow(hWnd) && (IsHungAppWindow(hWnd) ||
-            SendMessageTimeout(hWnd, 0 /* WM_NULL */, IntPtr.Zero, IntPtr.Zero, 0x0002 /* SMTO_ABORTIFHUNG */, timeoutMs, out result) == IntPtr.Zero);
+        if (!IsWindow(hWnd)) return false;
+        if (IsHungAppWindow(hWnd)) return true;
+        ClearLastError(0);
+        if (SendMessageTimeout(hWnd, 0 /* WM_NULL */, IntPtr.Zero, IntPtr.Zero,
+            0x0022 /* SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT */, timeoutMs, out result) != IntPtr.Zero) return false;
+        int error = Marshal.GetLastWin32Error();
+        if (error == 0 || error == 1460 /* ERROR_TIMEOUT */) return true;
+        // A rejected probe (e.g. UIPI) is not evidence that the app hung.
+        throw new System.ComponentModel.Win32Exception(error, "Window response probe failed");
     }
 
     [DllImport("user32.dll")]
