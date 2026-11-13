@@ -137,7 +137,9 @@
 - Windows 动作送达后，即使随后读取窗口失败（例如点击关闭了窗口），也报告动作已送达而不是失败：结果写明读取失败的原因，丢弃该 app 的旧快照，要求下一步先 `get_app_state`，避免模型重试导致重复动作。动作类工具在 30 s 超时或 bridge 通信失败时提示结果未知、可能已送达；这些失败同样作废所有同进程快照别名，不允许沿用旧索引。
 - Windows 元素动作核对原 RuntimeId、控件类型、AutomationId 与完整名称的 SHA-256 摘要；引用失效或身份变化时要求重新观察，不搜索同名替代对象。名称摘要独立于展示 text_limit，截断之后的变化也能检测。
 - Windows 按窗口而不是 `Process.MainWindowHandle` 解析 app：`EnumWindows` 按 z-order 列出可见、无 owner 的顶层窗口，依次按 pid、进程名、窗口标题（先精确、后包含）匹配。UWP 的 `ApplicationFrameWindow` 归到它承载的 CoreWindow 所在进程，所以 `CalculatorApp` 等 UWP app 能按自己的进程名找到，多个 UWP app 不再共用 ApplicationFrameHost 的一个标题；`list_apps` 用同一份列表。主窗口被它拥有的模态对话框禁用时，对话框作为快照和动作的根窗口。
-- Windows `click_method=accessibility` 使用 UIA，`app_post` 始终使用 HWND 消息。`click_method=global` 要求 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`；开启后，auto 点击及 scroll 的 UIA 失败回退、drag 也可使用真实指针。`press_key` 的 auto 始终使用窗口消息，发给窗口内有键盘焦点的控件，并拒绝窗口消息无法携带修饰键的组合键，真实按键需显式 `key_method=global` 及同一环境开关。物理输入通过 SendInput 检查返回值、finally 释放按键 / 鼠标，核对观察的 PID / HWND、最新几何、前台及坐标命中窗口；普通 SetForegroundWindow 失败就拒绝，不模拟 Alt 强行抢前台。macOS-only sky_click / sky_key 继续明确拒绝。见 [Windows 输入说明](windows-input.md)。
+- Windows 的 Toggle / Select / Expand / Collapse（含 `click` 走 SelectionItem / Toggle pattern 的情况）发送一次后回读状态，最多 0.6 秒，未达到预期就报错并提示先重新观察；ScrollPattern 调用抛错时报告不确定结果，不再交给滚轮回退重复滚动。见 [写入验证](set-value-verification.md)。
+- 读取 UI Automation 和发送动作之前先探测目标窗口是否还在处理消息（`IsHungAppWindow`，以及 1 s 的 `SendMessageTimeout(WM_NULL, SMTO_ABORTIFHUNG)`）；超时连续两次没有回应就报告 app 无响应；权限拒绝等探测错误单独报告，不再让每次调用卡到 30 s 超时，也不把输入排进挂起窗口的消息队列。
+- Windows `click_method=accessibility` 使用 UIA，`app_post` 始终使用 HWND 消息。`click_method=global` 要求 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`；开启后，auto 点击及缺少 ScrollPattern 时的 scroll 回退、drag 也可使用真实指针。`press_key` 的 auto 始终使用窗口消息，发给窗口内有键盘焦点的控件，并拒绝窗口消息无法携带修饰键的组合键，真实按键需显式 `key_method=global` 及同一环境开关。物理输入通过 SendInput 检查返回值、finally 释放按键 / 鼠标，核对观察的 PID / HWND、最新几何、前台及坐标命中窗口；普通 SetForegroundWindow 失败就拒绝，不模拟 Alt 强行抢前台。macOS-only sky_click / sky_key 继续明确拒绝。见 [Windows 输入说明](windows-input.md)。
 - Windows UI Automation 需要运行在已登录用户的桌面 session 里。通过 SSH 作为脱离桌面的后台进程运行时，PowerShell 可以启动并返回 JSON，但系统可能不给它暴露顶层窗口；这种情况下 `list_apps` 会是空，`get_app_state` 可能返回 `appNotFound(...)`。
 - Windows 已有独立 WPF 观察 fixture 和 Windows PR smoke，覆盖观察、滚动、物理输入及截图边界。其余工具 / toolkit 覆盖，以及 visual cursor overlay、installer/onboarding、code signing 仍待补齐。后续 TODO 记录在 `docs/exec-plans/active/20260422-windows-computer-use-runtime.md`。
 
@@ -234,3 +236,5 @@ Windows Chromium/Electron 的危险 TextPattern 选区读取在调用前跳过�
 Linux 会话发现排除沙盒进程，不再导入其他进程的 AT_SPI_BUS_ADDRESS；显式调用者值保留，默认使用 libatspi 的会话总线查询。见 [会话发现](linux-session-discovery.md)。
 
 macOS 快照元素动作在输入前核对原 AX 引用的 role/subrole、名称和 identifier；静态文字和弹出按钮额外核对值。身份变化、引用失效或读取失败要求重新观察，不搜索同名替代对象。普通输入值和勾选状态不作为身份；当前 role/subrole 确认后才按需读值，密码字段不读值。真实回归入口：`scripts/tests/macos-element-identity-smoke.mjs`。
+
+macOS 以元素索引点击或执行次要动作前，会重读 `AXEnabled`；明确禁用的普通控件拒绝输入。菜单项保留原行为，因为关闭的菜单可能暴露过期的启用状态。真实 AppKit 回归入口为 `scripts/tests/macos-disabled-control-smoke.mjs`。
