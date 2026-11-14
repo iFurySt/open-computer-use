@@ -728,6 +728,39 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(resetCount, 1)
     }
 
+    func testMCPNotificationsAreNeverAnswered() {
+        let server = StdioMCPServer(service: ComputerUseService(), backgroundStateReset: {})
+        for method in ["notifications/cancelled", "notifications/initialized", "notifications/roots/list_changed", "tools/call"] {
+            XCTAssertNil(server.handle(line: #"{"jsonrpc":"2.0","method":"\#(method)","params":{"requestId":1}}"#), method)
+        }
+    }
+
+    func testMCPCancelSkipsAWaitingRequestAndDropsTheRunningOnesAnswer() {
+        final class Lines: @unchecked Sendable {
+            var rest = [
+                #"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#,
+                #"{"jsonrpc":"2.0","id":"1","method":"tools/call"}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"1"}}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}"#,
+                #"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
+            ]
+            let ended = DispatchSemaphore(value: 0)
+            func next() -> String? {
+                if rest.isEmpty { ended.signal(); return nil }
+                return rest.removeFirst()
+            }
+        }
+        let lines = Lines()
+        let requests = MCPStdinRequests(readLine: { lines.next() })
+        XCTAssertEqual(requests.next()?.line.contains(#""id":1"#), true)
+        // Every line is read while request 1 runs: "1" is cancelled before it starts, 1 while it runs.
+        XCTAssertEqual(lines.ended.wait(timeout: .now() + 5), .success)
+        XCTAssertFalse(requests.finish())
+        XCTAssertEqual(requests.next()?.line.contains("ping"), true)
+        XCTAssertTrue(requests.finish())
+        XCTAssertNil(requests.next())
+    }
+
     func testWindowRelativeFrameUsesSharedGlobalCoordinates() {
         let window = CGRect(x: 1486, y: 556, width: 919, height: 644)
         let child = CGRect(x: 1486, y: 556, width: 919, height: 644)
