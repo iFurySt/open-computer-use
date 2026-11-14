@@ -288,7 +288,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testToolDefinitionCount() {
-        XCTAssertEqual(ToolDefinitions.all.count, 11)
+        XCTAssertEqual(ToolDefinitions.all.count, 12)
         XCTAssertEqual(
             ToolDefinitions.all.map(\.name).sorted(),
             [
@@ -301,6 +301,7 @@ final class OpenComputerUseKitTests: XCTestCase {
                 "query",
                 "scroll",
                 "select_text",
+                "set_position",
                 "set_value",
                 "type_text",
             ]
@@ -818,6 +819,14 @@ final class OpenComputerUseKitTests: XCTestCase {
             selectTextProperties?["text"]?["description"] as? String,
             "Target text as shown in the accessibility tree"
         )
+        let setPositionSchema = tools["set_position"]?.inputSchema
+        let setPositionProperties = setPositionSchema?["properties"] as? [String: [String: Any]]
+        XCTAssertEqual(setPositionSchema?["required"] as? [String], ["app", "element_index", "x", "y"])
+        XCTAssertEqual(setPositionSchema?["additionalProperties"] as? Bool, false)
+        XCTAssertEqual(setPositionProperties.map { Set($0.keys) }, ["app", "element_index", "x", "y", "width", "height"])
+        XCTAssertEqual(setPositionProperties?["width"]?["type"] as? String, "number")
+        XCTAssertTrue(setPositionProperties?["x"]?["description"].map { "\($0)".contains("screenshot pixel coordinates") } ?? false)
+        XCTAssertTrue(tools["set_position"]?.description.hasSuffix("This tool is part of plugin `Computer Use`.") ?? false)
     }
 
     func testSelectTextRejectsInvalidSelectionMode() {
@@ -2237,6 +2246,39 @@ final class OpenComputerUseKitTests: XCTestCase {
         // A closed menu reports its items as they were when it last opened.
         XCTAssertNil(disabledControlRefusal(enabled: false, role: kAXMenuItemRole as String, elementIndex: "9"))
         XCTAssertNil(disabledControlRefusal(enabled: false, role: kAXMenuBarItemRole as String, elementIndex: "8"))
+    }
+
+    func testSetPositionReadBackFailsOnlyWhenNothingMoved() {
+        let before = CGRect(x: 100, y: 200, width: 300, height: 40)
+        let moved = CGPoint(x: 160, y: 200)
+        // applied, within a point of the request
+        XCTAssertEqual(axFrameReadBack(before: before, after: CGRect(x: 160.4, y: 200, width: 300, height: 40), origin: moved, size: nil), .applied)
+        // still where it was: the only failure
+        XCTAssertEqual(axFrameReadBack(before: before, after: before, origin: moved, size: nil), .unchanged)
+        // the app snapped it to its grid, or kept a window below the menu bar
+        XCTAssertEqual(axFrameReadBack(before: before, after: CGRect(x: 150, y: 200, width: 300, height: 40), origin: moved, size: nil), .adjusted)
+        XCTAssertEqual(axFrameReadBack(before: before, after: nil, origin: moved, size: nil), .unverifiable)
+        XCTAssertEqual(axFrameReadBack(before: nil, after: before, origin: moved, size: nil), .adjusted)
+        // a request for where it already is succeeds
+        XCTAssertEqual(axFrameReadBack(before: before, after: before, origin: before.origin, size: nil), .applied)
+        // only the written part is compared: a size write ignores the position, and back
+        let wider = CGSize(width: 400, height: 40)
+        XCTAssertEqual(axFrameReadBack(before: before, after: CGRect(x: 0, y: 0, width: 400, height: 40), origin: nil, size: wider), .applied)
+        XCTAssertEqual(axFrameReadBack(before: before, after: CGRect(x: 0, y: 0, width: 300, height: 40), origin: nil, size: wider), .unchanged)
+        XCTAssertEqual(axFrameReadBack(before: before, after: CGRect(x: 160, y: 200, width: 999, height: 9), origin: moved, size: nil), .applied)
+    }
+
+    func testSetPositionValidatesArgumentsBeforeReadingTheApp() {
+        let dispatcher = ComputerUseToolDispatcher()
+        func error(_ arguments: [String: Any]) -> String? {
+            let result = dispatcher.callToolAsResult(name: "set_position", arguments: (["app": "No Such App 4fd1", "element_index": "3"] as [String: Any]).merging(arguments) { $1 })
+            XCTAssertTrue(result.isError)
+            return result.primaryText
+        }
+        XCTAssertEqual(error(["y": 10]), "Missing required argument: x")
+        XCTAssertEqual(error(["x": 10, "y": 10, "width": 50]), #"invalidArguments("set_position requires width and height together")"#)
+        XCTAssertEqual(error(["x": 10, "y": 10, "width": 50, "height": 0]), #"invalidArguments("set_position width and height must be positive numbers")"#)
+        XCTAssertEqual(error(["x": Double.infinity, "y": 10]), #"invalidArguments("set_position requires finite x and y")"#)
     }
 
     func testMakeVisualCursorTargetUsesWindowRelativeElementCenter() {
