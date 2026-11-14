@@ -22,16 +22,16 @@ import (
 
 var version = "1.1.4"
 
-var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global"}
+var clickMethodValues = []string{"auto", "accessibility", "app_post", "sky_click", "global", "wayland"}
 
-var keyMethodValues = []string{"auto", "sky_key"}
+var keyMethodValues = []string{"auto", "sky_key", "wayland"}
 
 var windowPlacementValues = []string{"keep", "agent_display", "restore"}
 
 //go:embed runtime.py
 var linuxRuntimeScript string
 
-const serverInstructions = "Computer Use tools let you interact with Linux desktop apps by performing UI actions.\n\nBegin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. The available tools are list_apps, get_app_state, click, perform_secondary_action, scroll, drag, type_text, press_key, and set_value.\n\nPrefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Linux actions use AT-SPI2 semantic actions and editable text APIs first. Coordinate mouse and key synthesis are best-effort fallbacks and are not a universal Wayland background input model."
+const serverInstructions = "Computer Use tools let you interact with Linux desktop apps by performing UI actions.\n\nBegin by calling `get_app_state` every turn you want to use Computer Use to get the latest state before acting. The available tools are list_apps, get_app_state, click, move_mouse, perform_secondary_action, scroll, drag, type_text, press_key, and set_value.\n\nPrefer element-targeted interactions over coordinate clicks when an index for the targeted element is available. Linux actions use AT-SPI2 semantic actions and editable text APIs first. Coordinate mouse and key synthesis are best-effort fallbacks and are not a universal Wayland background input model. On Wayland, install ydotool and run ydotoold, then use click_method 'wayland', move_mouse, or key_method 'wayland' for type_text."
 
 type toolDefinition struct {
 	Name        string         `json:"name"`
@@ -163,6 +163,7 @@ type linuxRequest struct {
 	Pages        float64        `json:"pages,omitempty"`
 	Text         string         `json:"text,omitempty"`
 	Key          string         `json:"key,omitempty"`
+	KeyMethod    string         `json:"key_method,omitempty"`
 	Value        string         `json:"value,omitempty"`
 	WindowBounds *frame         `json:"windowBounds,omitempty"`
 	TextLimit    any            `json:"text_limit,omitempty"`
@@ -248,6 +249,12 @@ func (s *service) callTool(name string, args map[string]any) toolCallResult {
 			defaultString(optionalString(args, "mouse_button"), "left"),
 			clickMethod,
 		)
+	case "move_mouse":
+		x, y := requiredFloat(args, "x"), requiredFloat(args, "y")
+		if x == nil || y == nil {
+			return textResult("Missing required argument: x and y", true)
+		}
+		return s.moveMouse(*x, *y)
 	case "perform_secondary_action":
 		return s.performSecondaryAction(
 			requiredString(args, "app"),
@@ -350,6 +357,9 @@ func (s *service) click(app, elementIndex string, x, y *float64, clickCount int,
 	if clickMethod == "global" && !globalPointerFallbacksEnabled() {
 		return textResult("click_method 'global' requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 because it may move the system pointer and change foreground focus", true)
 	}
+	if clickMethod == "wayland" && !globalPointerFallbacksEnabled() {
+		return textResult("click_method 'wayland' requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 because it moves the system pointer and changes foreground focus", true)
+	}
 	snapshot := s.currentSnapshot(app)
 	if snapshot == nil {
 		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
@@ -375,6 +385,20 @@ func (s *service) click(app, elementIndex string, x, y *float64, clickCount int,
 		request.Element = record
 	}
 	return s.actionResult(app, request)
+}
+
+func (s *service) moveMouse(x, y float64) toolCallResult {
+	if !globalPointerFallbacksEnabled() {
+		return textResult("move_mouse requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1 because it moves the system pointer and changes foreground focus", true)
+	}
+	response, err := runPython(linuxRequest{Tool: "move_mouse", X: &x, Y: &y})
+	if err != nil {
+		return textResult(err.Error(), true)
+	}
+	if !response.OK {
+		return textResult(response.Error, true)
+	}
+	return textResult("ok", false)
 }
 
 func (s *service) performSecondaryAction(app, elementIndex, action string) toolCallResult {
@@ -462,7 +486,7 @@ func (s *service) typeText(app, text, keyMethod string) toolCallResult {
 	if s.currentSnapshot(app) == nil {
 		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
 	}
-	return s.actionResult(app, linuxRequest{Tool: "type_text", App: app, Text: text})
+	return s.actionResult(app, linuxRequest{Tool: "type_text", App: app, Text: text, KeyMethod: keyMethod})
 }
 
 func (s *service) pressKey(app, key, keyMethod string) toolCallResult {
@@ -474,6 +498,9 @@ func (s *service) pressKey(app, key, keyMethod string) toolCallResult {
 	}
 	if keyMethod == "sky_key" {
 		return textResult("key_method 'sky_key' is not supported on Linux", true)
+	}
+	if keyMethod == "wayland" {
+		return textResult("key_method 'wayland' is only supported for type_text", true)
 	}
 	if s.currentSnapshot(app) == nil {
 		return textResult("No app state is available for "+app+". Run get_app_state before action tools.", true)
@@ -1303,7 +1330,7 @@ func toolDefinitions() []toolDefinition {
 				"y":             numberProperty("Y coordinate in screenshot pixel coordinates"),
 				"click_count":   integerProperty("Number of clicks. Defaults to 1"),
 				"mouse_button":  enumStringProperty("Mouse button to click. Defaults to left.", []string{"left", "right", "middle"}),
-				"click_method":  enumStringProperty("Click implementation: auto (default), accessibility, app_post, sky_click, or global. Accessibility requires element_index. Linux supports global AT-SPI mouse synthesis and does not currently support app_post or sky_click.", clickMethodValues),
+				"click_method":  enumStringProperty("Click implementation: auto (default), accessibility, app_post, sky_click, global, or wayland. Accessibility requires element_index. Linux supports global AT-SPI mouse synthesis and, on Wayland, wayland for ydotool input; app_post and sky_click are unsupported.", clickMethodValues),
 			}, []string{"app"}),
 		},
 		{
@@ -1339,6 +1366,15 @@ func toolDefinitions() []toolDefinition {
 			InputSchema: objectSchema(map[string]any{}, nil),
 		},
 		{
+			Name:        "move_mouse",
+			Description: "Move the system pointer to absolute desktop coordinates. Requires a Wayland session with ydotool (Linux). This tool is part of plugin `Computer Use`.",
+			Annotations: defaultAnnotations(),
+			InputSchema: objectSchema(map[string]any{
+				"x": numberProperty("Absolute X coordinate on the desktop"),
+				"y": numberProperty("Absolute Y coordinate on the desktop"),
+			}, []string{"x", "y"}),
+		},
+		{
 			Name:        "perform_secondary_action",
 			Description: "Invoke a secondary accessibility action exposed by an element. This tool is part of plugin `Computer Use`.",
 			Annotations: defaultAnnotations(),
@@ -1355,7 +1391,7 @@ func toolDefinitions() []toolDefinition {
 			InputSchema: objectSchema(map[string]any{
 				"app":        stringProperty("App name or bundle identifier"),
 				"key":        stringProperty("Key or key-combination to press"),
-				"key_method": enumStringProperty("Keyboard delivery: auto (default) or sky_key. sky_key is the macOS SkyLight background-window path and is not supported on Linux.", keyMethodValues),
+				"key_method": enumStringProperty("Keyboard delivery: auto (default), sky_key, or wayland. sky_key is the macOS SkyLight path; wayland types through ydotool on Linux.", keyMethodValues),
 			}, []string{"app", "key"}),
 		},
 		{
@@ -1386,7 +1422,7 @@ func toolDefinitions() []toolDefinition {
 			InputSchema: objectSchema(map[string]any{
 				"app":        stringProperty("App name or bundle identifier"),
 				"text":       stringProperty("Literal text to type"),
-				"key_method": enumStringProperty("Keyboard delivery: auto (default) or sky_key. sky_key is the macOS SkyLight background-window path and is not supported on Linux.", keyMethodValues),
+				"key_method": enumStringProperty("Keyboard delivery: auto (default), sky_key, or wayland. sky_key is the macOS SkyLight path; wayland types through ydotool on Linux.", keyMethodValues),
 			}, []string{"app", "text"}),
 		},
 	}

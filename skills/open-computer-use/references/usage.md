@@ -330,6 +330,8 @@ target visible. The runtime does not synthesize Alt to force activation.
 
 The Linux runtime uses AT-SPI2 through the desktop session bus. It must run in a logged-in graphical session with usable accessibility services. Wayland screenshot and coordinate input support is compositor-dependent and best-effort.
 
+On Wayland, AT-SPI pointer and key synthesis is ignored by native compositors. Install `ydotool`, start `ydotoold`, and set `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` to use the Wayland input path. `click_method: "wayland"` moves the system pointer with `ydotool mousemove --absolute` and clicks through `uinput`; `move_mouse` moves the pointer to absolute desktop coordinates; `type_text` accepts `key_method: "wayland"` and types through `ydotool type --file -`. Set `OPEN_COMPUTER_USE_YDOTOOL` to the executable path or to `0` to disable the path. Element-targeted actions still use AT-SPI.
+
 ## Safety
 
 Pause and ask the user before actions that affect external systems or sensitive local state, including sending messages, submitting forms, deleting files, approving prompts, uploading files, or interacting with password managers.
