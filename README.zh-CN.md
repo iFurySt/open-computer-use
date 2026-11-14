@@ -37,6 +37,12 @@ https://github.com/user-attachments/assets/e036b1c8-2200-4896-abd4-19225915cf66
 
 <sub><em>`open-computer-use` 在 Linux 里使用</em></sub>
 
+Wayland 下合成器会忽略 AT-SPI 的指针和按键注入。安装 `ydotool`、启动
+`ydotoold`，并设置 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` 后可使用
+Wayland 输入路径：`click_method: "wayland"`、`move_mouse` 工具，或
+`type_text` 的 `key_method: "wayland"`。`OPEN_COMPUTER_USE_YDOTOOL` 可指定可执行
+文件路径，设为 `0` 可禁用。
+
 ### Locked Use
 目前支持Locked Use，`OCU`会在锁屏之后临时解锁使用电脑（仅支持macOS），期间会有一系列的安全配套服务比如遮罩层来保证安全性
 ![Open Computer Use Locked Use screen](./docs/assets/ocu-locked-use.webp)

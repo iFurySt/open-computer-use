@@ -37,6 +37,13 @@ https://github.com/user-attachments/assets/e036b1c8-2200-4896-abd4-19225915cf66
 
 <sub><em>`open-computer-use` running on Linux.</em></sub>
 
+On Wayland, native compositors ignore AT-SPI pointer and key synthesis. Install
+`ydotool`, start `ydotoold`, and set
+`OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1` to enable the Wayland input
+path. Use `click_method: "wayland"`, the `move_mouse` tool, or
+`key_method: "wayland"` on `type_text`. Set `OPEN_COMPUTER_USE_YDOTOOL` to the
+executable path, or to `0` to disable it.
+
 ### Locked Use
 
 Locked Use is now supported on macOS. `OCU` temporarily unlocks your Mac after it has been locked so the agent can continue working, with protective services such as a full-screen shield in place during use.

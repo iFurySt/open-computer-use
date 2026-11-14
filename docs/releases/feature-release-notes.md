@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-14 | Linux Wayland 输入 | Wayland 会话下可以移动真实指针、点击原生窗口并通过 ydotool 输入文字。 | 新增 `click_method: "wayland"`、`move_mouse` 工具和 `type_text` 的 `key_method: "wayland"`；检测 `ydotool`，与 global 共用安全门槛，缺失依赖明确报错，X11 与 auto 行为不变。 |
 | 2026-11-08 | Windows app 与窗口解析 | 计算器、设置等 UWP app 可以按自己的进程名或标题找到；弹出“是否保存”这类模态对话框时，快照和动作落在对话框上。 | 用 `EnumWindows` 的可见无 owner 顶层窗口代替 `Process.MainWindowHandle`，UWP 框架窗口归到其 CoreWindow 进程；先按 pid、进程名，再按标题匹配；主窗口被禁用时以其拥有的已启用对话框为根；`list_apps` 同步。补 `windows-app-resolution.test.ps1` 并接入 Windows CI。 |
 | 2026-11-08 | Windows 管理员窗口输入 | 目标 app 以管理员身份运行时，动作明确报错并说明原因，不再报成功却什么也没发生。 | 动作前比较目标进程与 runtime 的完整性级别，目标更高则在发送前拒绝；读不到级别时也拒绝输入，`get_app_state` 不变。补 `windows-elevated-target.test.ps1` 并接入 Windows CI。 |
 | 2026-11-08 | macOS 禁用控件 | 点击或对禁用控件执行动作时明确报错，不再报告一个什么都没发生的成功。 | click / perform_secondary_action 在输入前读当前 AXEnabled，为 false 时拒绝；菜单项放行。 |

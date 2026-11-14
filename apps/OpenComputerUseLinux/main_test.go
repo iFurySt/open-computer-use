@@ -14,8 +14,8 @@ import (
 )
 
 func TestToolDefinitionCount(t *testing.T) {
-	if got := len(toolDefinitions()); got != 9 {
-		t.Fatalf("toolDefinitions() count = %d, want 9", got)
+	if got := len(toolDefinitions()); got != 10 {
+		t.Fatalf("toolDefinitions() count = %d, want 10", got)
 	}
 }
 
@@ -269,7 +269,7 @@ func TestClickMethodSchemaAndParser(t *testing.T) {
 	properties := tool.InputSchema["properties"].(map[string]any)
 	method := properties["click_method"].(map[string]any)
 	values := method["enum"].([]string)
-	if strings.Join(values, ",") != "auto,accessibility,app_post,sky_click,global" {
+	if strings.Join(values, ",") != "auto,accessibility,app_post,sky_click,global,wayland" {
 		t.Fatalf("click_method enum = %#v", values)
 	}
 
@@ -280,6 +280,7 @@ func TestClickMethodSchemaAndParser(t *testing.T) {
 		"app_post":      "app_post",
 		"SKY_CLICK":     "sky_click",
 		"GLOBAL":        "global",
+		"WAYLAND":       "wayland",
 	} {
 		got, err := parseClickMethod(input)
 		if err != nil {
@@ -291,7 +292,7 @@ func TestClickMethodSchemaAndParser(t *testing.T) {
 	}
 
 	for _, input := range []string{"physical", "targeted"} {
-		if _, err := parseClickMethod(input); err == nil || !strings.Contains(err.Error(), "Expected one of: auto, accessibility, app_post, sky_click, global") {
+		if _, err := parseClickMethod(input); err == nil || !strings.Contains(err.Error(), "Expected one of: auto, accessibility, app_post, sky_click, global, wayland") {
 			t.Fatalf("parseClickMethod(%s) error = %v", input, err)
 		}
 	}
@@ -316,10 +317,31 @@ func TestLinuxClickMethodSafetyAndPlatformSupport(t *testing.T) {
 	if !result.IsError || !strings.Contains(result.Content[0].Text, "requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1") {
 		t.Fatalf("unauthorized global click result = %#v", result)
 	}
+	result = service.click("Text Editor", "", &x, &y, 1, "left", "wayland")
+	if !result.IsError || !strings.Contains(result.Content[0].Text, "requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1") {
+		t.Fatalf("unauthorized wayland click result = %#v", result)
+	}
 
 	t.Setenv("OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS", "yes")
 	if !globalPointerFallbacksEnabled() {
 		t.Fatal("global pointer authorization should accept yes")
+	}
+}
+
+func TestLinuxMoveMouseGateAndSchema(t *testing.T) {
+	tool := findToolDefinition(t, "move_mouse")
+	properties := tool.InputSchema["properties"].(map[string]any)
+	for _, name := range []string{"x", "y"} {
+		if _, ok := properties[name]; !ok {
+			t.Fatalf("move_mouse schema is missing %q", name)
+		}
+	}
+
+	service := newService()
+	t.Setenv("OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS", "")
+	result := service.callTool("move_mouse", map[string]any{"x": 10.0, "y": 20.0})
+	if !result.IsError || !strings.Contains(result.Content[0].Text, "requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1") {
+		t.Fatalf("unauthorized move_mouse result = %#v", result)
 	}
 }
 
@@ -638,18 +660,18 @@ func TestLinuxKeyMethodSchemaAndUnsupportedSkyKey(t *testing.T) {
 		properties := tool.InputSchema["properties"].(map[string]any)
 		method := properties["key_method"].(map[string]any)
 		values := method["enum"].([]string)
-		if strings.Join(values, ",") != "auto,sky_key" {
+		if strings.Join(values, ",") != "auto,sky_key,wayland" {
 			t.Fatalf("%s key_method enum = %#v", name, values)
 		}
 	}
 
-	for input, want := range map[string]string{"": "auto", " SKY_KEY ": "sky_key"} {
+	for input, want := range map[string]string{"": "auto", " SKY_KEY ": "sky_key", "Wayland": "wayland"} {
 		got, err := parseKeyMethod(input)
 		if err != nil || got != want {
 			t.Fatalf("parseKeyMethod(%q) = %q, %v", input, got, err)
 		}
 	}
-	if _, err := parseKeyMethod("global"); err == nil || !strings.Contains(err.Error(), "Expected one of: auto, sky_key") {
+	if _, err := parseKeyMethod("global"); err == nil || !strings.Contains(err.Error(), "Expected one of: auto, sky_key, wayland") {
 		t.Fatalf("parseKeyMethod(global) error = %v", err)
 	}
 
@@ -661,6 +683,10 @@ func TestLinuxKeyMethodSchemaAndUnsupportedSkyKey(t *testing.T) {
 	result = service.pressKey("Text Editor", "Return", "sky_key")
 	if !result.IsError || result.Content[0].Text != "key_method 'sky_key' is not supported on Linux" {
 		t.Fatalf("press_key sky_key result = %#v", result)
+	}
+	result = service.pressKey("Text Editor", "Return", "wayland")
+	if !result.IsError || result.Content[0].Text != "key_method 'wayland' is only supported for type_text" {
+		t.Fatalf("press_key wayland result = %#v", result)
 	}
 }
 

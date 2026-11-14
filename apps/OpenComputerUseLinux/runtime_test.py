@@ -657,5 +657,56 @@ class TreeBudgetTests(unittest.TestCase):
             selected, _ = runtime.prioritized_tree_nodes(root, [0], 2, 64, bounds)
         self.assertEqual([node for _, node, _ in selected], [root, visible])
 
+class WaylandInputTest(unittest.TestCase):
+    def test_wayland_session_detection(self):
+        runtime = load_runtime()
+        with mock.patch.dict(runtime.os.environ, {"XDG_SESSION_TYPE": "wayland"}, clear=False):
+            self.assertTrue(runtime.wayland_session())
+        with mock.patch.dict(
+            runtime.os.environ,
+            {"XDG_SESSION_TYPE": "x11", "WAYLAND_DISPLAY": ""},
+            clear=False,
+        ):
+            self.assertFalse(runtime.wayland_session())
+
+    def test_ydotool_commands(self):
+        runtime = load_runtime()
+        calls = []
+        completed = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        def fake_run(command, input=None, text=None, capture_output=None):
+            calls.append((command, input))
+            return completed
+
+        with mock.patch.object(runtime, "ydotool_binary", return_value="/usr/bin/ydotool"), \
+                mock.patch.object(runtime.subprocess, "run", side_effect=fake_run):
+            runtime.move_pointer(10.4, 20.6)
+            runtime.send_mouse_click_wayland(10, 20, "left", 2)
+            runtime.send_text_wayland("uname -a")
+
+        self.assertEqual(
+            calls[0],
+            (["/usr/bin/ydotool", "mousemove", "--absolute", "10", "21"], None),
+        )
+        self.assertEqual(
+            calls[1],
+            (["/usr/bin/ydotool", "mousemove", "--absolute", "10", "20"], None),
+        )
+        self.assertEqual(
+            [call[0] for call in calls[2:4]],
+            [["/usr/bin/ydotool", "click", "0x00"]] * 2,
+        )
+        self.assertEqual(
+            calls[-1],
+            (["/usr/bin/ydotool", "type", "--file", "-"], "uname -a"),
+        )
+
+    def test_missing_ydotool_is_reported(self):
+        runtime = load_runtime()
+        with mock.patch.object(runtime, "ydotool_binary", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "requires ydotool"):
+                runtime.move_pointer(1, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

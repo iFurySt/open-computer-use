@@ -4,6 +4,8 @@ import base64
 import json
 import math
 import os
+import shutil
+import subprocess
 import sys
 import time
 import traceback
@@ -691,7 +693,65 @@ def mouse_button_events(button):
     return "b1p", "b1r"
 
 
+def wayland_session():
+    """True when this desktop is Wayland, where AT-SPI pointer synthesis is ignored."""
+    return (
+        os.environ.get("XDG_SESSION_TYPE", "").strip().lower() == "wayland"
+        or bool(os.environ.get("WAYLAND_DISPLAY", "").strip())
+    )
+
+
+def ydotool_binary():
+    override = os.environ.get("OPEN_COMPUTER_USE_YDOTOOL", "").strip()
+    if override.lower() in {"0", "false", "no", "off"}:
+        return None
+    if override:
+        return override
+    return shutil.which("ydotool")
+
+
+def run_ydotool(*args, stdin_text=None):
+    binary = ydotool_binary()
+    if binary is None:
+        raise RuntimeError(
+            "Wayland input requires ydotool. Install it and start ydotoold, "
+            "or point OPEN_COMPUTER_USE_YDOTOOL at the executable."
+        )
+    completed = subprocess.run(
+        [binary, *args],
+        input=stdin_text,
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout or "").strip()
+        raise RuntimeError(
+            "ydotool {} failed ({}): {}".format(
+                args[0] if args else "", completed.returncode, detail or "no output"
+            )
+        )
+
+
+def move_pointer(x, y):
+    run_ydotool("mousemove", "--absolute", str(int(round(x))), str(int(round(y))))
+
+
+def send_mouse_click_wayland(x, y, button, count):
+    move_pointer(x, y)
+    code = {"right": "0x01", "middle": "0x02"}.get((button or "left").lower(), "0x00")
+    for _ in range(max(1, int(count or 1))):
+        run_ydotool("click", code)
+        time.sleep(0.05)
+
+
+def send_text_wayland(text):
+    run_ydotool("type", "--file", "-", stdin_text=text)
+
+
 def send_mouse_click(x, y, button, count):
+    if wayland_session() and ydotool_binary() is not None:
+        send_mouse_click_wayland(x, y, button, count)
+        return
     down, up = mouse_button_events(button)
     repeat = max(1, int(count or 1))
     for _ in range(repeat):
@@ -943,6 +1003,15 @@ def perform_operation(operation):
             ),
         }
 
+    if tool == "move_mouse":
+        x, y = operation.get("x"), operation.get("y")
+        if x is None or y is None:
+            raise RuntimeError("move_mouse requires x and y")
+        if not wayland_session():
+            raise RuntimeError("move_mouse is only supported on Wayland sessions")
+        move_pointer(float(x), float(y))
+        return {"ok": True, "text": "ok"}
+
     app = resolve_app(operation.get("app", ""))
     _, window = main_window(app)
     bounds = operation.get("windowBounds") or extents(window)
@@ -976,6 +1045,18 @@ def perform_operation(operation):
             send_mouse_click(
                 x, y, operation.get("mouse_button", "left"), operation.get("click_count", 1)
             )
+        elif click_method == "wayland":
+            if not wayland_session():
+                raise RuntimeError("click_method 'wayland' requires a Wayland session")
+            x, y = screen_point(
+                bounds,
+                element_record,
+                operation.get("x"),
+                operation.get("y"),
+            )
+            send_mouse_click_wayland(
+                x, y, operation.get("mouse_button", "left"), operation.get("click_count", 1)
+            )
         elif click_method == "auto":
             handled = False
             if element is not None and operation.get("mouse_button", "left") == "left":
@@ -1006,8 +1087,13 @@ def perform_operation(operation):
         to_x, to_y = screen_point(bounds, None, operation.get("to_x"), operation.get("to_y"))
         send_drag(from_x, from_y, to_x, to_y)
     elif tool == "type_text":
-        if not insert_text(window, operation.get("text", "")):
-            send_text(operation.get("text", ""))
+        text = operation.get("text", "")
+        if (operation.get("key_method") or "auto").lower() == "wayland":
+            if not wayland_session():
+                raise RuntimeError("key_method 'wayland' requires a Wayland session")
+            send_text_wayland(text)
+        elif not insert_text(window, text):
+            send_text(text)
     elif tool == "press_key":
         send_key(operation.get("key", ""))
     elif tool == "set_value":
