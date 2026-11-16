@@ -36,18 +36,23 @@ final class AppDiscoveryTests: XCTestCase {
         MDQuerySetSortOptionFlagsForAttribute(query, uses, kMDQueryReverseSortOrderFlag.rawValue)
         guard MDQueryExecute(query, CFOptionFlags(kMDQuerySynchronous.rawValue)) else { throw NSError(domain: "Spotlight query failed", code: 1) }
         guard MDQueryGetResultCount(query) > 0 else { throw XCTSkip("No indexed application bundles") }
-        var seen: Set<String> = []
-        return (0..<MDQueryGetResultCount(query)).compactMap { index in
+        let records: [(id: String, date: Date, count: Int)] = (0..<MDQueryGetResultCount(query)).compactMap { index in
             let item = unsafeBitCast(MDQueryGetResultAtIndex(query, index)!, to: MDItem.self)
             guard let id = MDItemCopyAttribute(item, kMDItemCFBundleIdentifier) as? String, !id.isEmpty,
-                  seen.insert(id.lowercased()).inserted,
                   let path = MDItemCopyAttribute(item, kMDItemPath) as? String else { return nil }
             let bundle = Bundle(url: URL(fileURLWithPath: path))
             guard bundle?.object(forInfoDictionaryKey: "LSBackgroundOnly") as? Bool != true,
                   bundle?.object(forInfoDictionaryKey: "LSUIElement") as? Bool != true,
                   let lastUsed = MDItemCopyAttribute(item, ranking) as? Date ?? MDItemCopyAttribute(item, kMDItemLastUsedDate) as? Date,
                   lastUsed >= cutoff else { return nil }
-            return "\(id) \(lastUsed) \((MDItemCopyAttribute(item, uses) as? NSNumber)?.intValue ?? -1)"
+            return (id, lastUsed, (MDItemCopyAttribute(item, uses) as? NSNumber)?.intValue ?? -1)
         }
+        // Independently normalize duplicate installations after the full scan.
+        // MDQuery's iteration order is not a reliable deduplication policy.
+        var seen: Set<String> = []
+        return records.sorted {
+            $0.date != $1.date ? $0.date > $1.date : $0.count > $1.count
+        }.filter { seen.insert($0.id.lowercased()).inserted }
+            .map { "\($0.id) \($0.date) \($0.count)" }
     }
 }
