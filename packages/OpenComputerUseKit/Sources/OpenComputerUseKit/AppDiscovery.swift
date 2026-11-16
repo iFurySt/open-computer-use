@@ -494,8 +494,7 @@ enum AppDiscovery {
                 return []
             }
 
-            var seen: Set<String> = []
-            var records: [SpotlightAppRecord] = []
+            var records: [String: SpotlightAppRecord] = [:]
 
             for index in 0..<MDQueryGetResultCount(query) {
                 guard
@@ -507,10 +506,6 @@ enum AppDiscovery {
                 }
 
                 let key = bundleIdentifier.lowercased()
-                guard seen.insert(key).inserted else {
-                    continue
-                }
-
                 let lastUsed: Date? = value(lastUsedDateRankingAttribute as CFString, query: query, index: index)
                     ?? value(kMDItemLastUsedDate, query: query, index: index)
                 guard let lastUsed, lastUsed >= cutoffDate else {
@@ -538,17 +533,21 @@ enum AppDiscovery {
                     ?? (value(kMDItemDisplayName, query: query, index: index) as String?).map(stripAppSuffix(from:))
                     ?? stripAppSuffix(from: appURL.lastPathComponent)
 
-                records.append(
-                    SpotlightAppRecord(
+                // Query filtering can change the order of duplicate bundle IDs.
+                // Choose the newest usable copy rather than trusting result order.
+                if let old = records[key], let oldDate = old.lastUsed,
+                   oldDate > lastUsed || (oldDate == lastUsed && (old.uses ?? -1) >= (uses ?? -1)) {
+                    continue
+                }
+                records[key] = SpotlightAppRecord(
                         name: displayName,
                         bundleIdentifier: bundleIdentifier,
                         lastUsed: lastUsed,
                         uses: uses
                     )
-                )
             }
 
-            return records
+            return records.values.sorted { $0.bundleIdentifier < $1.bundleIdentifier }
         }
 
         private static func standardSearchScopes() -> [CFString] {
