@@ -104,7 +104,7 @@ let accessibilityTreeMaxDepth = AccessibilityTreeLimits.defaultMaxDepth
 let screenshotResultMaxDimension: CGFloat = 1280
 private let windowVisibilityRecoveryDelay: TimeInterval = 0.7
 private let axWebAreaRole = "AXWebArea"
-// Chrome needs up to ~2s after AXManualAccessibility before the web tree exists.
+// A lazy web engine can need up to ~2 s after the accessibility flags before its tree exists.
 private let webAreaRewalkAttempts = 30
 private let webAreaRewalkInterval: TimeInterval = 0.1
 
@@ -540,6 +540,10 @@ private func enableBestEffortAccessibilityModes(_ appElement: AXUIElement) -> Bo
     // harmlessly fail on apps that do not support them.
     let manual = AXUIElementSetAttributeValue(appElement, "AXManualAccessibility" as CFString, kCFBooleanTrue)
     _ = AXUIElementSetAttributeValue(appElement, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+    // Chrome builds a fresh page's tree as soon as the app element's role is read right after the flags; otherwise
+    // the page shows about 2 s later, whatever else is read first. Chrome rejects AXManualAccessibility, so the read
+    // can't depend on that write succeeding.
+    _ = stringValue(of: appElement, attribute: kAXRoleAttribute)
     return manual == .success
 }
 
