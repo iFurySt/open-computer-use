@@ -12,6 +12,7 @@
   端到端 smoke runner，会拉起 fixture 和 MCP server，并通过 JSON-RPC 真实调用 9 个 tools；同时也支持单独的 visual cursor idle smoke，用跨进程 observation file 断言等待下一次 move 时是 anchored tip + tiny rotate wobble，而不是横向漂移。
 - `apps/OpenComputerUseWindows`
   实验性 Windows runtime。它不依赖 Swift 或 `.app` bundle，Go CLI/MCP 入口会嵌入 PowerShell UI Automation bridge，构建产物是 `open-computer-use.exe`，并随已有 npm 包的 `dist/windows/<arch>/` bundled artifacts 分发。
+  PowerShell 子进程使用 `CREATE_NO_WINDOW`，避免无控制台的 MCP host 每次调用时闪出控制台并抢焦点；stdout / stderr 继续走管道。Windows Go 测试用 detached 父进程调用真实启动路径，检查控制台句柄、Unicode JSON 和错误输出。
 - `apps/OpenComputerUseLinux`
   实验性 Linux runtime。它不依赖 Swift 或 `.app` bundle，Go CLI/MCP 入口会嵌入 Python AT-SPI bridge，构建产物是 `open-computer-use`，并随已有 npm 包的 `dist/linux/<arch>/` bundled artifacts 分发。
 - `packages/OpenComputerUseKit`
@@ -50,7 +51,7 @@
 
 - 面向 MCP host 的外部 transport 仍是 `stdio`；macOS 终端 CLI 到 `.app` app agent 之间额外有一层本地 Unix domain socket 代理，用来保证真实 automation 运行在 app bundle 权限身份下。
 - 当 `OPEN_COMPUTER_USE_VISUAL_CURSOR` 未被显式关闭时，`mcp` 命令会切到一个最小 AppKit runtime：主线程保留 event loop 承载 overlay UI，stdio server 仍在后台线程串行读取与响应。
-- 请求 framing 采用一行一个 JSON-RPC message。
+- 请求 framing 采用一行一个 JSON-RPC message。三平台均不回复无 id 的通知，也不将通知当作工具请求执行。独立读取线程/协程及时接收 `notifications/cancelled`：未开始的请求从队列移除；已经开始的动作完整执行一次并丢弃回复，不中途强杀、不重试，取消不代表撤销。初始化不可取消；未知、已结束和格式错误的取消被忽略。macOS app-agent 代理使用相同规则。Windows/Linux 单行上限 16 MiB，错误 JSON 行回复解析错误后继续读取下一行。
 - 当前支持的 method：
   - `initialize`
   - `notifications/initialized`
@@ -69,10 +70,10 @@
 - npm launcher 还直接提供 `ocu js` 和 `ocu repl`：前者为一次性 Worker/native MCP session，后者在当前终端内保留同一个 session 和 binding；两者退出后都会关闭 Worker 与 native MCP child。`ocu capabilities [--json]` 在不启动 native MCP 的情况下报告 Node、adapter、kernel 和当前平台 native artifact 是否齐全。help 始终显示 code-first 命令并标记 availability，不按环境动态隐藏接口。
 - npm bin 当前本身通过 `#!/usr/bin/env node` 启动，因此完全没有 Node 的 shell 无法进入 help/capability 检测；launcher 启动后会复用 `process.execPath`，不会再次从 PATH 解析 Node。若未来要求零 Node 前置，应把最外层入口替换成 native bootstrap 或随包分发 Node。
 - 这是增量迁移：`open-computer-use mcp` 仍是原生 9-tool compatibility surface，已有 CLI、其他 MCP host 和 smoke 不需要切换。
-- `list_apps` 通过 Spotlight metadata query 拉取标准 application 目录里的 app bundle，并读取 `kMDItemUseCount` / `kMDItemLastUsedDate_Ranking` 这类系统元数据；再与 `NSWorkspace` 的运行态 app 合并，输出“当前运行中 + 近 14 天用过”的视图。
+- `list_apps` 通过 Spotlight metadata query 拉取标准 application 目录里的 app bundle，并读取 `kMDItemUseCount` / `kMDItemLastUsedDate_Ranking` 这类系统元数据；再与 `NSWorkspace` 的运行态 app 合并，输出“当前运行中 + 近 14 天用过”的视图。每个查询结果使用 MDItemCopyAttributes 批量读取当前元数据，按统一截止日期筛选后才读取 Info.plist；不用可能过期的查询属性缓存筛选最近使用记录。
 - `get_app_state` 优先走真实 AX / 窗口截图；真实 app 必须同时有未最小化的 `AXWindow` 或 focused `AXSheet`，以及可匹配的 on-screen `CGWindow`。如果目标 app 只是隐藏或暂时没有 on-screen window，会先 best-effort unhide / activate / `open -b` / `AXRaise` 并短暂重试，以贴近官方 `computer-use` 会把 Lark / Electron 窗口拉回再采集的行为；恢复后仍无法匹配时返回官方风格的 `Apple event error -10005: cgWindowNotFound`，不再把 application 根节点或无截图窗口伪装成可操作状态。当目标是仓库内 fixture app 时，回退到 fixture 导出的合成状态。真实 AX tree 默认在 macOS、Linux、Windows 上最多渲染 1200 个节点、64 层深度；显式 `get_app_state` / `snapshot` 可通过 `max_tree_nodes` / `max_tree_depth` 覆盖预算，action tools 的刷新结果仍使用默认预算。snapshot 文本默认截断到 500 字符；显式 `get_app_state` / `snapshot` 可通过 `text_limit` 正整数或 `"max"` 覆盖，action tools 的刷新结果仍使用 500 字符默认值。对 Electron/WebView 这类深层 UI 会压缩空 `AXGroup` / `AXUnknown` wrapper、过滤 `AXScrollToVisible` 噪音和空字符串属性，避免 action-critical 的输入框被无语义容器挤出节点预算；但通用节点中的 `AXPress` / `AXConfirm` / `AXOpen` 子节点会形成文本摘要边界，避免多个可点击选项被合并成一个 container。这类动作节点如果 frame 有效、尺寸紧凑且不包含带 URL 的 `AXLink` 后代，会保留为带窗口相对 `Frame` 的 `button`，并用短文本后代作为按钮摘要，让 icon-only 和文字 Web 控件都能获得可区分的 `element_index`；包含带 URL 的 `AXLink` 后代时保留通用 wrapper 和链接子节点，避免导航链接被摘要吞掉。对原生 open panel / Finder column view 这类把内容放在 `AXContents` / `AXVisibleChildren` 里的控件，也会把可见文件项纳入元素树。
 - 三平台快照先在有界候选内优先选取可见操作控件、普通界面区域，再处理集合与明确离屏内容；保留祖先并按原树顺序输出，索引重新对应实际元素。默认 1200 节点不变；候选扫描最多 `max(64, min(max_tree_nodes, 2500) × 4)`，节点、候选或深度不足时明确提示 tree truncated。macOS 集合优先使用 AXVisibleChildren，不再合并完整列表；Linux 同时看 SHOWING 和滚动区域几何，防止 GTK 离屏表格单元仍声明 SHOWING。未知可见性不会被直接丢弃。详见 [控件树预算](tree-budget.md)。
-- macOS AX renderer 在一次 tree walk 内首次访问某个元素时，用一次 `AXUIElementCopyMultipleAttributeValues` 批量读取常用属性，并只在该次 walk 内缓存属性、action names 和 settable 状态；unsupported / no-value 结果会缓存，transient 错误不缓存并可单独重读。重读和 lazy-web rewalk 都会建立新缓存，动作读取、焦点和窗口查询不进入此缓存。`OPEN_COMPUTER_USE_DISABLE_AX_READ_CACHE=1` 关闭缓存，用于输出对比诊断。semantic AX fixture 测试用注入的属性源驱动真实 renderer，验证角色、名称、值、动作编号背后的元素和 frame 记录保持一致。 真实 AppKit 对照入口：`node scripts/tests/macos-ax-batch-smoke.mjs <signed-ocu-executable> [baseline-executable]`，比较完整文本、实测读取耗时并验证点击后的新状态。
+- macOS AX renderer 在一次 tree walk 内首次访问某个元素时，用一次 `AXUIElementCopyMultipleAttributeValues` 批量读取常用非敏感属性，再在确认非密码控件后读取 AXValue，并只在该次 walk 内缓存属性、action names 和 settable 状态；unsupported / no-value 结果会缓存，transient 错误不缓存并可单独重读。重读和 lazy-web rewalk 都会建立新缓存，动作读取、焦点和窗口查询不进入此缓存。`OPEN_COMPUTER_USE_DISABLE_AX_READ_CACHE=1` 关闭缓存，用于输出对比诊断。semantic AX fixture 测试用注入的属性源驱动真实 renderer，验证角色、名称、值、动作编号背后的元素和 frame 记录保持一致。 真实 AppKit 对照入口：`node scripts/tests/macos-ax-batch-smoke.mjs <signed-ocu-executable> [baseline-executable]`，比较完整文本、实测读取耗时并验证点击后的新状态。
 - macOS focused sheet 使用自己的窗口 ID，AX 树、截图和输入坐标均以面板为准。`query` 可按该 ID 回查 focused sheet；控件的 `AXWindow` 指向父文档时，用有界父链确认归属；读取预算结束后恢复默认 AX 超时，避免面板关闭成功却误报动作失败。弹窗关闭后旧 query 索引拒绝执行。显式停靠 sheet 时移动其父窗口，父窗口无法确认则报错。真实面板回归：`node scripts/tests/macos-sheet-smoke.mjs <signed-ocu-executable>`，使用临时文件和正常授权，不启用全局指针兜底。
 - MCP 的 9 个核心 tools 的 description / input schema 按官方 `computer-use` 文案和参数面收敛，macOS 额外提供 `query`，尽量减少 host 侧提示词和 tool surface 偏差。
 - JS REPL 的 API 和当前官方 code-first 形态对齐到异步 app binding，而不是把离散 tools 简单包成同步函数。snapshot 的 `windowPlacement` 以及 keyboard action 的 `keyMethod` 会转换成 native tool 的 snake_case 参数。实现不复制或运行 proprietary `@oai/*` package；协议和行为记录在 `docs/references/js-repl.md`。
@@ -80,7 +81,7 @@
 - 对真实 app 的 `get_app_state` / action tool 入口，当前只保留一层密码管理器 bundle denylist：bundle-id 直传时直接返回 safety denial；名称匹配时默认不解析到这些 app。终端、Chrome / Atlas 和系统组件不再属于内置阻止目标。
 - 普通 app 的 element frame 当前按“窗口左上角为原点”的 window-relative 坐标输出，便于后续把 `element_index` 和截图坐标统一到同一套参考系。点击 AX 命中测试接收窗口点，仅加窗口屏幕原点；截图坐标在入口换算一次，元素索引点击不依赖截图。真实 AppKit 回归可运行 `node scripts/tests/macos-hit-test-smoke.mjs <signed-ocu-executable>`（需要现有辅助功能、录屏权限和 Retina 显示器）。
 - 三个平台的显式 `get_app_state` 均支持 `include_ax` / `include_screenshot`，默认 true，至少保留一项。JS 对应 `includeAX` / `includeScreenshot`，CLI snapshot 提供同名连字符参数。关闭 AX 跳过树、焦点和选区，并使旧快照 / 查询索引及别名失效；关闭截图跳过捕获与编码，元素操作仍可用，截图坐标操作须重新获取图片。参数经 macOS app agent 转发；不改变动作回读，也不做自动图片去重。见 [按需观察](selective-observation.md)。
-- 三平台 `set_value` 在成功返回前验证控件实际值，文本精确保留空白和 Unicode，空字符串可清空；只有原生数值 / 布尔属性采用对应类型比较。关闭完整动作回读不跳过验证，最多轮询 0.6 秒且不重写；失败应重新观察后再决定是否重试。见 [写入验证](set-value-verification.md)。
+- 三平台 `set_value` 在成功返回前验证普通控件实际值（macOS 已标记密码框仅确认写入被接受，不回读密码），文本精确保留空白和 Unicode，空字符串可清空；只有原生数值 / 布尔属性采用对应类型比较。关闭完整动作回读不跳过验证，最多轮询 0.6 秒且不重写；失败应重新观察后再决定是否重试。见 [写入验证](set-value-verification.md)。
 - macOS 额外提供 `query` 和 `select_text`，当前 native surface 为 11 个工具；Linux / Windows 仍为 9 个核心工具。JS `app.selectText(elementIndex, text, {prefix?, suffix?, selection?})` 复用快照或 query 索引，支持选中文字及前后光标。按字面文本和 UTF-16 定位、拒绝歧义；写入前及返回前检查会话，验证文本未变且实际选区等于请求，即使关闭完整回读也不能省略验证。失败通过 native `isError` / JS 异常传出；结果刷新使用 read-only recovery，不通过激活、键盘或真实指针补救。
 - `click` / `set_value` 在执行真实动作前后，会额外驱动一层透明 `SoftwareCursorOverlay` window：两者的移动阶段现在共用一条 heading-driven 的官方风格 motion 内核，显式把“当前 cursor 朝向”和“最终 resting pose”一起喂给选路器，优先生成需要时先掉头、再沿车头方向推进的 C 形/单侧大弧轨迹；首次显示时按官方 binary 的 fresh state 从 AppKit 全局 `(0,0)` window origin 生成起点，后续动作继续复用上一帧 visible tip。真正显示出来的 cursor 不再直接等于 path sample，而是经过一层独立的 visual dynamics 状态，把 visible tip、velocity、angle 和 fog/offset 持续推进。`click` 结尾会衔接 click pulse 和更明显但仍然很小的 rotate wobble，`set_value` 则只做 settle / idle，不给 pulse；两者收尾后会在目标点继续保持 idle 状态，等待下一次动作时 tip 保持 anchored、只保留可感知的小角度摆动；只有连续 30 秒没有新动作时才做 cleanup，这样连续 tool call 不会反复从 fresh `(0,0)` 起步；如果宿主在任务 / turn 结束时发出 `turn-ended`，cursor 会立即消失并清掉本轮位置状态。
 - overlay 用目标点相对窗口的锚点跟随窗口移动；行进、settle、点击反馈和 idle 都读取最新缓存帧，发现位置变化时直接重定位可见 tip 并清掉旧速度。窗口帧在后台串行读取，最多 30 Hz、同时最多一个请求，避免 AX 阻塞渲染线程；优先读取快照持有的 AX 窗口，仅在没有 AX 元素时使用窗口列表，读取失败保留最后有效帧。只保留当前窗口的追踪状态，reset / idle 超时后释放；这层跟随只调整显示位置，输入投递仍走既有路径。
@@ -130,11 +131,17 @@
 - Windows runtime 位于 `apps/OpenComputerUseWindows`，以 Go 维护 CLI、`call --calls` sequence、MCP JSON-RPC、tool schema 和进程内 snapshot cache。
 - 构建入口是 `scripts/build-open-computer-use-windows.sh --arch arm64|amd64`，默认输出到 `dist/windows/<arch>/open-computer-use.exe`；npm release package 会把两个 Windows artifact 内置到已有 root/alias packages，Node launcher 按 `process.platform/process.arch` 自动选择。
 - Go runtime 通过 `go:embed` 带上 `runtime.ps1`，执行 tool call 时临时落盘并调用 Windows PowerShell。PowerShell bridge 使用 `System.Windows.Automation` 做 app/window/element discovery、tree rendering、UIA pattern action、ValuePattern set value 和 ScrollPattern scroll；当目标 app 不暴露对应 pattern 时，fallback 到 `PostMessage` / `SendMessage` 形式的 Win32 window message。PowerShell 进程启动时会通过 `SetProcessDpiAwarenessContext` / `SetThreadDpiAwarenessContext` 对齐到物理坐标空间，因为操作文件里的 `windowBounds` 和 UIA frame 都是物理像素，而 DPI-unaware 进程的 `GetSystemMetrics` / `GetWindowRect` 返回的是虚拟化尺度。
-- Windows runtime 默认只连接已经运行的 app，不会在 `get_app_state` 找不到进程时自动 `Start-Process`，也不会默认允许 `SetFocus` secondary action；这两条前台抢占路径分别需要 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH=1` 和 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS=1` 显式打开。`type_text` 默认优先对可写文本控件的 child HWND 发送 `EM_SETSEL` / `EM_REPLACESEL`，不再默认走可能触发前台激活的 UIA `ValuePattern.SetValue` fallback；需要旧行为时必须设置 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1`。UIA pattern 和 Win32 message fallback 本身仍是 best-effort：很多控件可以在后台响应，但 Windows 没有一套对所有 GUI toolkit 都等价于 macOS AX 的后台键鼠输入模型。
+- Windows runtime 默认只连接已经运行的 app，不会在 `get_app_state` 找不到进程时自动 `Start-Process`，也不会默认允许 `SetFocus` secondary action；这两条前台抢占路径分别需要 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH=1` 和 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_FOCUS_ACTIONS=1` 显式打开。`type_text` 默认优先对有键盘焦点的 Edit / RichEdit child HWND 发送 `EM_REPLACESEL`（保留当前选区），焦点未知时只选窗口里唯一且可写的文本控件（包含无 ValuePattern / 只读控件一起计数，多个时拒绝），不再默认走可能触发前台激活的 UIA `ValuePattern.SetValue` fallback；需要旧行为时必须设置 `OPEN_COMPUTER_USE_WINDOWS_ALLOW_UIA_TEXT_FALLBACK=1`。UIA pattern 和 Win32 message fallback 本身仍是 best-effort：很多控件可以在后台响应，但 Windows 没有一套对所有 GUI toolkit 都等价于 macOS AX 的后台键鼠输入模型。
 - Windows screenshot 会先检查主窗口可见、未最小化、未被 DWM cloaked、与 virtual screen 相交，并要求窗口宽高至少 64 像素且面积至少 20,000 像素；`list_apps` 也只列出通过这组可捕获性检查的窗口。PowerShell bridge 通过后，Go 层还会解码 PNG header 并用同一尺寸门槛复核。任一检查失败时 snapshot 仍可返回 UI Automation tree，但省略 MCP `image` block；coordinate click / drag 会明确失败，element-targeted action 仍可尝试。实现不会为退化窗口放大、补边或生成占位截图。窗口与 virtual screen 的交集判断在物理坐标下进行，因此在 125% / 150% 缩放且窗口完全位于虚拟化屏幕之外时不会误判为不可捕获。
 - 这 9 个 tool 的协议面与 macOS 主线保持一致：`list_apps`、`get_app_state`、`click`、`perform_secondary_action`、`scroll`、`drag`、`type_text`、`press_key`、`set_value`。其中 element-targeted action 会优先复用上一轮 `get_app_state` 的 runtime id / automation metadata，coordinate action 使用 screenshot/window-relative 坐标。
 - Windows 截图通过 `PrintWindow(PW_RENDERFULLCONTENT)` 捕获目标 HWND，失败时省略图片，不回退到可能包含其他应用的桌面像素；捕获前后核对窗口几何。posted click 在目标子窗口层级内定位接收者，并核对窗口、元素和子控件局部坐标，检查消息投递结果，异常时尝试释放鼠标。真实遮挡截图与嵌套控件回归见 [Windows targeting](windows-targeting.md)；GPU / 受保护窗口仍取决于应用对 PrintWindow 的支持。
-- Windows `click_method=accessibility` 使用 UIA，`app_post` 始终使用 HWND 消息。`click_method=global` 要求 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`；开启后，auto 点击及 scroll 的 UIA 失败回退、drag 也可使用真实指针。`press_key` 的 auto 始终使用窗口消息，真实按键需显式 `key_method=global` 及同一环境开关。物理输入通过 SendInput 检查返回值、finally 释放按键 / 鼠标，核对观察的 PID / HWND、最新几何、前台及坐标命中窗口；普通 SetForegroundWindow 失败就拒绝，不模拟 Alt 强行抢前台。macOS-only sky_click / sky_key 继续明确拒绝。见 [Windows 输入说明](windows-input.md)。
+- Windows 动作送达后，即使随后读取窗口失败（例如点击关闭了窗口），也报告动作已送达而不是失败：结果写明读取失败的原因，丢弃该 app 的旧快照，要求下一步先 `get_app_state`，避免模型重试导致重复动作。动作类工具在 30 s 超时或 bridge 通信失败时提示结果未知、可能已送达；这些失败同样作废所有同进程快照别名，不允许沿用旧索引。
+- Windows 元素动作核对原 RuntimeId、控件类型、AutomationId 与完整名称的 SHA-256 摘要；引用失效或身份变化时要求重新观察，不搜索同名替代对象。名称摘要独立于展示 text_limit，截断之后的变化也能检测。
+- Windows 按窗口而不是 `Process.MainWindowHandle` 解析 app：`EnumWindows` 按 z-order 列出可见、无 owner 的顶层窗口，依次按 pid、进程名、窗口标题（先精确、后包含）匹配。UWP 的 `ApplicationFrameWindow` 归到它承载的 CoreWindow 所在进程，所以 `CalculatorApp` 等 UWP app 能按自己的进程名找到，多个 UWP app 不再共用 ApplicationFrameHost 的一个标题；`list_apps` 用同一份列表。主窗口被模态对话框禁用时，沿 owner 链寻找最内层对话框作为根。数字 PID 不回退到标题匹配；标题包含按字面处理。宿主 HWND 与内容进程不同的窗口拒绝 posted 输入回退，避免投给宿主；见 [窗口定位](windows-targeting.md)。
+- 目标进程的完整性级别高于 Windows runtime（目标以管理员身份运行而 OCU 没有）时，所有动作在发送前拒绝；hosted 窗口同时检查内容与宿主进程：UIPI 可能阻断这类输入，仅靠 SendInput 返回值不能判定阻断原因。级别读不到时也拒绝输入；`get_app_state` 照常。
+- Windows 的 Toggle / Select / Expand / Collapse（含 `click` 走 SelectionItem / Toggle pattern 的情况）发送一次后回读状态，最多 0.6 秒，未达到预期就报错并提示先重新观察；ScrollPattern 调用抛错时报告不确定结果，不再交给滚轮回退重复滚动。见 [写入验证](set-value-verification.md)。
+- 读取 UI Automation 和发送动作之前先探测目标窗口是否还在处理消息（`IsHungAppWindow`，以及 1 s 的 `SendMessageTimeout(WM_NULL, SMTO_ABORTIFHUNG)`）；超时连续两次没有回应就报告 app 无响应；权限拒绝等探测错误单独报告，不再让每次调用卡到 30 s 超时，也不把输入排进挂起窗口的消息队列。
+- Windows `click_method=accessibility` 使用 UIA，`app_post` 始终使用 HWND 消息。`click_method=global` 要求 `OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1`；开启后，auto 点击及缺少 ScrollPattern 时的 scroll 回退、drag 也可使用真实指针。`press_key` 的 auto 始终使用窗口消息，发给窗口内有键盘焦点的控件，并拒绝窗口消息无法携带修饰键的组合键，真实按键需显式 `key_method=global` 及同一环境开关。物理输入通过 SendInput 检查返回值、finally 释放按键 / 鼠标，核对观察的 PID / HWND、最新几何、前台及坐标命中窗口；普通 SetForegroundWindow 失败就拒绝，不模拟 Alt 强行抢前台。macOS-only sky_click / sky_key 继续明确拒绝。见 [Windows 输入说明](windows-input.md)。
 - Windows UI Automation 需要运行在已登录用户的桌面 session 里。通过 SSH 作为脱离桌面的后台进程运行时，PowerShell 可以启动并返回 JSON，但系统可能不给它暴露顶层窗口；这种情况下 `list_apps` 会是空，`get_app_state` 可能返回 `appNotFound(...)`。
 - Windows 已有独立 WPF 观察 fixture 和 Windows PR smoke，覆盖观察、滚动、物理输入及截图边界。其余工具 / toolkit 覆盖，以及 visual cursor overlay、installer/onboarding、code signing 仍待补齐。后续 TODO 记录在 `docs/exec-plans/active/20260422-windows-computer-use-runtime.md`。
 
@@ -148,9 +155,10 @@
 - Linux runtime 需要运行在已登录桌面用户 session 里。缺少 `XDG_RUNTIME_DIR`、`DBUS_SESSION_BUS_ADDRESS` 或 display 环境时，Go runtime 会在启动 Python AT-SPI bridge 前尝试从 `/run/user/<uid>` 和常见桌面进程自动发现当前用户的 session bus、display / Wayland 值；纯 SSH tty 如果找不到已登录桌面 session，可以启动二进制，但不能直接 inspect 或操作 GUI session。
 - `get_app_state` 的 accessibility tree 在 GTK/GNOME app 上可能很深，Linux bridge 使用与 macOS / Windows 一致的 1200 节点、64 层默认 tree budget，并支持显式提高 `max_tree_nodes` / `max_tree_depth`。截图通过 GDK root window best-effort capture；GNOME Wayland 可能返回黑图，bridge 会检测全黑采样并省略 image block。
 - 焦点摘要和选区在快照已经选定的窗口里共用一次查找，分别受 `max_tree_nodes` / `max_tree_depth` 约束；到深度边界后不再读取下一层子节点，查找未完成时追加明确提示。选中文字使用标准 AT-SPI `get_n_selections` / `get_selection` 接口读取。实现与隔离 GTK 验证见 [Linux 焦点查找](linux-bounded-focus.md)。
+- AT-SPI role 为 `password text` 的字段不读取 Text：快照的 `value`、tree 行和 `selectedText` 都不含它的内容。GTK 4 的 `GtkPasswordEntry` 对 `GetText` 返回明文；GTK 4 中 `visibility=false` 的普通 `GtkEntry` 报告 role `text`，无法从 AT-SPI 识别。
 - `OPEN_COMPUTER_USE_LINUX_LIGHTWEIGHT_HIDDEN=1` 可省略明确非 SHOWING 节点的位置、值等详情，保留节点、索引及子树；默认关闭，未知状态继续完整读取。使用方式与真实 GTK 验证见 [Linux 隐藏控件详情](linux-hidden-details.md)。
 - 这 9 个 tool 的协议面与 macOS / Windows 保持一致：`list_apps`、`get_app_state`、`click`、`perform_secondary_action`、`scroll`、`drag`、`type_text`、`press_key`、`set_value`。其中 element-targeted action 会优先复用上一轮 `get_app_state` 的 runtime path metadata，coordinate action 使用 screenshot/window-relative 坐标。
-- Linux `click_method=accessibility` 映射到 AT-SPI action，`global` 映射到 AT-SPI mouse synthesis 并要求全局指针环境变量；AT-SPI 没有等价的进程定向 mouse dispatch，因此 `app_post` 和 macOS-only 的 `sky_click` 会在 snapshot lookup 前明确返回 unsupported，`key_method=sky_key` 也一样。`auto` 仍保持 AT-SPI action 优先、mouse synthesis fallback 的现有行为。
+- Linux `click_method=accessibility` 映射到 AT-SPI action，`global` 映射到 AT-SPI mouse synthesis 并要求全局指针环境变量；AT-SPI 没有等价的进程定向 mouse dispatch，因此 `app_post` 和 macOS-only 的 `sky_click` 会在 snapshot lookup 前明确返回 unsupported，`key_method=sky_key` 也一样。`auto` 仍保持 AT-SPI action 优先、mouse synthesis fallback 的现有行为。GTK 3 文本字段（`text` / `entry` / `password text` / `spin button`）的 `activate` action 是 Enter 键（“Activates the entry”），执行它会提交字段而不是聚焦，所以不当作点击：`auto` 对它改用指针点击，`accessibility` 报告无法点击。GTK 4 同名 action 保持不变（X11 上 GTK 4 没有可用的指针坐标），Gecko 和 Chromium 的 `activate` 本就是聚焦。
 - Linux 动作回读已有独立 GTK fixture，可在私有 D-Bus / Xvfb 中通过 native MCP 复测；运行方式见 [Linux 动作回读](linux-action-read-back.md)。当前 Linux 侧仍是功能性第一版：没有 visual cursor overlay、没有 installer/desktop entry，也没有覆盖全部工具的 Linux fixture。后续 TODO 记录在 `docs/exec-plans/active/20260422-linux-computer-use-runtime.md`。
 
 ## macOS Locked Use 实验
@@ -158,6 +166,8 @@
 - Guardian / watchdog 的 HID 监控使用独立设备枚举与逐设备生命周期；独占设备可以跳过，但已枚举输入类别必须有可观察来源。拓扑变化或输入错误使当前监控失效；不以一个无关设备可打开代替键盘覆盖。Karabiner / Secure Input 验证边界见 [输入监控](locked-use-input-monitor.md)。
 
 - 主 Guardian 与 watchdog 共用的遮罩在初始化时使用屏幕局部坐标，后续 `setFrame` 使用 Cocoa 全局坐标；WindowServer 覆盖仍以 Quartz 全局边界严格检查。旧版的后续定位可掩盖初始偏移，实测差异与复现见 [副屏遮罩坐标](locked-use-shield-placement.md)。
+
+- app agent 在 Locked Use 申请租约前唤醒暗屏并临时保活；保活持续到双保护释放，失败与失联都有清理上限，准入规则保持不变。实现与验证边界见 [显示器唤醒与保活](locked-use-display-readiness.md)。
 
 - Guardian 在重连后先处理握手回复中的指令，再发送普通报告；两类回复共用效果处理入口。Broker 回到 idle 后仍允许已认证 Guardian 完成清理。见 [事故回放](locked-use-incident-replay.md)。
 
@@ -218,3 +228,15 @@ macOS `doctor --json` 在 CLI 和 app-agent proxy 路径复用 `PermissionDiagno
 Locked Use’s non-UI authorization mechanism is registered with `,privileged` and restricted to Apple's root authorizationhosthelper peers. A separate load-check right must return a fixed extractable context marker before the installer attaches the remote branch to system.login.screensaver; signature checks and a denied AuthorizationCopyRights result alone do not prove host compatibility. The original native fallback is preserved.
 
 The load-check grants only its isolated right, with `shared=false` and a fresh AuthorizationRef that is destroyed afterwards. authd does not export context on a denied result. It reads/writes no credentials and never evaluates system.login.screensaver; successful marker export is required before installation changes that policy.
+
+密码字段观察不会返回已标记密码控件的值或选区；Linux 与 Windows 的识别方式、真实 fixture 和已知边界见 [密码字段](password-fields.md)。
+
+macOS 点击链在 AX 动作结果不确定时停止，不再切换方法重发；部分成功的连击也不会整组重发。复现与边界见 [点击结果](click-outcomes.md)。
+
+Windows Chromium/Electron 的危险 TextPattern 选区读取在调用前跳过；未知窗口和嵌入式 Chromium 也不探测该选区，普通原生控件保留。见 [Windows 选区](windows-selected-text.md)。
+
+Linux 会话发现排除沙盒进程，不再导入其他进程的 AT_SPI_BUS_ADDRESS；显式调用者值保留，默认使用 libatspi 的会话总线查询。见 [会话发现](linux-session-discovery.md)。
+
+macOS 快照元素动作在输入前核对原 AX 引用的 role/subrole、名称和 identifier；静态文字和弹出按钮额外核对值。身份变化、引用失效或读取失败要求重新观察，不搜索同名替代对象。普通输入值和勾选状态不作为身份；当前 role/subrole 确认后才按需读值，密码字段不读值。真实回归入口：`scripts/tests/macos-element-identity-smoke.mjs`。
+
+macOS 以元素索引点击或执行次要动作前，会重读 `AXEnabled`；明确禁用的普通控件拒绝输入。菜单项保留原行为，因为关闭的菜单可能暴露过期的启用状态。真实 AppKit 回归入口为 `scripts/tests/macos-disabled-control-smoke.mjs`。

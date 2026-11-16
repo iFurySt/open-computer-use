@@ -728,6 +728,68 @@ final class OpenComputerUseKitTests: XCTestCase {
         XCTAssertEqual(resetCount, 1)
     }
 
+    func testMCPNotificationsAreNeverAnswered() {
+        let server = StdioMCPServer(service: ComputerUseService(), backgroundStateReset: {})
+        for method in ["notifications/cancelled", "notifications/initialized", "notifications/roots/list_changed", "tools/call"] {
+            XCTAssertNil(server.handle(line: #"{"jsonrpc":"2.0","method":"\#(method)","params":{"requestId":1}}"#), method)
+        }
+    }
+
+    func testMCPCancelSkipsAWaitingRequestAndDropsTheRunningOnesAnswer() {
+        final class Lines: @unchecked Sendable {
+            var rest = [
+                #"{"jsonrpc":"2.0","id":1,"method":"tools/call"}"#,
+                #"{"jsonrpc":"2.0","id":"1","method":"tools/call"}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":"1"}}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":1}}"#,
+                #"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
+            ]
+            let ended = DispatchSemaphore(value: 0)
+            let started = DispatchSemaphore(value: 0)
+            func next() -> String? {
+                if rest.count == 4 { _ = started.wait(timeout: .now() + 5) }
+                if rest.isEmpty { ended.signal(); return nil }
+                return rest.removeFirst()
+            }
+        }
+        let lines = Lines()
+        let requests = MCPStdinRequests(readLine: { lines.next() })
+        XCTAssertEqual(requests.next()?.line.contains(#""id":1"#), true)
+        lines.started.signal()
+        // Every line is read while request 1 runs: "1" is cancelled before it starts, 1 while it runs.
+        XCTAssertEqual(lines.ended.wait(timeout: .now() + 5), .success)
+        XCTAssertFalse(requests.finish())
+        XCTAssertEqual(requests.next()?.line.contains("ping"), true)
+        XCTAssertTrue(requests.finish())
+        XCTAssertNil(requests.next())
+    }
+
+    func testMCPCancellationIgnoresInitializeAndMalformedNotifications() {
+        final class Lines: @unchecked Sendable {
+            var rest = [
+                #"{"jsonrpc":"2.0","id":0,"method":"initialize"}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":0}}"#,
+                #"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":true}}"#,
+                #"{"method":"notifications/cancelled","params":{"requestId":1}}"#,
+                #"{"jsonrpc":"2.0","id":2,"method":"notifications/cancelled","params":{"requestId":1}}"#,
+            ]
+            let ended = DispatchSemaphore(value: 0)
+            func next() -> String? {
+                if rest.isEmpty { ended.signal(); return nil }
+                return rest.removeFirst()
+            }
+        }
+        let lines = Lines()
+        let requests = MCPStdinRequests(readLine: { lines.next() })
+        XCTAssertEqual(lines.ended.wait(timeout: .now() + 5), .success)
+        for method in ["initialize", "ping", "notifications/cancelled"] {
+            XCTAssertTrue(requests.next()?.line.contains(method) == true)
+            XCTAssertTrue(requests.finish())
+        }
+        XCTAssertNil(requests.next())
+    }
+
     func testWindowRelativeFrameUsesSharedGlobalCoordinates() {
         let window = CGRect(x: 1486, y: 556, width: 919, height: 644)
         let child = CGRect(x: 1486, y: 556, width: 919, height: 644)
@@ -2207,6 +2269,79 @@ final class OpenComputerUseKitTests: XCTestCase {
                 "AXUIElementIsAttributeSettable(AXValue) failed with -25205"
             )
         }
+    }
+
+    func testClickSequenceNeverFallsBackAfterPartialDelivery() throws {
+        for outcomes: [AXError] in [[.success, .actionUnsupported], [.success, .cannotComplete], [.cannotComplete]] {
+            var calls = 0
+            XCTAssertThrowsError(try performClickActionSequence(action: "AXPress", repeatCount: 3, send: {
+                defer { calls += 1 }
+                return outcomes[calls]
+            }, pause: {}))
+            XCTAssertEqual(calls, outcomes.count)
+        }
+        var calls = 0
+        XCTAssertFalse(try performClickActionSequence(action: "AXPress", repeatCount: 2, send: {
+            calls += 1; return .actionUnsupported
+        }, pause: {}))
+        XCTAssertEqual(calls, 1)
+        calls = 0
+        XCTAssertTrue(try performClickActionSequence(action: "AXPress", repeatCount: 2, send: {
+            calls += 1; return .success
+        }, pause: {}))
+        XCTAssertEqual(calls, 2)
+        calls = 0
+        XCTAssertTrue(try performClickActionSequence(action: "AXOpen", repeatCount: 2, send: {
+            calls += 1; return .attributeUnsupported
+        }, pause: {}))
+        XCTAssertEqual(calls, 1, "Legacy AXOpen handling must not open twice")
+    }
+
+    func testClickChainTriesAnotherWayOnlyWhenTheAppRanNothing() throws {
+        func ran(_ result: AXError, _ action: String = kAXPressAction) -> String {
+            do { return try clickActionRan(result, action: action) ? "ran" : "refused" } catch { return "stop" }
+        }
+        func set(_ result: AXError) -> String {
+            do { return try clickAttributeWasSet(result, attribute: kAXSelectedChildrenAttribute) ? "set" : "refused" } catch { return "stop" }
+        }
+
+        XCTAssertEqual(ran(.success), "ran")
+        for refused: AXError in [.actionUnsupported, .illegalArgument, .notImplemented, .invalidUIElement] {
+            XCTAssertEqual(ran(refused), "refused", "\(refused.rawValue)")
+        }
+        // An app busy past the AX timeout answers cannotComplete while the press runs.
+        for mayHaveActed: AXError in [.failure, .cannotComplete, .attributeUnsupported, .noValue, .apiDisabled] {
+            XCTAssertEqual(ran(mayHaveActed), "stop", "\(mayHaveActed.rawValue)")
+        }
+        XCTAssertEqual(ran(.attributeUnsupported, "AXOpen"), "ran")
+
+        XCTAssertEqual(set(.success), "set")
+        for refused: AXError in [.attributeUnsupported, .actionUnsupported, .illegalArgument, .noValue, .notImplemented, .invalidUIElement] {
+            XCTAssertEqual(set(refused), "refused", "\(refused.rawValue)")
+        }
+        for mayHaveApplied: AXError in [.failure, .cannotComplete] {
+            XCTAssertEqual(set(mayHaveApplied), "stop", "\(mayHaveApplied.rawValue)")
+        }
+
+        XCTAssertThrowsError(try clickActionRan(.cannotComplete, action: kAXPressAction)) { error in
+            XCTAssertEqual(
+                (error as? ComputerUseError)?.errorDescription,
+                "click: AXPress went out and the app did not answer in time; it may have acted, so no other click method was tried. Read the app state before retrying; a repeat could act twice."
+            )
+        }
+    }
+
+    func testPressOnADisabledControlIsRefusedBeforeInput() {
+        XCTAssertEqual(
+            disabledControlRefusal(enabled: false, role: kAXButtonRole as String, elementIndex: "3"),
+            "element 3 is disabled, so nothing was sent. Wait for it to be enabled, or act on another element."
+        )
+        XCTAssertNil(disabledControlRefusal(enabled: true, role: kAXButtonRole as String, elementIndex: "3"))
+        // A window or group without AXEnabled is not refused.
+        XCTAssertNil(disabledControlRefusal(enabled: nil, role: kAXWindowRole as String, elementIndex: "0"))
+        // A closed menu reports its items as they were when it last opened.
+        XCTAssertNil(disabledControlRefusal(enabled: false, role: kAXMenuItemRole as String, elementIndex: "9"))
+        XCTAssertNil(disabledControlRefusal(enabled: false, role: kAXMenuBarItemRole as String, elementIndex: "8"))
     }
 
     func testMakeVisualCursorTargetUsesWindowRelativeElementCenter() {

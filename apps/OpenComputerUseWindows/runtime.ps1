@@ -9,6 +9,7 @@ $AccessibilityTreeMaxNodeCount = 1200
 $AccessibilityTreeMaxDepth = 64
 $MinimumScreenshotDimension = 64
 $MinimumScreenshotArea = 20000
+$HangProbeTimeoutMs = 1000
 
 # Set output encoding to UTF-8 to properly handle non-ASCII characters
 $OutputEncoding = [System.Text.Encoding]::UTF8
@@ -21,6 +22,7 @@ Add-Type -AssemblyName System.Drawing
 Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public static class OCUWin32 {
     [StructLayout(LayoutKind.Sequential)]
@@ -52,6 +54,54 @@ public static class OCUWin32 {
     [DllImport("dwmapi.dll")]
     public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out int value, int valueSize);
 
+    public class TopWindow {
+        public IntPtr Handle, Owner, ContentHandle;
+        public uint ProcessId, HostProcessId;
+        public bool Enabled, Hosted;
+        public string Title;
+    }
+
+    private delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr parameter);
+    [DllImport("user32.dll")]
+    private static extern bool EnumWindows(EnumWindowsProc callback, IntPtr parameter);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetWindow(IntPtr hwnd, uint command);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowEx(IntPtr parent, IntPtr after, string className, string title);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetWindowText(IntPtr hwnd, System.Text.StringBuilder text, int size);
+
+    // Visible top-level windows in z-order, topmost first. A UWP app's window is an ApplicationFrameWindow that
+    // belongs to ApplicationFrameHost.exe; it is reported under the pid of the app whose CoreWindow it hosts.
+    public static System.Collections.Generic.List<TopWindow> TopLevelWindows() {
+        System.Collections.Generic.List<TopWindow> windows = new System.Collections.Generic.List<TopWindow>();
+        EnumWindows(delegate(IntPtr hwnd, IntPtr parameter) {
+            if (!IsWindowVisible(hwnd)) return true;
+            TopWindow window = new TopWindow();
+            window.Handle = hwnd;
+            window.Owner = GetWindow(hwnd, 4 /* GW_OWNER */);
+            window.Enabled = IsWindowEnabled(hwnd);
+            GetWindowThreadProcessId(hwnd, out window.ProcessId);
+            window.HostProcessId = window.ProcessId;
+            // Do not reinterpret an ordinary window just because it has a child with this class name.
+            if (ClassName(hwnd) == "ApplicationFrameWindow") {
+                IntPtr core = FindWindowEx(hwnd, IntPtr.Zero, "Windows.UI.Core.CoreWindow", null);
+                uint corePid;
+                if (core != IntPtr.Zero && GetWindowThreadProcessId(core, out corePid) != 0 && corePid != 0) {
+                    window.Hosted = corePid != window.ProcessId;
+                    window.ContentHandle = core;
+                    window.ProcessId = corePid;
+                }
+            }
+            System.Text.StringBuilder title = new System.Text.StringBuilder(512);
+            GetWindowText(hwnd, title, title.Capacity);
+            window.Title = title.ToString();
+            windows.Add(window);
+            return true;
+        }, IntPtr.Zero);
+        return windows;
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
 
@@ -69,6 +119,17 @@ public static class OCUWin32 {
 
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern int GetClassName(IntPtr hwnd, System.Text.StringBuilder name, int count);
+
+    public static string WindowClass(IntPtr hwnd, uint expectedProcessId) {
+        uint pid;
+        if (hwnd == IntPtr.Zero || GetWindowThreadProcessId(hwnd, out pid) == 0 || pid != expectedProcessId)
+            return null;
+        var name = new System.Text.StringBuilder(256);
+        return GetClassName(hwnd, name, name.Capacity) > 0 ? name.ToString() : null;
+    }
 
     // Hit-test inside the requested window, never against the desktop occluder.
     public static IntPtr ClickTarget(IntPtr root, int x, int y) {
@@ -93,6 +154,37 @@ public static class OCUWin32 {
         throw new InvalidOperationException("Click target hierarchy is too deep.");
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct GUITHREADINFO {
+        public int cbSize, flags;
+        public IntPtr hwndActive, hwndFocus, hwndCapture, hwndMenuOwner, hwndMoveSize, hwndCaret;
+        public RECT rcCaret;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetGUIThreadInfo(uint threadId, ref GUITHREADINFO info);
+
+    // The window with keyboard focus on the target window's own GUI thread, or zero when that thread has none.
+    public static IntPtr FocusedWindow(IntPtr window) {
+        uint pid;
+        uint thread = GetWindowThreadProcessId(window, out pid);
+        GUITHREADINFO info = new GUITHREADINFO();
+        info.cbSize = Marshal.SizeOf(typeof(GUITHREADINFO));
+        if (thread == 0 || !GetGUIThreadInfo(thread, ref info)) return IntPtr.Zero;
+        uint focusPid;
+        if (info.hwndFocus == IntPtr.Zero || GetWindowThreadProcessId(info.hwndFocus, out focusPid) == 0 || focusPid != pid)
+            return IntPtr.Zero;
+        return info.hwndFocus;
+    }
+
+    public static string ClassName(IntPtr hwnd) {
+        StringBuilder name = new StringBuilder(256);
+        return GetClassName(hwnd, name, name.Capacity) > 0 ? name.ToString() : "";
+    }
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    public static extern int GetWindowLong(IntPtr hwnd, int index);
+
     [DllImport("user32.dll")]
     public static extern bool ScreenToClient(IntPtr hWnd, ref POINT point);
 
@@ -104,6 +196,30 @@ public static class OCUWin32 {
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr SendMessage(IntPtr hWnd, UInt32 msg, IntPtr wParam, string lParam);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")]
+    private static extern bool IsHungAppWindow(IntPtr hWnd);
+    [DllImport("kernel32.dll", EntryPoint = "SetLastError")]
+    private static extern void ClearLastError(uint error);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern IntPtr SendMessageTimeout(IntPtr hWnd, UInt32 msg, IntPtr wParam, IntPtr lParam, uint flags, uint timeout, out IntPtr result);
+
+    // A window whose thread has stopped pumping messages: Windows already flags it hung, or it does not answer
+    // WM_NULL within timeoutMs. A handle that is no longer a window is not called hung.
+    public static bool IsHung(IntPtr hWnd, uint timeoutMs) {
+        IntPtr result;
+        if (!IsWindow(hWnd)) return false;
+        if (IsHungAppWindow(hWnd)) return true;
+        ClearLastError(0);
+        if (SendMessageTimeout(hWnd, 0 /* WM_NULL */, IntPtr.Zero, IntPtr.Zero,
+            0x0022 /* SMTO_ABORTIFHUNG | SMTO_ERRORONEXIT */, timeoutMs, out result) != IntPtr.Zero) return false;
+        int error = Marshal.GetLastWin32Error();
+        if (error == 0 || error == 1460 /* ERROR_TIMEOUT */) return true;
+        // A rejected probe (e.g. UIPI) is not evidence that the app hung.
+        throw new System.ComponentModel.Win32Exception(error, "Window response probe failed");
+    }
 
     [DllImport("user32.dll")]
     public static extern bool SetProcessDpiAwarenessContext(IntPtr value);
@@ -171,6 +287,41 @@ public static class OCUWin32 {
 
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern IntPtr OpenProcess(uint access, bool inherit, uint processId);
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr handle);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int returned);
+    [DllImport("advapi32.dll")]
+    private static extern IntPtr GetSidSubAuthorityCount(IntPtr sid);
+    [DllImport("advapi32.dll")]
+    private static extern IntPtr GetSidSubAuthority(IntPtr sid, uint index);
+
+    // The process's mandatory integrity level (0x2000 medium, 0x3000 high, 0x4000 system), or -1 if unreadable.
+    public static int IntegrityLevel(uint processId) {
+        IntPtr process = OpenProcess(0x1000 /* PROCESS_QUERY_LIMITED_INFORMATION */, false, processId);
+        if (process == IntPtr.Zero) return -1;
+        IntPtr token = IntPtr.Zero, buffer = IntPtr.Zero;
+        try {
+            if (!OpenProcessToken(process, 0x0008 /* TOKEN_QUERY */, out token)) return -1;
+            int length;
+            GetTokenInformation(token, 25 /* TokenIntegrityLevel */, IntPtr.Zero, 0, out length);
+            if (length <= 0) return -1;
+            buffer = Marshal.AllocHGlobal(length);
+            if (!GetTokenInformation(token, 25, buffer, length, out length)) return -1;
+            IntPtr sid = Marshal.ReadIntPtr(buffer); // TOKEN_MANDATORY_LABEL.Label.Sid
+            int count = Marshal.ReadByte(GetSidSubAuthorityCount(sid));
+            return count == 0 ? -1 : Marshal.ReadInt32(GetSidSubAuthority(sid, (uint)(count - 1)));
+        } finally {
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            if (token != IntPtr.Zero) CloseHandle(token);
+            CloseHandle(process);
+        }
+    }
 }
 "@
 
@@ -189,6 +340,8 @@ $WM_KEYUP = 0x0101
 $WM_CHAR = 0x0102
 $EM_SETSEL = 0x00B1
 $EM_REPLACESEL = 0x00C2
+$GWL_STYLE = -16
+$ES_READONLY = 0x0800
 
 # Screenshot coordinates, UIA bounding rectangles and the windowBounds recorded in
 # the operation file are physical pixels, while a DPI-unaware PowerShell process
@@ -545,9 +698,27 @@ function Send-Scroll([IntPtr]$hwnd, [int]$screenX, [int]$screenY, [string]$direc
     }
 }
 
+# A key typed on the keyboard reaches the control with keyboard focus, not the top-level window, which often
+# ignores key messages (a Win32 edit control's parent frame does). Posted keys go to the same control when its
+# thread reports one inside the target window, and to the window itself otherwise, as before.
+function Get-PostedKeyTarget([IntPtr]$hwnd) {
+    $focus = [OCUWin32]::FocusedWindow($hwnd)
+    if ($focus -ne [IntPtr]::Zero -and ($focus -eq $hwnd -or [OCUWin32]::IsChild($hwnd, $focus))) {
+        return $focus
+    }
+    return $hwnd
+}
+
+# Edit and RichEdit controls, including WinForms' superclasses (WindowsForms10.EDIT..., WindowsForms10.RichEdit20W...).
+function Test-EditWindowClass([string]$className) {
+    return $className -match '(^|\.)(Edit|RichEdit\w*)(\.|$)'
+}
+
 function Send-Text([IntPtr]$hwnd, [string]$text) {
     foreach ($char in $text.ToCharArray()) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)
+        if (-not [OCUWin32]::PostMessage($hwnd, $WM_CHAR, [IntPtr][int][char]$char, [IntPtr]::Zero)) {
+            throw "PostMessage character delivery failed."
+        }
         Start-Sleep -Milliseconds 8
     }
 }
@@ -557,23 +728,10 @@ function Send-TextToEditHandle([IntPtr]$hwnd, [string]$text, $element) {
         return $false
     }
 
-    try {
-        [void][OCUWin32]::SendMessage($hwnd, $EM_SETSEL, [IntPtr](-1), [IntPtr](-1))
-        [void][OCUWin32]::SendMessage($hwnd, $EM_REPLACESEL, [IntPtr]1, $text)
-        return $true
-    } catch {
-    }
-
-    try {
-        $current = ""
-        if ($null -ne $element) {
-            $current = Get-ElementValue $element
-        }
-        [void][OCUWin32]::SendMessage($hwnd, $WM_SETTEXT, [IntPtr]::Zero, ($current + $text))
-        return $true
-    } catch {
-        return $false
-    }
+    # Preserve the receiver's selection. Once a write is attempted, do not retry
+    # through WM_SETTEXT: it could replace the entire value or duplicate input.
+    [void][OCUWin32]::SendMessage($hwnd, $EM_REPLACESEL, [IntPtr]1, $text)
+    return $true
 }
 
 function Get-VirtualKey([string]$key) {
@@ -639,56 +797,63 @@ function Send-Key([IntPtr]$hwnd, [string]$key, [string]$method = "auto") {
         }
         return
     }
-    $parts = $key -split "\+"
-    $main = $parts[$parts.Length - 1]
-    $modifiers = @()
-    for ($i = 0; $i -lt $parts.Length - 1; $i++) {
-        switch ($parts[$i].ToLowerInvariant()) {
-            "ctrl" { $modifiers += 0x11 }
-            "control" { $modifiers += 0x11 }
-            "shift" { $modifiers += 0x10 }
-            "alt" { $modifiers += 0x12 }
-            "super" { $modifiers += 0x5B }
-            "win" { $modifiers += 0x5B }
-            "cmd" { $modifiers += 0x5B }
+    # Apps read Ctrl, Shift and Alt from the keyboard state, which posted messages do not change, so a posted
+    # ctrl+a arrives as a plain "a".
+    if ($key.Length -gt 1 -and $key.Contains("+")) {
+        throw "Window messages cannot carry modifier keys, so '$key' would arrive as its last key alone. Use key_method=global (requires OPEN_COMPUTER_USE_ALLOW_GLOBAL_POINTER_FALLBACKS=1)."
+    }
+    $vk = Get-VirtualKey $key
+    $target = Get-PostedKeyTarget $hwnd
+    if (-not [OCUWin32]::PostMessage($target, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)) { throw "PostMessage key delivery failed." }
+    try { Start-Sleep -Milliseconds 25 }
+    finally {
+        if (-not [OCUWin32]::PostMessage($target, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)) { throw "PostMessage key release failed." }
+    }
+}
+
+# UIPI can block input to higher-integrity processes; SendInput cannot identify that cause.
+# For hosted windows, both the content process and the frame host must be allowed.
+function Assert-InputAllowed($process) {
+    $own = [OCUWin32]::IntegrityLevel([uint32]$PID)
+    $targets = @([uint32]$process.Id)
+    if ($process.Hosted) { $targets += [uint32]$process.HostProcessId }
+    foreach ($targetId in $targets) {
+        $target = [OCUWin32]::IntegrityLevel($targetId)
+        if ($targetId -eq 0 -or $target -lt 0 -or $own -lt 0) {
+            throw "Cannot verify process integrity levels; no input was sent. Check that the target is still running and accessible, then observe it again."
         }
-    }
-    foreach ($modifier in $modifiers) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$modifier, [IntPtr]::Zero)
-    }
-    $vk = Get-VirtualKey $main
-    [void][OCUWin32]::PostMessage($hwnd, $WM_KEYDOWN, [IntPtr]$vk, [IntPtr]::Zero)
-    Start-Sleep -Milliseconds 25
-    [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$vk, [IntPtr]::Zero)
-    [array]::Reverse($modifiers)
-    foreach ($modifier in $modifiers) {
-        [void][OCUWin32]::PostMessage($hwnd, $WM_KEYUP, [IntPtr]$modifier, [IntPtr]::Zero)
+        if ($target -gt $own) {
+            throw "$($process.ProcessName) or its window host runs elevated, at a higher integrity level than Open Computer Use. No input was sent. Run the app without elevation, or run Open Computer Use elevated."
+        }
     }
 }
 
 function Resolve-App([string]$query) {
     $normalized = $query.Trim()
+    if ([string]::IsNullOrWhiteSpace($normalized)) { throw "app query must not be empty" }
     $processQuery = $normalized
     if ($processQuery.EndsWith(".exe", [System.StringComparison]::OrdinalIgnoreCase)) {
         $processQuery = $processQuery.Substring(0, $processQuery.Length - 4)
     }
-    $processes = @(Get-Process | Where-Object { $_.MainWindowHandle -ne 0 })
+    $windows = @(Get-AppWindows)
     $pidValue = 0
-    if ([int]::TryParse($normalized, [ref]$pidValue)) {
-        $match = $processes | Where-Object { $_.Id -eq $pidValue } | Select-Object -First 1
-        if ($null -ne $match) {
-            return $match
+    $isPid = [int]::TryParse($normalized, [ref]$pidValue)
+    $match = $null
+    # A numeric PID is an identity, never a fallback title or executable name.
+    if ($isPid) {
+        $match = $windows | Where-Object { $_.Id -eq $pidValue } | Select-Object -First 1
+        if ($null -eq $match) { throw "appNotFound(`"$query`")" }
+    } else {
+        foreach ($test in @(
+            { $_.ProcessName -ieq $processQuery },
+            { $_.MainWindowTitle -ieq $normalized },
+            { ([string]$_.MainWindowTitle).IndexOf($normalized, [StringComparison]::OrdinalIgnoreCase) -ge 0 })) {
+            $match = $windows | Where-Object $test | Select-Object -First 1
+            if ($null -ne $match) { break }
         }
     }
-
-    $match = $processes | Where-Object {
-        $_.ProcessName -ieq $processQuery -or
-        "$($_.ProcessName).exe" -ieq $normalized -or
-        $_.MainWindowTitle -ieq $normalized -or
-        $_.MainWindowTitle -ilike "*$normalized*"
-    } | Select-Object -First 1
     if ($null -ne $match) {
-        return $match
+        return (Resolve-ModalWindow $match)
     }
 
     if (Test-EnvFlagEnabled "OPEN_COMPUTER_USE_WINDOWS_ALLOW_APP_LAUNCH") {
@@ -696,9 +861,9 @@ function Resolve-App([string]$query) {
             $started = Start-Process -FilePath $normalized -PassThru
             for ($i = 0; $i -lt 20; $i++) {
                 Start-Sleep -Milliseconds 250
-                $candidate = Get-Process -Id $started.Id -ErrorAction SilentlyContinue
-                if ($null -ne $candidate -and $candidate.MainWindowHandle -ne 0) {
-                    return $candidate
+                $candidate = Get-AppWindows | Where-Object { $_.Id -eq $started.Id } | Select-Object -First 1
+                if ($null -ne $candidate) {
+                    return (Resolve-ModalWindow $candidate)
                 }
             }
         } catch {
@@ -708,8 +873,65 @@ function Resolve-App([string]$query) {
     throw "appNotFound(`"$query`")"
 }
 
+# Follow disabled owners through nested modal dialogs, bounded even if providers race or cycle.
+function Resolve-ModalWindow($match) {
+    $seen = @{}
+    $windows = @([OCUWin32]::TopLevelWindows())
+    for ($depth = 0; -not $match.Enabled; $depth++) {
+        $key = [long]$match.MainWindowHandle
+        if ($depth -ge 32 -or $seen.ContainsKey($key)) { throw "Modal window chain changed; observe the app again." }
+        $seen[$key] = $true
+        $dialog = $windows | Where-Object {
+            $_.Owner -eq $match.MainWindowHandle -and $_.ProcessId -eq $match.Id
+        } | Select-Object -First 1
+        if ($null -eq $dialog) { break }
+        $match.MainWindowHandle = $dialog.Handle
+        $match.MainWindowTitle = $dialog.Title
+        $match.Enabled = $dialog.Enabled
+        $match.Hosted = [bool]$dialog.Hosted
+        $match.HostProcessId = [int]$dialog.HostProcessId
+        $match.ContentWindowHandle = [long]$dialog.ContentHandle
+    }
+    return $match
+}
+
+# The apps' windows as (process, window) records, topmost first: every visible top-level window without an owner.
+# Process.MainWindowHandle names one window per process and misses UWP apps, whose window belongs to
+# ApplicationFrameHost.exe, so another app's title could match that frame instead.
+function Get-AppWindows {
+    $names = @{}
+    foreach ($process in (Get-Process)) {
+        $names[[uint32]$process.Id] = $process.ProcessName
+    }
+    foreach ($window in [OCUWin32]::TopLevelWindows()) {
+        if ($window.Owner -ne [IntPtr]::Zero -or -not $names.ContainsKey($window.ProcessId)) {
+            continue
+        }
+        [pscustomobject]@{
+            ProcessName = $names[$window.ProcessId]
+            Id = [int]$window.ProcessId
+            MainWindowHandle = $window.Handle
+            MainWindowTitle = $window.Title
+            Enabled = $window.Enabled
+            Hosted = [bool]$window.Hosted
+            HostProcessId = [int]$window.HostProcessId
+            ContentWindowHandle = [long]$window.ContentHandle
+        }
+    }
+}
+
+# A window whose thread has stopped pumping messages holds every UI Automation call and SendMessage made on it, so
+# each call would run into the bridge timeout. Two unanswered probes tell a hung window from one busy for a moment.
+function Assert-WindowResponds([IntPtr]$hwnd, [string]$name) {
+    if ([OCUWin32]::IsHung($hwnd, $HangProbeTimeoutMs) -and [OCUWin32]::IsHung($hwnd, $HangProbeTimeoutMs)) {
+        throw "$name is not responding: its window did not answer within $(2 * $HangProbeTimeoutMs / 1000) s. Try again once it responds."
+    }
+}
+
 function Get-MainElement($process) {
     if ($process.MainWindowHandle -ne 0) {
+        Assert-WindowResponds ([IntPtr]$process.MainWindowHandle) $process.ProcessName
+        if ($process.Hosted) { Assert-WindowResponds ([IntPtr]$process.ContentWindowHandle) $process.ProcessName }
         return [Windows.Automation.AutomationElement]::FromHandle([IntPtr]$process.MainWindowHandle)
     }
     $condition = New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ProcessIdProperty), $process.Id
@@ -818,7 +1040,13 @@ function Limit-Text([string]$Text, $TextLimit = $script:DefaultTextLimit) {
     return $Text
 }
 
+# Unknown password status is not permission to read a potentially sensitive value.
+function Test-PasswordElement($element) {
+    try { return ($element.Current.IsPassword -ne $false) } catch { return $true }
+}
+
 function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
+    if (Test-PasswordElement $element) { return "" }
     try {
         $valuePattern = $element.GetCurrentPattern([Windows.Automation.ValuePattern]::Pattern)
         $value = $valuePattern.Current.Value
@@ -832,15 +1060,23 @@ function Get-ElementValue($element, $TextLimit = $script:DefaultTextLimit) {
     }
 }
 
+function Get-NameDigest([string]$name) {
+    $hash = [Security.Cryptography.SHA256]::Create()
+    try { [Convert]::ToBase64String($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($name))) }
+    finally { $hash.Dispose() }
+}
+
 function Get-ElementRecord($element, [int]$index, $windowBounds, $TextLimit = $script:DefaultTextLimit) {
     $frame = Get-ElementFrame $element $windowBounds
+    $fullName = Get-ElementString $element "Name"
     $runtimeId = @()
     try { $runtimeId = @($element.GetRuntimeId()) } catch {}
     [pscustomobject]@{
         index = $index
         runtimeId = $runtimeId
         automationId = Get-ElementString $element "AutomationId"
-        name = Limit-Text (Get-ElementString $element "Name") $TextLimit
+        name = Limit-Text $fullName $TextLimit
+        nameDigest = Get-NameDigest $fullName
         controlType = Get-ElementControlTypeName $element
         localizedControlType = Get-ElementString $element "LocalizedControlType"
         className = Get-ElementString $element "ClassName"
@@ -866,12 +1102,11 @@ function New-TreeCacheRequest {
     $cache = New-Object Windows.Automation.CacheRequest
     $cache.TreeScope = [Windows.Automation.TreeScope]::Element
     $cache.TreeFilter = [Windows.Automation.Condition]::TrueCondition
-    foreach ($name in @('ControlType', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
+    foreach ($name in @('ControlType', 'IsPassword', 'IsOffscreen', 'BoundingRectangle', 'AutomationId', 'Name', 'LocalizedControlType', 'ClassName', 'NativeWindowHandle',
         'IsInvokePatternAvailable', 'IsTogglePatternAvailable', 'IsSelectionItemPatternAvailable', 'IsExpandCollapsePatternAvailable',
         'IsScrollItemPatternAvailable', 'IsScrollPatternAvailable', 'IsValuePatternAvailable')) {
         $cache.Add([Windows.Automation.AutomationElement]::($name + 'Property'))
     }
-    $cache.Add([Windows.Automation.ValuePattern]::ValueProperty)
     $cache.Add([Windows.Automation.ExpandCollapsePattern]::ExpandCollapseStateProperty)
     return $cache
 }
@@ -898,14 +1133,15 @@ function Get-TreeRecord($element, [int]$index, $windowBounds, $TextLimit) {
             elseif ($state -eq [Windows.Automation.ExpandCollapseState]::Expanded) { $actions.Add('Collapse') }
         }
         $value = ''
-        if ($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::IsValuePatternAvailableProperty)) {
-            $value = Limit-Text ([string]$element.GetCachedPropertyValue([Windows.Automation.ValuePattern]::ValueProperty)) $TextLimit
+        if ($info.IsPassword -eq $false) {
+            $value = Get-ElementValue $element $TextLimit
         }
         return [pscustomobject]@{
             index = $index
             runtimeId = @($element.GetCachedPropertyValue([Windows.Automation.AutomationElement]::RuntimeIdProperty))
             automationId = $info.AutomationId
             name = Limit-Text $info.Name $TextLimit
+            nameDigest = Get-NameDigest $info.Name
             controlType = $info.ControlType.ProgrammaticName
             localizedControlType = $info.LocalizedControlType
             className = $info.ClassName
@@ -1071,18 +1307,43 @@ function Get-FocusedSummary($processId, $TextLimit = $script:DefaultTextLimit) {
     return $null
 }
 
+# Three states: false is a known non-Chromium window; null means classification
+# failed. Unknown windows omit optional selected text instead of probing a risky provider.
+function Test-ChromiumWindow($processId) {
+    try {
+        $process = Get-Process -Id $processId -ErrorAction Stop
+        $className = [OCUWin32]::WindowClass($process.MainWindowHandle, [uint32]$processId)
+        if ([string]::IsNullOrEmpty($className)) { return $null }
+        return $className -like "Chrome_*"
+    } catch { return $null }
+}
+
+function Read-SafeSelectedText($focused, $TextLimit) {
+    if (Test-PasswordElement $focused) { return $null }
+    # Embedded Chromium controls can live under a non-Chromium host HWND.
+    if ($focused.Current.FrameworkId -eq 'Chrome' -or $focused.Current.ClassName -like 'Chrome_*') { return $null }
+    $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
+    $selection = $textPattern.GetSelection()
+    if ($selection.Count -gt 0) {
+        $maxLength = if ($null -eq $TextLimit) { -1 } else { [int]$TextLimit + 1 }
+        return Limit-Text ($selection.Item(0).GetText($maxLength)) $TextLimit
+    }
+    return $null
+}
+
 function Get-SelectedText($processId, $TextLimit = $script:DefaultTextLimit) {
+    # Chromium and Electron UIA providers raise an uncatchable AccessViolationException
+    # inside TextPatternRange.GetText, which terminates the PowerShell runspace and
+    # fails every observation/action for that app. Skip the selection read for them.
+    if ((Test-ChromiumWindow $processId) -ne $false) {
+        return $null
+    }
     try {
         $focused = [Windows.Automation.AutomationElement]::FocusedElement
         if ($null -eq $focused -or $focused.Current.ProcessId -ne $processId) {
             return $null
         }
-        $textPattern = $focused.GetCurrentPattern([Windows.Automation.TextPattern]::Pattern)
-        $selection = $textPattern.GetSelection()
-        if ($selection.Count -gt 0) {
-            $maxLength = if ($null -eq $TextLimit) { -1 } else { [int]$TextLimit + 1 }
-            return Limit-Text ($selection.Item(0).GetText($maxLength)) $TextLimit
-        }
+        return Read-SafeSelectedText $focused $TextLimit
     } catch {
     }
     return $null
@@ -1139,7 +1400,9 @@ function Build-Snapshot([string]$query, $TextLimit = $script:DefaultTextLimit, [
 
 function List-Apps {
     $lines = New-Object System.Collections.Generic.List[string]
-    foreach ($process in (Get-Process | Where-Object { $_.MainWindowHandle -ne 0 } | Sort-Object ProcessName, Id)) {
+    # Each app with its topmost window, as Resolve-App picks it.
+    $apps = @(Get-AppWindows | Group-Object Id | ForEach-Object { $_.Group[0] })
+    foreach ($process in ($apps | Sort-Object ProcessName, Id)) {
         if ($null -eq (Get-CapturableWindowFrame ([IntPtr]$process.MainWindowHandle))) {
             continue
         }
@@ -1178,30 +1441,20 @@ function Get-AllElements($root) {
 }
 
 function Find-Element($process, $record) {
-    if ($null -eq $record) {
-        return $null
-    }
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
+    if ($null -eq $record) { return $null }
+    foreach ($element in (Get-AllElements (Get-MainElement $process))) {
         try {
-            if (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId)) {
+            if (-not (Same-RuntimeId @($element.GetRuntimeId()) @($record.runtimeId))) { continue }
+            $current = $element.Current
+            if ($current.ControlType.ProgrammaticName -ceq $record.controlType -and
+                ([string]$current.AutomationId) -ceq ([string]$record.automationId) -and
+                -not [string]::IsNullOrEmpty($record.nameDigest) -and
+                (Get-NameDigest $current.Name) -ceq $record.nameDigest) {
                 return $element
             }
-        } catch {
-        }
+        } catch { }
     }
-    foreach ($element in (Get-AllElements $root)) {
-        try {
-            $sameAutomationId = -not [string]::IsNullOrWhiteSpace($record.automationId) -and $element.Current.AutomationId -eq $record.automationId
-            $sameName = -not [string]::IsNullOrWhiteSpace($record.name) -and $element.Current.Name -eq $record.name
-            $sameType = $element.Current.ControlType.ProgrammaticName -eq $record.controlType
-            if (($sameAutomationId -or $sameName) -and $sameType) {
-                return $element
-            }
-        } catch {
-        }
-    }
-    return $null
+    throw "Element $($record.index) changed or is no longer available. Run get_app_state again before acting; nothing was sent."
 }
 
 function Invoke-VerifiedSetValue($pattern, [string]$value) {
@@ -1216,6 +1469,46 @@ function Invoke-VerifiedSetValue($pattern, [string]$value) {
             throw "set_value could not verify the requested value. Read the current value before retrying; the write may have changed the control."
         }
         Start-Sleep -Milliseconds 50
+    }
+}
+
+# Toggle, Select, Expand and Collapse return nothing, and a control can ignore them (the app vetoes the change, or
+# holds the state in a binding it does not let go of). As with set_value, the state is read back for up to 0.6 s
+# and never sent twice; an unverified action may still apply, so the caller is told to observe before retrying.
+function Wait-PatternState([scriptblock]$reached) {
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $held = $false
+        try { $held = [bool](& $reached) } catch { }
+        if ($held) { return $true }
+        if ($clock.Elapsed.TotalSeconds -ge 0.6) { return $false }
+        Start-Sleep -Milliseconds 50
+    }
+}
+
+function Invoke-VerifiedToggle($pattern) {
+    $before = [string]$pattern.Current.ToggleState
+    $pattern.Toggle()
+    if (-not (Wait-PatternState { [string]$pattern.Current.ToggleState -ne $before })) {
+        throw "Toggle could not be verified: the control still reads $before. Read its state before retrying; the toggle may still apply."
+    }
+}
+
+function Invoke-VerifiedSelect($pattern) {
+    $pattern.Select()
+    if (-not (Wait-PatternState { $pattern.Current.IsSelected })) {
+        throw "Select could not be verified: the item is still not selected. Read its state before retrying; the selection may still apply."
+    }
+}
+
+function Invoke-VerifiedDisclosure($pattern, [bool]$expand) {
+    if ($expand) { $pattern.Expand() } else { $pattern.Collapse() }
+    if (-not (Wait-PatternState {
+        $state = [string]$pattern.Current.ExpandCollapseState
+        if ($expand) { $state -eq "Expanded" -or $state -eq "PartiallyExpanded" } else { $state -eq "Collapsed" }
+    })) {
+        $action = if ($expand) { "Expand" } else { "Collapse" }
+        throw "$action could not be verified: the item still reads $($pattern.Current.ExpandCollapseState). Read its state before retrying; the change may still apply."
     }
 }
 
@@ -1235,12 +1528,12 @@ function Invoke-PreferredClick($element) {
     }
     $selection = Get-CurrentPatternOrNull $element ([Windows.Automation.SelectionItemPattern]::Pattern)
     if ($null -ne $selection) {
-        $selection.Select()
+        Invoke-VerifiedSelect $selection
         return $true
     }
     $toggle = Get-CurrentPatternOrNull $element ([Windows.Automation.TogglePattern]::Pattern)
     if ($null -ne $toggle) {
-        $toggle.Toggle()
+        Invoke-VerifiedToggle $toggle
         return $true
     }
     return $false
@@ -1254,19 +1547,19 @@ function Invoke-SecondaryAction($element, [string]$action) {
         }
         "toggle" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.TogglePattern]::Pattern)
-            if ($null -ne $pattern) { $pattern.Toggle(); return }
+            if ($null -ne $pattern) { Invoke-VerifiedToggle $pattern; return }
         }
         "select" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.SelectionItemPattern]::Pattern)
-            if ($null -ne $pattern) { $pattern.Select(); return }
+            if ($null -ne $pattern) { Invoke-VerifiedSelect $pattern; return }
         }
         "expand" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ExpandCollapsePattern]::Pattern)
-            if ($null -ne $pattern) { $pattern.Expand(); return }
+            if ($null -ne $pattern) { Invoke-VerifiedDisclosure $pattern $true; return }
         }
         "collapse" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ExpandCollapsePattern]::Pattern)
-            if ($null -ne $pattern) { $pattern.Collapse(); return }
+            if ($null -ne $pattern) { Invoke-VerifiedDisclosure $pattern $false; return }
         }
         "scrollintoview" {
             $pattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ScrollItemPattern]::Pattern)
@@ -1299,10 +1592,9 @@ function Invoke-Scroll($element, [string]$direction, [double]$pages) {
         try {
             $scroll.Scroll($horizontal, $vertical)
         } catch {
-            # ScrollPattern can exist while the element still refuses to scroll in
-            # its current state, for example a list with two rows. Fall through to
-            # the coordinate path instead of failing the whole tool call.
-            return $false
+            # A provider may act before throwing, even on the first page. Never
+            # replay an attempted pattern action through a second input method.
+            throw "ScrollPattern failed after $i completed page calls; scrolling may already have occurred. Run get_app_state before retrying. No wheel fallback was sent."
         }
         Start-Sleep -Milliseconds 40
     }
@@ -1310,36 +1602,31 @@ function Invoke-Scroll($element, [string]$direction, [double]$pages) {
 }
 
 function Find-TextEntryElement($process) {
-    try {
-        $focused = [Windows.Automation.AutomationElement]::FocusedElement
-        if ($null -ne $focused -and $focused.Current.ProcessId -eq $process.Id) {
-            $focusedValue = Get-CurrentPatternOrNull $focused ([Windows.Automation.ValuePattern]::Pattern)
-            if ($null -ne $focusedValue -and -not $focusedValue.Current.IsReadOnly) {
-                return $focused
-            }
+    $focused = $null
+    try { $focused = [Windows.Automation.AutomationElement]::FocusedElement } catch { }
+    if ($null -ne $focused -and $focused.Current.ProcessId -eq $process.Id) {
+        $focusedValue = Get-CurrentPatternOrNull $focused ([Windows.Automation.ValuePattern]::Pattern)
+        if ($null -ne $focusedValue) {
+            if ($focusedValue.Current.IsReadOnly) { throw "The focused text field is read-only." }
+            return $focused
         }
-    } catch {
+        throw "The focused control is not a writable text field; refusing to choose another field."
     }
 
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
-        $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
+    # Count all textual controls, including read-only fields and Document controls
+    # without ValuePattern. Filtering by writability first can hide the real target.
+    $all = @(Get-AllElements (Get-MainElement $process))
+    $textFields = @($all | Where-Object { (Get-ElementControlTypeName $_) -match "Edit|Document" })
+    if ($textFields.Count -gt 1) {
+        throw "$($process.ProcessName) has $($textFields.Count) text fields and none has keyboard focus, so type_text cannot tell which one to type into. Click the field first, or use set_value."
+    }
+    if ($textFields.Count -eq 1) {
+        $valuePattern = Get-CurrentPatternOrNull $textFields[0] ([Windows.Automation.ValuePattern]::Pattern)
         if ($null -eq $valuePattern -or $valuePattern.Current.IsReadOnly) {
-            continue
+            throw "The only text field is read-only or has no writable ValuePattern."
         }
-        $controlType = Get-ElementControlTypeName $element
-        if ($controlType -like "*Edit*" -or $controlType -like "*Document*") {
-            return $element
-        }
+        return $textFields[0]
     }
-
-    foreach ($element in (Get-AllElements $root)) {
-        $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
-        if ($null -ne $valuePattern -and -not $valuePattern.Current.IsReadOnly) {
-            return $element
-        }
-    }
-
     return $null
 }
 
@@ -1371,31 +1658,28 @@ function Test-TextWindowHandleCandidate($process, $element) {
 }
 
 function Find-TextEntryWindowHandle($process, $preferredElement) {
+    # Do not replace a selected UIA target with some other child HWND.
     if (Test-TextWindowHandleCandidate $process $preferredElement) {
         return Get-NativeWindowHandle $preferredElement
     }
-
-    $root = Get-MainElement $process
-    foreach ($element in (Get-AllElements $root)) {
-        if (-not (Test-TextWindowHandleCandidate $process $element)) {
-            continue
-        }
-        $valuePattern = Get-CurrentPatternOrNull $element ([Windows.Automation.ValuePattern]::Pattern)
-        if ($null -ne $valuePattern -and -not $valuePattern.Current.IsReadOnly) {
-            return Get-NativeWindowHandle $element
-        }
-    }
-
-    foreach ($element in (Get-AllElements $root)) {
-        if (Test-TextWindowHandleCandidate $process $element) {
-            return Get-NativeWindowHandle $element
-        }
-    }
-
     return [IntPtr]::Zero
 }
 
 function Invoke-TypeText($process, [string]$text) {
+    # The edit control with keyboard focus is the one typing would reach. UI Automation's focused element only
+    # names it while the app is in the foreground; the window's own thread can name it otherwise.
+    $hwnd = [IntPtr]$process.MainWindowHandle
+    $focus = $hwnd
+    if (-not $process.Hosted) { $focus = Get-PostedKeyTarget $hwnd }
+    if ($focus -ne $hwnd -and (Test-EditWindowClass ([OCUWin32]::ClassName($focus)))) {
+        if (([OCUWin32]::GetWindowLong($focus, $GWL_STYLE) -band $ES_READONLY) -ne 0) {
+            throw "The focused text field is read-only."
+        }
+        return (Send-TextToEditHandle $focus $text $null)
+    }
+    if ($focus -ne $hwnd) {
+        throw "The focused control is not a supported text field; refusing to choose another field."
+    }
     $element = Find-TextEntryElement $process
     $targetHwnd = Find-TextEntryWindowHandle $process $element
     if ($targetHwnd -ne [IntPtr]::Zero -and (Send-TextToEditHandle $targetHwnd $text $element)) {
@@ -1437,6 +1721,11 @@ try {
             ($operation.windowHandle -gt 0 -and [long]$hwnd -ne $operation.windowHandle)) {
             throw "Target process/window changed; run get_app_state before acting."
         }
+        if ($process.Enabled -eq $false) { throw "Target window is disabled and no active modal window was found; observe the app again before input." }
+        Assert-InputAllowed $process
+        # Before anything is sent: input posted to a hung window waits in its queue and lands whenever it recovers.
+        Assert-WindowResponds $hwnd $process.ProcessName
+        if ($process.Hosted) { Assert-WindowResponds ([IntPtr]$process.ContentWindowHandle) $process.ProcessName }
         $windowBounds = $operation.windowBounds
         $element = Find-Element $process $operation.element
 
@@ -1454,6 +1743,7 @@ try {
                         throw "click_method 'accessibility' could not click the requested element"
                     }
                 } elseif ($clickMethod -eq "app_post") {
+                    if ($process.Hosted) { throw "Posted input to a hosted app frame is unsupported; use accessibility or explicitly enabled global input." }
                     Assert-UsableWindowBounds $windowBounds
                     if ($null -ne $operation.element -and $null -ne $operation.element.frame) {
                         $point = Get-ScreenPoint $operation.element.frame $windowBounds
@@ -1502,6 +1792,7 @@ try {
                             Send-GlobalMouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                         } else {
                             if ($null -ne $operation.element) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
+                            if ($process.Hosted) { throw "Posted input to a hosted app frame is unsupported; use accessibility or explicitly enabled global input." }
                             Send-MouseClick $hwnd $point.x $point.y $operation.mouse_button ([int]$operation.click_count) $windowBounds
                         }
                     }
@@ -1522,6 +1813,7 @@ try {
                     Assert-UsableWindowBounds $windowBounds
                     $point = Get-ScreenPoint $operation.element.frame $windowBounds
                     if (Test-GlobalPointerFallbackEnabled) { $point = Resolve-GlobalElementPoint $element $operation.element $windowBounds }
+                    if ($process.Hosted -and -not (Test-GlobalPointerFallbackEnabled)) { throw "Posted scroll to a hosted app frame is unsupported; use a ScrollPattern element or explicitly enabled global input." }
                     Send-Scroll $hwnd $point.x $point.y $operation.direction ([double]$operation.pages) $windowBounds
                 }
             }
@@ -1531,10 +1823,12 @@ try {
             }
             "type_text" {
                 if (-not (Invoke-TypeText $process $operation.text)) {
-                    Send-Text $hwnd $operation.text
+                    if ($process.Hosted) { throw "Posted text to a hosted app frame is unsupported; use set_value on a supported text field." }
+                    Send-Text (Get-PostedKeyTarget $hwnd) $operation.text
                 }
             }
             "press_key" {
+                if ($process.Hosted -and $operation.key_method -ne "global") { throw "Posted keys to a hosted app frame are unsupported; use key_method=global with global input explicitly enabled." }
                 Send-Key $hwnd $operation.key $operation.key_method
             }
             "set_value" {
@@ -1551,7 +1845,13 @@ try {
         }
 
         Start-Sleep -Milliseconds 120
-        $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        # The action has been delivered. Failing to read the window afterwards (the click closed it) does not
+        # undo it, and reporting the action as failed invites a retry that acts twice.
+        try {
+            $response = [pscustomobject]@{ ok = $true; snapshot = (Build-Snapshot $operation.app) }
+        } catch {
+            $response = [pscustomobject]@{ ok = $true; observationError = $_.Exception.Message }
+        }
     }
 } catch {
     $message = $_.Exception.Message
