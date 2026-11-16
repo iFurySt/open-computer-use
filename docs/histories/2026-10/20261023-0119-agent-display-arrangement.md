@@ -48,3 +48,4 @@ fork 后续提交里只移植上游代码路径上存在的部分。上游的 te
 - 本机仅 1 块用户屏幕。异常退出后 macOS 本身把窗口放回了原位，未复现作者环境中的残留边缘窗口；不把该轮写成修复前失败/修复后成功。多屏和残留窗口的作者实测保留，几何筛选有单测。
 - 最初 self-AX 夹具无法可靠跨屏，后台线程触发 AppKit 线程断言；改为独立进程的真实窗口后通过。显示器销毁是异步的，检查等待实际消失，不把固定瞬间的窗口服务器延迟当回归。
 - 命令：`OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LAYOUT_TEST=1 OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED=true swift test --filter AgentDisplayArrangementTests.testRealVirtualDisplayPreservesLayoutAndRestoresOwnedWindow`。只改变测试进程环境，不修改用户配置。
+- 合并最新 main 后完整 Swift 493 项（12 skipped，0 failures）、make ci 通过；opt-in 真实布局测试另行通过（不是 skipped）。
