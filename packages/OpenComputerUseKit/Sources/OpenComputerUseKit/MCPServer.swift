@@ -221,7 +221,8 @@ public final class MCPStdinRequests: @unchecked Sendable {
         let payload = (try? JSONSerialization.jsonObject(with: Data(line.utf8))) as? [String: Any]
         condition.lock()
         defer { condition.unlock() }
-        if payload?["method"] as? String == "notifications/cancelled" {
+        if payload?["method"] as? String == "notifications/cancelled", payload?["id"] == nil {
+            guard payload?["jsonrpc"] as? String == "2.0" else { return }
             let key = Self.key((payload?["params"] as? [String: Any])?["requestId"])
             if let key, let index = waiting.firstIndex(where: { $0.key == key }) {
                 waiting.remove(at: index)
@@ -230,7 +231,8 @@ public final class MCPStdinRequests: @unchecked Sendable {
             }
             return
         }
-        waiting.append(Request(line: line, key: Self.key(payload?["id"])))
+        let key = payload?["method"] as? String == "initialize" ? nil : Self.key(payload?["id"])
+        waiting.append(Request(line: line, key: key))
         condition.signal()
     }
 
@@ -238,7 +240,7 @@ public final class MCPStdinRequests: @unchecked Sendable {
     private static func key(_ id: Any?) -> String? {
         switch id {
         case let text as String: "s:" + text
-        case let number as NSNumber: "n:" + number.stringValue
+        case let number as NSNumber where CFGetTypeID(number) != CFBooleanGetTypeID(): "n:" + number.stringValue
         default: nil
         }
     }

@@ -745,7 +745,9 @@ final class OpenComputerUseKitTests: XCTestCase {
                 #"{"jsonrpc":"2.0","id":2,"method":"ping"}"#,
             ]
             let ended = DispatchSemaphore(value: 0)
+            let started = DispatchSemaphore(value: 0)
             func next() -> String? {
+                if rest.count == 4 { _ = started.wait(timeout: .now() + 5) }
                 if rest.isEmpty { ended.signal(); return nil }
                 return rest.removeFirst()
             }
@@ -753,11 +755,38 @@ final class OpenComputerUseKitTests: XCTestCase {
         let lines = Lines()
         let requests = MCPStdinRequests(readLine: { lines.next() })
         XCTAssertEqual(requests.next()?.line.contains(#""id":1"#), true)
+        lines.started.signal()
         // Every line is read while request 1 runs: "1" is cancelled before it starts, 1 while it runs.
         XCTAssertEqual(lines.ended.wait(timeout: .now() + 5), .success)
         XCTAssertFalse(requests.finish())
         XCTAssertEqual(requests.next()?.line.contains("ping"), true)
         XCTAssertTrue(requests.finish())
+        XCTAssertNil(requests.next())
+    }
+
+    func testMCPCancellationIgnoresInitializeAndMalformedNotifications() {
+        final class Lines: @unchecked Sendable {
+            var rest = [
+                #"{"jsonrpc":"2.0","id":0,"method":"initialize"}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":0}}"#,
+                #"{"jsonrpc":"2.0","id":1,"method":"ping"}"#,
+                #"{"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":true}}"#,
+                #"{"method":"notifications/cancelled","params":{"requestId":1}}"#,
+                #"{"jsonrpc":"2.0","id":2,"method":"notifications/cancelled","params":{"requestId":1}}"#,
+            ]
+            let ended = DispatchSemaphore(value: 0)
+            func next() -> String? {
+                if rest.isEmpty { ended.signal(); return nil }
+                return rest.removeFirst()
+            }
+        }
+        let lines = Lines()
+        let requests = MCPStdinRequests(readLine: { lines.next() })
+        XCTAssertEqual(lines.ended.wait(timeout: .now() + 5), .success)
+        for method in ["initialize", "ping", "notifications/cancelled"] {
+            XCTAssertTrue(requests.next()?.line.contains(method) == true)
+            XCTAssertTrue(requests.finish())
+        }
         XCTAssertNil(requests.next())
     }
 

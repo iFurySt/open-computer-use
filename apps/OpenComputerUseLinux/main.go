@@ -1787,27 +1787,16 @@ func readJSONSource(inline, file string) (string, error) {
 
 func runMCP(stdin io.Reader, stdout io.Writer) error {
 	svc := newService()
-	decoder := json.NewDecoder(stdin)
-	encoder := json.NewEncoder(stdout)
-	for {
-		var request map[string]any
-		if err := decoder.Decode(&request); err != nil {
-			if errors.Is(err, io.EOF) {
-				return nil
-			}
-			_ = encoder.Encode(jsonRPCError(nil, -32700, "Invalid JSON-RPC payload"))
-			continue
-		}
-		response := handleMCPRequest(request, svc)
-		if response != nil {
-			if err := encoder.Encode(response); err != nil {
-				return err
-			}
-		}
-	}
+	return runMCPTransport(stdin, stdout, func(request map[string]any) map[string]any {
+		return handleMCPRequest(request, svc)
+	})
 }
 
 func handleMCPRequest(request map[string]any, svc *service) map[string]any {
+	// Notifications never execute request methods or produce a response.
+	if _, hasID := request["id"]; !hasID {
+		return nil
+	}
 	id := request["id"]
 	method, _ := request["method"].(string)
 	params, _ := request["params"].(map[string]any)

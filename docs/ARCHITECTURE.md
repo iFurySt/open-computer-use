@@ -51,7 +51,7 @@
 
 - 面向 MCP host 的外部 transport 仍是 `stdio`；macOS 终端 CLI 到 `.app` app agent 之间额外有一层本地 Unix domain socket 代理，用来保证真实 automation 运行在 app bundle 权限身份下。
 - 当 `OPEN_COMPUTER_USE_VISUAL_CURSOR` 未被显式关闭时，`mcp` 命令会切到一个最小 AppKit runtime：主线程保留 event loop 承载 overlay UI，stdio server 仍在后台线程串行读取与响应。
-- 请求 framing 采用一行一个 JSON-RPC message。
+- 请求 framing 采用一行一个 JSON-RPC message。三平台均不回复无 id 的通知，也不将通知当作工具请求执行。独立读取线程/协程及时接收 `notifications/cancelled`：未开始的请求从队列移除；已经开始的动作完整执行一次并丢弃回复，不中途强杀、不重试，取消不代表撤销。初始化不可取消；未知、已结束和格式错误的取消被忽略。macOS app-agent 代理使用相同规则。Windows/Linux 单行上限 16 MiB，错误 JSON 行回复解析错误后继续读取下一行。
 - 当前支持的 method：
   - `initialize`
   - `notifications/initialized`
