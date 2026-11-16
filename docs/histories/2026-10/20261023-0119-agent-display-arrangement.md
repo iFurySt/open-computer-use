@@ -39,3 +39,12 @@ fork 后续提交里只移植上游代码路径上存在的部分。上游的 te
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/OpenComputerUseKitTests.swift`
 - `docs/references/macos-window-visibility-and-spaces.md`
 - `docs/releases/feature-release-notes.md`
+
+### 2026-11-16 维护者复核
+
+- 同步最新 main。恢复显示器布局前确认显示器集合、主屏、尺寸和镜像关系未变；任一步 CGConfigureDisplayOrigin 失败就取消整个事务，不提交部分排列。
+- 恢复被系统移走的窗口前复核 PID、窗口 ID 与当前位置；AX 读取/写入设置短超时，总恢复遍历有时间预算。窗口在枚举期间再次移动时跳过，不覆盖较新的操作。
+- 新增 AgentDisplayArrangementTests 和独立 AppKit/显示器所有者 fixture。真实外部窗口连续两轮创建、停靠、恢复与显示器销毁通过，前台和用户屏幕排列不变；SIGKILL 自有显示器进程、重建并恢复也通过。
+- 本机仅 1 块用户屏幕。异常退出后 macOS 本身把窗口放回了原位，未复现作者环境中的残留边缘窗口；不把该轮写成修复前失败/修复后成功。多屏和残留窗口的作者实测保留，几何筛选有单测。
+- 最初 self-AX 夹具无法可靠跨屏，后台线程触发 AppKit 线程断言；改为独立进程的真实窗口后通过。显示器销毁是异步的，检查等待实际消失，不把固定瞬间的窗口服务器延迟当回归。
+- 命令：`OPEN_COMPUTER_USE_RUN_AGENT_DISPLAY_LAYOUT_TEST=1 OPEN_COMPUTER_USE_VIRTUAL_DISPLAY_ENABLED=true swift test --filter AgentDisplayArrangementTests.testRealVirtualDisplayPreservesLayoutAndRestoresOwnedWindow`。只改变测试进程环境，不修改用户配置。

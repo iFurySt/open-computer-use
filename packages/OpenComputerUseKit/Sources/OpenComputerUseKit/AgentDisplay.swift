@@ -44,7 +44,12 @@ func agentDisplayPlacement(windowSize: CGSize, displayBounds: CGRect, inset: CGF
 /// back to `displaysBefore` and the agent display goes past the right edge of
 /// the rightmost of them. A single display never moves.
 func agentDisplayOrigin(displaysBefore: [CGRect], displaysNow: [CGRect]) -> CGPoint? {
-    guard displaysBefore != displaysNow, let rightmost = displaysBefore.max(by: { $0.maxX < $1.maxX }) else {
+    guard displaysBefore.count == displaysNow.count,
+          zip(displaysBefore, displaysNow).allSatisfy({ old, new in
+              old.size == new.size && !old.isEmpty && !new.isEmpty &&
+                  old.origin.x.isFinite && old.origin.y.isFinite && new.origin.x.isFinite && new.origin.y.isFinite
+          }),
+          displaysBefore != displaysNow, let rightmost = displaysBefore.max(by: { $0.maxX < $1.maxX }) else {
         return nil
     }
     return CGPoint(x: rightmost.maxX, y: rightmost.minY)
@@ -266,7 +271,8 @@ final class AgentDisplay: @unchecked Sendable {
         }
         let spi = SkyLightSPI.shared
         let spacesBefore = Set((spi.managedDisplaySpaces() ?? [:]).values.flatMap { $0 })
-        let displaysBefore = Self.activeDisplays().map { (id: $0, bounds: CGDisplayBounds($0)) }
+        let mainDisplayBefore = CGMainDisplayID()
+        let displaysBefore = Self.activeDisplays().map { (id: $0, bounds: CGDisplayBounds($0), mirror: CGDisplayMirrorsDisplay($0)) }
         let windowsBefore = Self.appWindows()
         let start = TimingLog.now()
         var newHandle: UnsafeMutableRawPointer?
@@ -295,7 +301,7 @@ final class AgentDisplay: @unchecked Sendable {
             Thread.sleep(forTimeInterval: Self.displayFallbackSettle)
         }
         displaySpaceIDs = newSpaces
-        placeBesideUserDisplays(id, displaysBefore: displaysBefore)
+        placeBesideUserDisplays(id, displaysBefore: displaysBefore, mainDisplayBefore: mainDisplayBefore)
         returnRememberedWindows(windowsBefore, userDisplays: displaysBefore.map(\.bounds))
         TimingLog.log("agent_display.ready", since: start)
         return displayBounds ?? .zero
@@ -305,17 +311,27 @@ final class AgentDisplay: @unchecked Sendable {
     /// aside for the agent display, and the agent display past the rightmost
     /// (see `agentDisplayOrigin`). A display mirroring another is left alone:
     /// setting its origin would take it out of the mirror set.
-    private func placeBesideUserDisplays(_ id: CGDirectDisplayID, displaysBefore: [(id: CGDirectDisplayID, bounds: CGRect)]) {
-        let theirs = displaysBefore.filter { CGDisplayMirrorsDisplay($0.id) == kCGNullDirectDisplay }
+    private func placeBesideUserDisplays(_ id: CGDirectDisplayID, displaysBefore: [(id: CGDirectDisplayID, bounds: CGRect, mirror: CGDirectDisplayID)], mainDisplayBefore: CGDirectDisplayID) {
+        // A hotplug, mode change, mirror change or main-display switch is not the
+        // automatic origin shift we intend to undo.
+        guard CGMainDisplayID() == mainDisplayBefore,
+              Set(Self.activeDisplays()) == Set(displaysBefore.map(\.id) + [id]),
+              displaysBefore.allSatisfy({ CGDisplayMirrorsDisplay($0.id) == $0.mirror && CGDisplayBounds($0.id).size == $0.bounds.size }) else { return }
+        let theirs = displaysBefore.filter { $0.mirror == kCGNullDirectDisplay }
         guard let origin = agentDisplayOrigin(displaysBefore: theirs.map(\.bounds), displaysNow: theirs.map { CGDisplayBounds($0.id) }) else {
             return
         }
         var config: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&config) == .success, let config else { return }
+        var completed = false
+        defer { if !completed { CGCancelDisplayConfiguration(config) } }
         for display in theirs {
-            CGConfigureDisplayOrigin(config, display.id, Int32(display.bounds.minX), Int32(display.bounds.minY))
+            guard let x = Int32(exactly: display.bounds.minX), let y = Int32(exactly: display.bounds.minY),
+                  CGConfigureDisplayOrigin(config, display.id, x, y) == .success else { return }
         }
-        CGConfigureDisplayOrigin(config, id, Int32(origin.x), Int32(origin.y))
+        guard let x = Int32(exactly: origin.x), let y = Int32(exactly: origin.y),
+              CGConfigureDisplayOrigin(config, id, x, y) == .success else { return }
+        completed = true
         // Best effort: on failure the arrangement stays as macOS made it. The
         // configuration is invalid on return either way.
         _ = CGCompleteDisplayConfiguration(config, .forSession)
@@ -327,18 +343,27 @@ final class AgentDisplay: @unchecked Sendable {
     /// onto every new one, off the user's screen. Each goes back where it was.
     private func returnRememberedWindows(_ before: [CGWindowID: (pid: pid_t, frame: CGRect)], userDisplays: [CGRect]) {
         guard let bounds = displayBounds else { return }
+        let current = Self.appWindows()
         let moved = windowsMovedOntoAgentDisplay(
             bounds,
             userDisplays: userDisplays,
             before: before.filter { parked[$0.key] == nil }.mapValues(\.frame),
-            now: Self.appWindows().mapValues(\.frame)
+            now: current.filter { before[$0.key]?.pid == $0.value.pid }.mapValues(\.frame)
         )
+        let deadline = ProcessInfo.processInfo.systemUptime + 0.5
         for (windowID, origin) in moved {
+            guard ProcessInfo.processInfo.systemUptime < deadline else { break }
             var windows: CFTypeRef?
             guard let pid = before[windowID]?.pid,
-                  AXUIElementCopyAttributeValue(AXUIElementCreateApplication(pid), kAXWindowsAttribute as CFString, &windows) == .success,
+                  Self.windowFrame(windowID) == current[windowID]?.frame else { continue }
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, 0.1)
+            guard AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &windows) == .success,
                   let element = (windows as? [AXUIElement])?.first(where: { SkyLightSPI.shared.windowID(for: $0) == windowID })
             else { continue }
+            // Do not undo a later user/app move while AX enumeration was pending.
+            guard Self.windowFrame(windowID) == current[windowID]?.frame else { continue }
+            AXUIElementSetMessagingTimeout(element, 0.1)
             try? setAXPosition(element, origin)
         }
     }
@@ -361,7 +386,8 @@ final class AgentDisplay: @unchecked Sendable {
             guard let number = info[kCGWindowNumber as String] as? NSNumber,
                   let pid = info[kCGWindowOwnerPID as String] as? pid_t,
                   let dictionary = info[kCGWindowBounds as String] as? NSDictionary,
-                  let frame = CGRect(dictionaryRepresentation: dictionary) else { continue }
+                  let frame = CGRect(dictionaryRepresentation: dictionary), !frame.isEmpty,
+                  frame.minX.isFinite, frame.minY.isFinite, frame.width.isFinite, frame.height.isFinite else { continue }
             windows[number.uint32Value] = (pid, frame)
         }
         return windows
