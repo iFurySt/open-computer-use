@@ -28,3 +28,9 @@
 ### 📁 Files Modified
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/AppDiscovery.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/AppDiscoveryTests.swift`
+
+### 2026-11-16 维护者复核
+
+- 查询使用传入 cutoff 的 CFDate 秒数，与代码过滤共享同一时刻，避免 `$time.today` 在查询开始时另算日期。日期数字语法依据 Apple File Metadata Query Expression Syntax。
+- 真实 Spotlight 负对照：请求 90 天截止时原 PR 只返回 28 条，逐项全扫描返回 53 条；改用实际 cutoff 后记录集合/日期/使用次数一致。不把 Spotlight 未定义的同日期同次数记录顺序当作契约；最终目录仍使用既有排序。无索引时测试显式跳过，不以两个空集合冒充验证通过。
+- 六次真实 `list-apps` 进程：基线暖态中位 708.0 ms，修复后 93.1 ms；最后一次输出逐字一致（31 行）。仅记录计数和耗时，不提交应用清单。

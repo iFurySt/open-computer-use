@@ -53,7 +53,12 @@ enum AppDiscovery {
     // No `kMDItemFSName == "*.app"` clause: Spotlight matches that wildcard against every bundle's name, about 120 ms a
     // query against 5 ms without it; the name is checked for `.app` below instead. The date clause leaves out the bundles not
     // used in the window, so they are never read; the cutoff is still checked exactly below.
-    private static let listAppsQuery = #"kMDItemContentType == "com.apple.application-bundle" && (kMDItemLastUsedDate >= $time.today(-\#(recentUsageDays)) || kMDItemLastUsedDate_Ranking >= $time.today(-\#(recentUsageDays)))"#
+    private static func listAppsQuery(cutoffDate: Date) -> String {
+        // Spotlight date literals are CFDate seconds. Use the caller's exact cutoff,
+        // not a second calendar calculation that can cross midnight or time zones.
+        let cutoff = cutoffDate.timeIntervalSinceReferenceDate
+        return #"kMDItemContentType == "com.apple.application-bundle" && (kMDItemLastUsedDate >= \#(cutoff) || kMDItemLastUsedDate_Ranking >= \#(cutoff))"#
+    }
     private static let lastUsedDateRankingAttribute = "kMDItemLastUsedDate_Ranking"
     private static let useCountAttribute = "kMDItemUseCount"
     private static let maxRecentNonRunningApps = 10
@@ -474,7 +479,7 @@ enum AppDiscovery {
 
             guard let query = MDQueryCreate(
                 kCFAllocatorDefault,
-                listAppsQuery as CFString,
+                listAppsQuery(cutoffDate: cutoffDate) as CFString,
                 valueListAttributes,
                 sortingAttributes
             ) else {
