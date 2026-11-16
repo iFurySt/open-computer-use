@@ -288,7 +288,7 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testToolDefinitionCount() {
-        XCTAssertEqual(ToolDefinitions.all.count, 11)
+        XCTAssertEqual(ToolDefinitions.all.count, 12)
         XCTAssertEqual(
             ToolDefinitions.all.map(\.name).sorted(),
             [
@@ -301,6 +301,7 @@ final class OpenComputerUseKitTests: XCTestCase {
                 "query",
                 "scroll",
                 "select_text",
+                "set_foreground",
                 "set_value",
                 "type_text",
             ]

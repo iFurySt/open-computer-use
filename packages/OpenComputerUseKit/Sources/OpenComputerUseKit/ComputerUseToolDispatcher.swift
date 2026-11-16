@@ -53,6 +53,16 @@ public final class ComputerUseToolDispatcher {
 
     private func dispatchTool(name: String, arguments: [String: Any]) throws -> ToolCallResult {
         switch name {
+        case "set_foreground":
+            let mode = optionalString("mode", in: arguments) ?? "borrow"
+            switch mode {
+            case "borrow":
+                return try ForegroundBorrow.borrow(app: requireString("app", in: arguments))
+            case "return":
+                return ForegroundBorrow.returnFocus()
+            default:
+                throw ComputerUseError.invalidArguments("mode must be \"borrow\" or \"return\"")
+            }
         case "list_apps":
             return service.listApps()
         case "query":
