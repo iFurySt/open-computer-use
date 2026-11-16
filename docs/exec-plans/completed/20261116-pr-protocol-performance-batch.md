@@ -18,8 +18,8 @@
 - [x] #170 三平台通知与取消，已合并 e9de9e1；485 Swift tests、Go race、真实直连/代理、Windows CI 43886958958 和基础 CI 43886958959 全通过。
 - [x] #167 已合并：改用当前属性批量读取避免查询缓存陈旧，真实全扫描对照通过；488 Swift tests、make ci 与 CI 43890456450 全通过。实际 CLI 暖态中位 708 → 217 ms。
 - [x] #177 已合并 c2f28af；486 Swift tests、CI 43888407046、独立 Chrome AX 建树对照通过；本机完整快照链路受 Locked Use 连接问题阻断。
-- [ ] #114 已完成单屏真实外部 AppKit 窗口两轮停靠/恢复、显示器所有者 SIGKILL 后重建；493 Swift tests（12 skipped）、make ci 通过，等待远端检查。
-- [ ] #113 光标动画非阻塞。
+- [x] #114 已合并 c4a4d01；单屏真实外部 AppKit 窗口两轮停靠/恢复、显示器所有者 SIGKILL 后重建通过；493 Swift tests（12 skipped）、make ci、同一 head 的手动 CI 43892983694 通过。本机未复现作者双屏崩溃后窗口滞留场景。
+- [x] #113 实现和复核完成：修复 reset 后旧动画重新出现、过期清理覆盖新动作、无效节奏参数；503 Swift tests、make ci、真实动画与 MCP/CLI smoke 通过。调用等待平均 1636 → 0.01 ms，落点误差最大 0.2 pt。本 PR 远端 CI 通过并 squash 合并即完成本批次。
 
 ## 决策记录
 

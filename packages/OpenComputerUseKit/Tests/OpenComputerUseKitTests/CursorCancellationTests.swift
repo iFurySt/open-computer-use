@@ -39,7 +39,7 @@ final class CursorCancellationTests: XCTestCase {
         let drained = expectation(description: "new session")
         Thread.detachNewThread {
             VisualCursorSupport.performOnMain { recording.played.append(1) }
-            VisualCursorSupport.resetOnMain()
+            resetOpenComputerUseVisualCursor()
             VisualCursorSupport.performOnMain { recording.played.append(2); drained.fulfill() }
             submitted.signal()
         }
@@ -62,7 +62,7 @@ final class CursorCancellationTests: XCTestCase {
         }
         let submitted = DispatchSemaphore(value: 0)
         Thread.detachNewThread {
-            VisualCursorSupport.resetOnMain()
+            resetOpenComputerUseVisualCursor()
             submitted.signal()
         }
         XCTAssertEqual(submitted.wait(timeout: .now() + 3), .success)

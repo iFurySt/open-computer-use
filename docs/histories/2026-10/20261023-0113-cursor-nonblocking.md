@@ -58,3 +58,6 @@
 - 原 PR 仍会在 reset 后播放排队的旧动作；reset 在 glide 期间触发时，动画还会继续约 1.46 秒并重新显示光标。新增回归在原实现失败，现通过 generation 使旧队列和进行中的动画失效，session cleanup 立即触发失效。新一轮动作保留，过期 cleanup 不覆盖新一轮状态。
 - 校验 burst floor，拒绝 NaN、无穷、零和负数，避免零时长或非有限动画参数；reset 同时清理节奏时钟。live 测试恢复原 observation 环境变量。
 - 本次真实测试为单屏 macOS 光标组件与窗口捕获；不把它当成其他平台或多屏的实测。
+- distributed turn-ended 监听在收到通知时先使光标动画失效，不先排入 MainActor 任务等待旧动画；跨线程 public reset 保持主线程 UI 清理。
+- 最终 `swift test`：503 项，14 项跳过，0 失败；含真实 AX 窗口跟随。`make ci` 通过。
+- `scripts/run-tool-smoke-tests.sh` 通过：fixture bridge 工具调用、一次性 CLI 计数器加一且无光标、真实 MCP 子进程动画、turn-ended 取消未完成动画并允许下一轮。fixture bridge 验证调用流程，不代替第三方应用端到端输入测试。

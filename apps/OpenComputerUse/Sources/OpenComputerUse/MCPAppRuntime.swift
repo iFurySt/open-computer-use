@@ -29,11 +29,12 @@ final class MCPAppRuntime: NSObject, NSApplicationDelegate {
         turnEndedObserver = DistributedNotificationCenter.default().addObserver(
             forName: openComputerUseTurnEndedNotificationName,
             object: nil,
-            queue: .main
+            queue: nil
         ) { _ in
+            // Invalidate animations before waiting for main-actor cleanup.
+            resetOpenComputerUseVisualCursor()
             Task { @MainActor in
                 resetOpenComputerUseBackgroundWindowState()
-                resetOpenComputerUseVisualCursor()
             }
         }
         Thread.detachNewThreadSelector(#selector(processStandardIO), toTarget: self, with: nil)

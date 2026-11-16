@@ -203,9 +203,8 @@ public func postOpenComputerUseTurnEndedNotification() {
     )
 }
 
-@MainActor
 public func resetOpenComputerUseVisualCursor() {
-    SoftwareCursorOverlay.reset()
+    VisualCursorSupport.resetOnMain()
 }
 
 struct CursorTargetWindow: Equatable, Sendable {
