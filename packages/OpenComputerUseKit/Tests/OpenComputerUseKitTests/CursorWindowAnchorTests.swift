@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import XCTest
 @testable import OpenComputerUseKit
@@ -102,6 +103,43 @@ final class CursorWindowAnchorTests: XCTestCase {
         XCTAssertEqual(failedRead.wait(timeout: .now() + 1), .success)
         Thread.sleep(forTimeInterval: 0.01)
         XCTAssertEqual(CursorWindowFrameTracker.liveFrame(for: 1), frame)
+    }
+
+    /// The service registers the window while building a cursor target, but the
+    /// overlay plays queued actions later. An earlier queued action that clears
+    /// tracking (an unanchored target, a reset) must not drop the window a later
+    /// action depends on.
+    func testRegistrationKeepsItsPlaceInTheCursorQueue() {
+        let reads = DispatchSemaphore(value: 0)
+        CursorWindowFrameTracker.forgetAll()
+        CursorWindowFrameTracker.installFrameReaderForTesting { _ in
+            reads.signal()
+            return nil
+        }
+        defer {
+            CursorWindowFrameTracker.forgetAll()
+            CursorWindowFrameTracker.installFrameReaderForTesting(nil)
+        }
+        let snapshot = AppSnapshot(
+            app: RunningAppDescriptor(name: "Sample", bundleIdentifier: "com.example.Sample", pid: 18_465, runningApplication: .current),
+            windowTitle: nil, windowBounds: builtInDisplayFrame, targetWindowID: 4242, targetWindowLayer: 0,
+            screenshotData: nil, mode: .accessibility, treeLines: [], focusedSummary: nil, focusedElement: nil,
+            selectedText: nil, windowElement: nil, elements: [:]
+        )
+        let drained = expectation(description: "cursor queue drained")
+        Thread.detachNewThread {
+            // Holds the main thread so the anchor below is built before this action plays.
+            VisualCursorSupport.performOnMain {
+                Thread.sleep(forTimeInterval: 0.1)
+                CursorWindowFrameTracker.forgetAll()
+            }
+            _ = makeCursorWindowAnchor(snapshot: snapshot, windowLocalPoint: CGPoint(x: 250, y: 200))
+            VisualCursorSupport.performOnMain { drained.fulfill() }
+        }
+        wait(for: [drained], timeout: 5)
+
+        _ = CursorWindowFrameTracker.liveFrame(for: 4242)
+        XCTAssertEqual(reads.wait(timeout: .now() + 1), .success, "the window is still tracked")
     }
 
     func testSlowReadDoesNotBlockOrQueueWorkAndCannotPublishAfterReplacement() throws {

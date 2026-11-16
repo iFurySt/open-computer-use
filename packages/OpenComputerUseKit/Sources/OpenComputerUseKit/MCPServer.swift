@@ -133,9 +133,7 @@ public final class StdioMCPServer {
     /// instead of the stdio `run()` loop.
     public func endSession() {
         service.clearQueryIndexes()
-        VisualCursorSupport.performOnMain {
-            SoftwareCursorOverlay.reset()
-        }
+        VisualCursorSupport.resetOnMain()
         backgroundStateReset()
     }
 
