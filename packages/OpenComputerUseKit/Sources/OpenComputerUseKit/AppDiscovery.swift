@@ -50,15 +50,9 @@ private struct ResolvedAppInfo {
 
 enum AppDiscovery {
     private static let recentUsageDays = 13
-    // No `kMDItemFSName == "*.app"` clause: Spotlight matches that wildcard against every bundle's name, about 120 ms a
-    // query against 5 ms without it; the name is checked for `.app` below instead. The date clause leaves out the bundles not
-    // used in the window, so they are never read; the cutoff is still checked exactly below.
-    private static func listAppsQuery(cutoffDate: Date) -> String {
-        // Spotlight date literals are CFDate seconds. Use the caller's exact cutoff,
-        // not a second calendar calculation that can cross midnight or time zones.
-        let cutoff = cutoffDate.timeIntervalSinceReferenceDate
-        return #"kMDItemContentType == "com.apple.application-bundle" && (kMDItemLastUsedDate >= \#(cutoff) || kMDItemLastUsedDate_Ranking >= \#(cutoff))"#
-    }
+    // Filter usage dates from the item's current attributes. Query value caches can
+    // be stale even when a direct MDItem read for the same result is up to date.
+    private static let listAppsQuery = #"kMDItemContentType == "com.apple.application-bundle""#
     private static let lastUsedDateRankingAttribute = "kMDItemLastUsedDate_Ranking"
     private static let useCountAttribute = "kMDItemUseCount"
     private static let maxRecentNonRunningApps = 10
@@ -466,9 +460,10 @@ enum AppDiscovery {
                 lastUsedDateRankingAttribute as CFString,
                 useCountAttribute as CFString,
             ] as CFArray
-            // Fetched with the results: read one by one through MDItemCopyAttribute they cost about 1 ms per item.
-            // kMDItemPath is not one the query returns, so it is read from the item, once the cheap checks pass.
+            // One item-attribute read replaces multiple per-field IPC calls. Include
+            // the path here; defer opening Info.plist until after the date filter.
             let valueListAttributes = [
+                kMDItemPath,
                 kMDItemCFBundleIdentifier,
                 kMDItemFSName,
                 kMDItemDisplayName,
@@ -479,8 +474,8 @@ enum AppDiscovery {
 
             guard let query = MDQueryCreate(
                 kCFAllocatorDefault,
-                listAppsQuery(cutoffDate: cutoffDate) as CFString,
-                valueListAttributes,
+                listAppsQuery as CFString,
+                nil,
                 sortingAttributes
             ) else {
                 return []
@@ -497,25 +492,22 @@ enum AppDiscovery {
             var records: [String: SpotlightAppRecord] = [:]
 
             for index in 0..<MDQueryGetResultCount(query) {
-                guard
-                    let bundleIdentifier: String = value(kMDItemCFBundleIdentifier, query: query, index: index),
-                    !bundleIdentifier.isEmpty,
-                    (value(kMDItemFSName, query: query, index: index) as String?)?.hasSuffix(".app") == true
-                else {
-                    continue
-                }
+                guard let rawResult = MDQueryGetResultAtIndex(query, index) else { continue }
+                let item = unsafeBitCast(rawResult, to: MDItem.self)
+                guard let attributes = MDItemCopyAttributes(item, valueListAttributes) as? [String: Any],
+                      let bundleIdentifier = attributes[kMDItemCFBundleIdentifier as String] as? String,
+                      !bundleIdentifier.isEmpty,
+                      (attributes[kMDItemFSName as String] as? String)?.hasSuffix(".app") == true
+                else { continue }
 
                 let key = bundleIdentifier.lowercased()
-                let lastUsed: Date? = value(lastUsedDateRankingAttribute as CFString, query: query, index: index)
-                    ?? value(kMDItemLastUsedDate, query: query, index: index)
+                let lastUsed = attributes[lastUsedDateRankingAttribute] as? Date
+                    ?? attributes[kMDItemLastUsedDate as String] as? Date
                 guard let lastUsed, lastUsed >= cutoffDate else {
                     continue
                 }
 
-                guard
-                    let rawResult = MDQueryGetResultAtIndex(query, index),
-                    let path = MDItemCopyAttribute(unsafeBitCast(rawResult, to: MDItem.self), kMDItemPath) as? String
-                else {
+                guard let path = attributes[kMDItemPath as String] as? String else {
                     continue
                 }
 
@@ -528,9 +520,9 @@ enum AppDiscovery {
                     continue
                 }
 
-                let uses = (value(useCountAttribute as CFString, query: query, index: index) as NSNumber?)?.intValue
+                let uses = (attributes[useCountAttribute] as? NSNumber)?.intValue
                 let displayName = bundleDisplayName(bundle)
-                    ?? (value(kMDItemDisplayName, query: query, index: index) as String?).map(stripAppSuffix(from:))
+                    ?? (attributes[kMDItemDisplayName as String] as? String).map(stripAppSuffix(from:))
                     ?? stripAppSuffix(from: appURL.lastPathComponent)
 
                 // Query filtering can change the order of duplicate bundle IDs.
@@ -565,10 +557,7 @@ enum AppDiscovery {
             return scopes as [CFString]
         }
 
-        private static func value<T>(_ name: CFString, query: MDQuery, index: CFIndex) -> T? {
-            MDQueryGetAttributeValueOfResultAtIndex(query, name, index)
-                .map { Unmanaged<CFTypeRef>.fromOpaque($0).takeUnretainedValue() } as? T
-        }
+
     }
 }
 

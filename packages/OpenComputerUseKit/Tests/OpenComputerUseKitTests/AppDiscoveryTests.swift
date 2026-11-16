@@ -3,8 +3,8 @@ import XCTest
 @testable import OpenComputerUseKit
 
 final class AppDiscoveryTests: XCTestCase {
-    /// list_apps asks Spotlight only for bundles used in the window and reads the values from the query. It must list
-    /// what a scan of every application bundle, read item by item, lists.
+    /// Batched current item attributes must agree with the independent full scan
+    /// that reads each attribute separately; cached query values can be stale.
     func testRecentAppsMatchAFullSpotlightScan() throws {
         let cutoff = AppDiscovery.recentUsageCutoff()
         let listed = AppDiscovery.SpotlightAppIndex.recentApps(cutoffDate: cutoff).map {
