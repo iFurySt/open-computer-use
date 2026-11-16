@@ -12,7 +12,7 @@
 
 ### Changes Overview
 
-- `performOnMain` 从工具线程调用时改为 `DispatchQueue.main.async`，tool call 不再等待动画。主队列按投递顺序播放：一个 block 在动画中 pump run loop 时，主队列不会开始下一个 block（已用独立程序和单测确认），因此不需要额外的待播队列。主线程调用（一次性 CLI）仍内联播放。turn-ended reset 走同一路径，排在已投递的动作之后。
+- `performOnMain` 从工具线程调用时改为 `DispatchQueue.main.async`，tool call 不再等待动画。主队列按投递顺序播放：一个 block 在动画中 pump run loop 时，主队列不会开始下一个 block（已用独立程序和单测确认），因此不需要额外的待播队列。主线程调用（一次性 CLI）仍内联播放。turn-ended reset 原先排在动作之后；下方 2026-11-16 复核改为立即使旧动画失效。
 - 新增纯函数 `adaptiveCursorTempo`：按距上一个动作结束的间隔缩放 move / pulse 时长，连续动作逐次乘 0.6 直到下限（`OPEN_COMPUTER_USE_CURSOR_BURST_FLOOR`，默认 0.15，设为 1 关闭），空闲 2 秒恢复原速。直接作用于现有时长，没有引入 duration scale。
 - visual dynamics 弹簧改用随节奏加速的时钟（`dynamicsTime` / `paceDynamics`）。所有创建或推进 dynamics state 的位置都换到这条时钟，包括 #95 新增的 `reanchorIfWindowMoved`，避免时间域混用。
 - 窗口追踪注册（`makeCursorWindowAnchor`、`visualCursorTarget(for:snapshot:)`）也投递到同一队列。否则 tool 线程会在前一个排队动作播放前注册新窗口，而前一个无锚点动作播放时的 `forgetAll()` 会清掉它，导致后一个动作不再跟随窗口。
@@ -51,3 +51,10 @@
 - Smoke（`--cursor-idle-only`）新增一步：开着 observation file 跑一次性 `call click`，计数器加一且不写 observation file；在改动前该步失败。
 - 测量：fixture（headless，`OPEN_COMPUTER_USE_DISABLE_APP_AGENT_PROXY=1`，debug build，9 轮去掉首轮）一次性 `call click` 从 exec 到退出 p50：origin/main 1859 ms，本 PR 改动前 1859 ms，改动后 210 ms（min 201，max 221）。
 - `swift test`：458 项，10 项跳过，0 失败；`scripts/run-tool-smoke-tests.sh` 通过。
+
+### Maintainer review 2026-11-16
+
+- 在最新 main 重新验证同步基线：10 次调用平均等待 1635.88 ms，最大 1700.85 ms；异步修复后平均 0.01 ms、最大 0.12 ms，全部动画约 5327 ms 追上，空闲后单次恢复为 1617 ms，落点最大误差 0.2 pt。真实窗口截图与无 overlay 时相同。
+- 原 PR 仍会在 reset 后播放排队的旧动作；reset 在 glide 期间触发时，动画还会继续约 1.46 秒并重新显示光标。新增回归在原实现失败，现通过 generation 使旧队列和进行中的动画失效，session cleanup 立即触发失效。新一轮动作保留，过期 cleanup 不覆盖新一轮状态。
+- 校验 burst floor，拒绝 NaN、无穷、零和负数，避免零时长或非有限动画参数；reset 同时清理节奏时钟。live 测试恢复原 observation 环境变量。
+- 本次真实测试为单屏 macOS 光标组件与窗口捕获；不把它当成其他平台或多屏的实测。

@@ -4,6 +4,42 @@ import Foundation
 import QuartzCore
 
 public enum VisualCursorSupport {
+    private final class QueueState: @unchecked Sendable {
+        let lock = NSLock()
+        var generation: UInt64 = 0
+    }
+    private static let queueState = QueueState()
+
+    static var generation: UInt64 {
+        queueState.lock.lock(); defer { queueState.lock.unlock() }
+        return queueState.generation
+    }
+
+    static func isCurrent(_ generation: UInt64) -> Bool { self.generation == generation }
+
+    static func invalidatePending() {
+        queueState.lock.lock(); defer { queueState.lock.unlock() }
+        queueState.generation &+= 1
+    }
+
+    /// Invalidate queued work immediately, including the currently playing
+    /// animation. Enqueue cleanup before any work from the next generation.
+    static func resetOnMain() {
+        queueState.lock.lock()
+        queueState.generation &+= 1
+        if Thread.isMainThread {
+            queueState.lock.unlock()
+            MainActor.assumeIsolated { SoftwareCursorOverlay.reset(invalidatePending: false) }
+        } else {
+            let generation = queueState.generation
+            DispatchQueue.main.async {
+                guard isCurrent(generation) else { return }
+                MainActor.assumeIsolated { SoftwareCursorOverlay.reset(invalidatePending: false) }
+            }
+            queueState.lock.unlock()
+        }
+    }
+
     public static var isEnabled: Bool {
         visualCursorEnabled(environment: ProcessInfo.processInfo.environment)
     }
@@ -22,11 +58,13 @@ public enum VisualCursorSupport {
             return
         }
 
+        queueState.lock.lock()
+        let generation = queueState.generation
         DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                body()
-            }
+            guard isCurrent(generation) else { return }
+            MainActor.assumeIsolated { body() }
         }
+        queueState.lock.unlock()
     }
 }
 
@@ -36,6 +74,12 @@ func visualCursorEnabled(environment: [String: String]) -> Bool {
     }
 
     return !["0", "false", "no", "off"].contains(rawValue)
+}
+
+func visualCursorBurstFloor(environment: [String: String]) -> Double {
+    guard let raw = environment["OPEN_COMPUTER_USE_CURSOR_BURST_FLOOR"],
+          let value = Double(raw), value.isFinite, value > 0 else { return 0.15 }
+    return min(value, 1)
 }
 
 func defaultVisualCursorInitialTipPosition(
@@ -230,6 +274,7 @@ enum SoftwareCursorOverlay {
             return
         }
 
+        let generation = VisualCursorSupport.generation
         prepareWindowIfNeeded()
         stopIdleAnimation()
         cancelPendingHide()
@@ -246,7 +291,7 @@ enum SoftwareCursorOverlay {
             gap: lastInteractionEnd.map { now - $0 } ?? .infinity,
             floor: burstTempoFloor
         )
-        defer { lastInteractionEnd = CACurrentMediaTime() }
+        defer { if VisualCursorSupport.isCurrent(generation) { lastInteractionEnd = CACurrentMediaTime() } }
 
         observationPhase = "moving"
         panel?.alphaValue = 1
@@ -265,7 +310,7 @@ enum SoftwareCursorOverlay {
         }
 
         if distanceBetween(startPoint, constrainedTarget) > 2 {
-            animateMove(from: startPoint, to: constrainedTarget, relativeTo: targetWindow)
+            animateMove(from: startPoint, to: constrainedTarget, relativeTo: targetWindow, generation: generation)
         }
     }
 
@@ -280,6 +325,7 @@ enum SoftwareCursorOverlay {
             return
         }
 
+        let generation = VisualCursorSupport.generation
         configureOrdering(relativeTo: targetWindow)
         stopIdleAnimation()
         adoptAnchor(anchor)
@@ -289,7 +335,8 @@ enum SoftwareCursorOverlay {
         seedVisualDynamicsIfNeeded(at: constrainedTarget, time: now)
         restingTipPosition = constrainedTarget
         observationPhase = "pulse"
-        animateClickPulse(at: constrainedTarget, clickCount: max(clickCount, 1), mouseButton: mouseButton)
+        animateClickPulse(at: constrainedTarget, clickCount: max(clickCount, 1), mouseButton: mouseButton, generation: generation)
+        guard VisualCursorSupport.isCurrent(generation) else { return }
         lastInteractionEnd = CACurrentMediaTime()
         startIdleAnimation()
         scheduleHide(after: visualCursorPostInteractionIdleTimeout())
@@ -321,7 +368,8 @@ enum SoftwareCursorOverlay {
         scheduleHide(after: visualCursorPostInteractionIdleTimeout())
     }
 
-    static func reset() {
+    static func reset(invalidatePending: Bool = true) {
+        if invalidatePending { VisualCursorSupport.invalidatePending() }
         stopIdleAnimation()
         cancelPendingHide()
         displayedTipPosition = nil
@@ -333,6 +381,9 @@ enum SoftwareCursorOverlay {
         visualDynamicsState = nil
         tempo = 1
         lastInteractionEnd = nil
+        dynamicsClock = 0
+        dynamicsClockWall = nil
+        dynamicsRate = 1
         observationPhase = "hidden"
         writeObservationSnapshot(tipPosition: nil, rotation: nil)
         panel?.orderOut(nil)
@@ -462,11 +513,7 @@ enum SoftwareCursorOverlay {
     /// Lowest tempo a burst of back-to-back actions can reach (see
     /// `adaptiveCursorTempo`). Default 0.15; OPEN_COMPUTER_USE_CURSOR_BURST_FLOOR
     /// overrides it, 1 turns the speed-up off.
-    static let burstTempoFloor: Double = {
-        guard let raw = ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_CURSOR_BURST_FLOOR"],
-              let value = Double(raw) else { return 0.15 }
-        return min(max(value, 0), 1)
-    }()
+    static let burstTempoFloor = visualCursorBurstFloor(environment: ProcessInfo.processInfo.environment)
 
     // The drawn tip follows the path through the visual-dynamics springs. Those
     // run on this clock, not wall time: while a move or pulse plays it advances
@@ -490,7 +537,7 @@ enum SoftwareCursorOverlay {
         dynamicsRate = paced ? 1 / max(tempo, 0.001) : 1
     }
 
-    private static func animateMove(from start: CGPoint, to end: CGPoint, relativeTo targetWindow: CursorTargetWindow?) {
+    private static func animateMove(from start: CGPoint, to end: CGPoint, relativeTo targetWindow: CursorTargetWindow?, generation: UInt64) {
         let candidate = bestMotionCandidate(from: start, to: end, relativeTo: targetWindow)
         let path = candidate.path
         // Use the recovered official progress spring timing instead of the older
@@ -508,6 +555,7 @@ enum SoftwareCursorOverlay {
         var springState = CursorMotionSpringState()
 
         while true {
+            guard VisualCursorSupport.isCurrent(generation) else { return }
             refreshActiveOrderingIfNeeded()
 
             if reanchorIfWindowMoved() {
@@ -539,6 +587,7 @@ enum SoftwareCursorOverlay {
             pumpFrame()
         }
 
+        guard VisualCursorSupport.isCurrent(generation) else { return }
         placeCursor(
             using: advanceVisualDynamics(
                 toward: end,
@@ -695,7 +744,7 @@ enum SoftwareCursorOverlay {
         configureOrdering(relativeTo: nil)
     }
 
-    private static func animateClickPulse(at point: CGPoint, clickCount: Int, mouseButton: MouseButtonKind) {
+    private static func animateClickPulse(at point: CGPoint, clickCount: Int, mouseButton: MouseButtonKind, generation: UInt64) {
         let pulseBias: CGFloat = mouseButton == .right ? 0.82 : 1
         paceDynamics(true)
         defer { paceDynamics(false) }
@@ -705,6 +754,7 @@ enum SoftwareCursorOverlay {
             let startTime = CACurrentMediaTime()
 
             while true {
+                guard VisualCursorSupport.isCurrent(generation) else { return }
                 _ = reanchorIfWindowMoved()
                 let elapsed = CACurrentMediaTime() - startTime
                 let rawProgress = min(max(elapsed / duration, 0), 1)
@@ -730,6 +780,7 @@ enum SoftwareCursorOverlay {
             }
         }
 
+        guard VisualCursorSupport.isCurrent(generation) else { return }
         placeCursor(
             using: advanceVisualDynamics(
                 toward: restingTipPosition ?? point,

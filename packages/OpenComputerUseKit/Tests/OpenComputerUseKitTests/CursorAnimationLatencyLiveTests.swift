@@ -24,10 +24,12 @@ final class CursorAnimationLatencyLiveTests: XCTestCase {
     private func withObservationFile(_ body: () throws -> Void) rethrows {
         _ = NSApplication.shared
         let file = FileManager.default.temporaryDirectory.appendingPathComponent("ocu-cursor-bench-\(UUID().uuidString).json")
+        let previous = ProcessInfo.processInfo.environment["OPEN_COMPUTER_USE_VISUAL_CURSOR_OBSERVATION_FILE"]
         setenv("OPEN_COMPUTER_USE_VISUAL_CURSOR_OBSERVATION_FILE", file.path, 1)
         defer {
             SoftwareCursorOverlay.reset()
-            unsetenv("OPEN_COMPUTER_USE_VISUAL_CURSOR_OBSERVATION_FILE")
+            if let previous { setenv("OPEN_COMPUTER_USE_VISUAL_CURSOR_OBSERVATION_FILE", previous, 1) }
+            else { unsetenv("OPEN_COMPUTER_USE_VISUAL_CURSOR_OBSERVATION_FILE") }
             try? FileManager.default.removeItem(at: file)
         }
         SoftwareCursorOverlay.reset()
