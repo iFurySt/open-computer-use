@@ -25,3 +25,11 @@ flag 之后紧接着读 app 元素的 AXRole，Chrome 12–19 ms 内建好页面
 ### 📁 Files Modified
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/AccessibilitySnapshot.swift`
 - `packages/OpenComputerUseKit/Tests/OpenComputerUseKitTests/WebTreeLiveTests.swift`
+
+### 2026-11-16 维护者复核
+
+- 保留生产修复的小范围：每次 snapshot/query 写标志后仅多读一次 app AXRole，不进入 rewalk 循环。
+- live test 使用独立 profile 和精确 PID，可与用户 Chrome 共存；清理等待有上限，启动失败清理临时目录，只在自有 Chrome 抢到前台时恢复原应用。按钮断言收紧为 button Go，并检查前台不变。
+- 新增 `scripts/tests/fixtures/MacOSChromeTreeProbe.swift` 独立真实 AX 对照；六轮交错使用全新临时 Chrome，未关闭已有浏览器，均找到自有页面按钮且前台未变。baseline 2029–2075 ms，role read 144–160 ms。
+- 完整 SnapshotBuilder live test 的基线被本机 Locked Use 校验阻断：XCTest 未签名身份报 invalidSignature；正常签名独立 probe 报 peerUnavailable(57)。没有绕过校验或修改安装。这条调用链未计为通过；上述直接 AX probe 只验证 Chrome 建树机制。
+- 使用 `swiftc -parse-as-library scripts/tests/fixtures/MacOSChromeTreeProbe.swift -o /tmp/ocu-chrome-tree-probe` 构建，执行临时产物复现。需要正常解锁和 AX 权限。
