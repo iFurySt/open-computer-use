@@ -5,7 +5,7 @@ $ErrorActionPreference = "Stop"
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($RuntimePath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors | Out-String) }
-$names = @("Test-EnvFlagEnabled", "Test-GlobalPointerFallbackEnabled", "Assert-GlobalInputTarget", "Assert-CurrentWindowBounds", "Assert-GlobalPointerTarget", "Send-GlobalMouseMove", "Send-GlobalMouseClick", "Send-Drag", "Send-Scroll", "Send-Key", "Get-VirtualKey", "ConvertTo-LParam", "ConvertTo-WheelWParam", "Resolve-GlobalElementPoint", "Same-RuntimeId", "Get-ScreenPoint")
+$names = @("Test-EnvFlagEnabled", "Test-GlobalPointerFallbackEnabled", "Assert-GlobalInputTarget", "Assert-CurrentWindowBounds", "Assert-GlobalPointerTarget", "Send-GlobalMouseMove", "Send-GlobalMouseClick", "Send-Drag", "Send-Scroll", "Send-Key", "Get-PostedKeyTarget", "Get-VirtualKey", "ConvertTo-LParam", "ConvertTo-WheelWParam", "Resolve-GlobalElementPoint", "Same-RuntimeId", "Get-ScreenPoint")
 $functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -in $names }, $true)
 if ($functions.Count -ne $names.Count) { throw "Production input functions missing" }
 foreach ($function in $functions) { Invoke-Expression $function.Extent.Text }
@@ -29,6 +29,8 @@ public static class OCUWin32 {
  public static void MouseInput(uint flags,int data) { events.Add("mouse:"+flags+":"+data); }
  public static void KeyInput(int key,bool up) { events.Add("key:"+key+":"+up); if(up)keyUps++; if(!up&&key==loseFocusAfterKey)foreground=(IntPtr)99; if(up&&key==failKeyUp)throw new Exception("key release interrupted"); if(!up&&key==failKey)throw new Exception("key interrupted"); }
  public static bool PostMessage(IntPtr h,uint m,IntPtr w,IntPtr l) { events.Add("post:"+m); lastLParam=l.ToInt64(); return postWorks; }
+ public static IntPtr FocusedWindow(IntPtr w) { return IntPtr.Zero; }
+ public static bool IsChild(IntPtr p,IntPtr c) { return false; }
 }
 "@
 $MOUSEEVENTF_LEFTDOWN=2; $MOUSEEVENTF_LEFTUP=4
@@ -116,8 +118,9 @@ Assert ([OCUWin32]::lastLParam -eq (ConvertTo-LParam 310 220).ToInt64() -and [OC
 [OCUWin32]::postWorks=$false
 Refuses { Send-Scroll 42 310 220 "up" 1 $bounds } "PostMessage wheel delivery failed"
 Reset
-Send-Key 42 "ctrl+a" "auto"
-Assert ([OCUWin32]::keyUps -eq 0 -and ([OCUWin32]::events -join ",") -eq "post:256,post:256,post:257,post:257") "Auto key delivery became global"
+Refuses { Send-Key 42 "ctrl+a" "auto" } "cannot carry modifier keys"
+Send-Key 42 "a" "auto"
+Assert ([OCUWin32]::keyUps -eq 0 -and ([OCUWin32]::events -join ",") -eq "post:256,post:257") "Auto key delivery became global"
 Reset
 Send-Scroll 42 30 40 "left" 1 $bounds
 Send-Scroll 42 30 40 "right" 1 $bounds

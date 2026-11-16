@@ -155,6 +155,32 @@ try {
   console.log('Focus change during capability lookup is rejected before writing.');
 
   await reset();
+  await configure({target:'secure',selection:[7,0]});
+  await call('type_text',{text:'X'});
+  await waitFor(()=>state().secure==='hunter2X');
+  const secureState = text(await call('get_app_state',{include_screenshot:false}));
+  assert.doesNotMatch(secureState,/hunter2/);
+  const secureIndex = secureState.match(/(\d+) secure text field/)?.[1];
+  assert.ok(secureIndex,secureState);
+  await call('set_value',{element_index:secureIndex,value:'newpass'});
+  await waitFor(()=>state().secure==='newpass');
+  assert.equal(state().view,'hello world');
+  console.log('Password field: typing inserts at the caret, set_value succeeds, and the value never reaches the snapshot.');
+
+  await configure({target:'secure',exposeSecureValue:true});
+  const secret = state().secure;
+  const passwordObservation = await call('get_app_state',{include_screenshot:false});
+  assert.ok(!JSON.stringify(passwordObservation).includes(secret));
+  const byName = await call('query',{text:'Password input'});
+  assert.ok(!JSON.stringify(byName).includes(secret));
+  const byValue = await call('query',{text:secret,exact:true});
+  assert.ok(!JSON.stringify(byValue).includes('Password input'), 'Password matched by value');
+  await configure({target:'secure'}); // publish any reads made during snapshot/query
+  assert.equal(state().secretReads,0, 'Snapshot/query requested a password value or selection');
+  console.log('Password provider: snapshot, selected text and query do not request secret attributes.');
+
+
+  await reset();
   worker = new WorkerJavaScriptSession({native});
   const js = await worker.run(`var textApp = await cua.getApp(${JSON.stringify(appName)}, {initialState:false}); await textApp.typeText("JS");`);
   assert.equal(js.isError,false,text(js));

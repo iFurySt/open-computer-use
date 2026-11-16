@@ -55,6 +55,8 @@ final class AXSnapshotReadCache: NSObject {
     func value(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
         let key = ElementKey(element: element)
         if prefetched.insert(key).inserted { attributes[key] = batch(element) }
+        if (name == "AXValue" || name == "AXSelectedText"),
+           isSecureTextField(subrole: value(element, "AXSubrole") as? String) { return nil }
         if let cached = attributes[key]?[name] { return cached.value }
         let (error, value) = single(element, name)
         if error == .success, let value { attributes[key, default: [:]][name] = .value(value); return value }
@@ -91,8 +93,8 @@ final class AXSnapshotReadCache: NSObject {
         return (error, flag.boolValue)
     }
 
-    private static let names = [
-        "AXRole", "AXSubrole", "AXRoleDescription", "AXTitle", "AXDescription", "AXHelp", "AXValue",
+    static let names = [
+        "AXRole", "AXSubrole", "AXRoleDescription", "AXTitle", "AXDescription", "AXHelp",
         "AXIdentifier", "AXSelected", "AXExpanded", "AXEnabled", "AXPlaceholderValue", "AXPlaceholder",
         "AXPosition", "AXSize", "AXURL", "AXChildren", "AXRows", "AXVisibleChildren", "AXContents",
     ]

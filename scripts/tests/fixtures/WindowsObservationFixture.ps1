@@ -37,7 +37,22 @@ $inputBox.Margin = New-Object System.Windows.Thickness(20)
 $inputBox.Height = 30
 $inputBox.VerticalAlignment = "Center"
 $inputBox.Text = "initial-value"
-$window.Content = $inputBox
+$panel = New-Object System.Windows.Controls.StackPanel
+$passwordBox = New-Object System.Windows.Controls.PasswordBox
+$passwordBox.Password = "ocu-password-fixture"
+$passwordBox.Height = 30
+[System.Windows.Automation.AutomationProperties]::SetName($passwordBox, "Observation password")
+[void]$panel.Children.Add($inputBox)
+[void]$panel.Children.Add($passwordBox)
+$closeButton = New-Object System.Windows.Controls.Button
+$closeButton.Content = "Close fixture"
+$closeButton.Height = 30
+$closeButton.Add_Click({
+    [IO.File]::WriteAllText(($StatePath + '.closed'), 'clicked')
+    $window.Close()
+})
+[void]$panel.Children.Add($closeButton)
+$window.Content = $panel
 $state = @{ sequence = 0; text = ""; width = 0; height = 0; minimized = $false; cloakHResult = 0; cloaked = 0 }
 $stateEncoding = New-Object System.Text.UTF8Encoding($false)
 $tinyWindow = @{ handle = [IntPtr]::Zero }
@@ -58,6 +73,19 @@ $timer.Add_Tick({
                         $window.Hide()
                         $tinyWindow.handle = [ObservationDwm]::CreateTinyWindow()
                     }
+                    "rename-input" { [System.Windows.Automation.AutomationProperties]::SetName($inputBox, "Renamed input") }
+                    "restore-input-name" { [System.Windows.Automation.AutomationProperties]::SetName($inputBox, "Observation input") }
+                    "rebuild-input" {
+                        $text = $inputBox.Text
+                        [void]$panel.Children.Remove($inputBox)
+                        $script:inputBox = New-Object System.Windows.Controls.TextBox
+                        $inputBox.Text = $text; $inputBox.Height = 30
+                        $inputBox.Margin = New-Object System.Windows.Thickness(20)
+                        [System.Windows.Automation.AutomationProperties]::SetName($inputBox, "Observation input")
+                        $panel.Children.Insert(0, $inputBox)
+                    }
+                    "selection" { [void]$window.Activate(); [void]$inputBox.Focus(); $inputBox.SelectAll() }
+                    "password" { [void]$window.Activate(); [void]$passwordBox.Focus(); $passwordBox.SelectAll() }
                     "minimize" { $window.WindowState = "Minimized" }
                     "cloak" {
                         $value = 1

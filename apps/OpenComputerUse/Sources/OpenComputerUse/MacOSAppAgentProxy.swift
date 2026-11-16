@@ -120,20 +120,17 @@ enum MacOSAppAgentProxy {
     }
 
     private static func proxyMCP(client: AppAgentSocketClient) throws {
-        while let line = readLine(strippingNewline: true) {
-            guard !line.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-                continue
-            }
-
+        let requests = MCPStdinRequests()
+        while let request = requests.next() {
             // No run loop drains this thread's autorelease pool either: one per request.
             try autoreleasepool {
                 let response = try client.request([
                     "kind": "mcp",
-                    "line": line,
+                    "line": request.line,
                     "environment": proxiedEnvironment(),
                 ])
 
-                if let responseLine = response["response"] as? String {
+                if requests.finish(), let responseLine = response["response"] as? String {
                     FileHandle.standardOutput.write(Data((responseLine + "\n").utf8))
                 }
             }
