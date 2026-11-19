@@ -4,7 +4,8 @@
 
 | 项目 | 触发版本 | 当前状态 | 后续操作 |
 | --- | --- | --- | --- |
-| PR #143 / issue #142：Karabiner 独占 HID | 下一个包含 #143 的公开版本 | 2026-11-07 决定先合并，尚未发布和邀请复测 | 发布后请贡献者 AbdullahPesteli 验证；反馈前保持 #142 开放 |
+| 旧 npm 别名 open-codex-computer-use-mcp 的 registry 可见性 | v1.1.5 | CI 于 2026-11-19 14:08 UTC 确认发布成功；15 分钟后本机普通 registry 查询仍为 404 / latest=1.1.4 | 后续只读复核 version/latest、tarball 完整性与签名票据；暂用已验证可安装的 open-computer-use@1.1.5，不重复发布同版本 |
+| PR #143 / issue #142：Karabiner 独占 HID | v1.1.5 | 2026-11-19 已发布并在 #142 邀请复测 | 等待报告者反馈；反馈前保持 #142 开放 |
 
 ## #143 / #142
 
