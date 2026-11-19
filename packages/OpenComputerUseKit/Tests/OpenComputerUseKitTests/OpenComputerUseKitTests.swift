@@ -4,6 +4,87 @@ import XCTest
 @testable import OpenComputerUseKit
 
 final class OpenComputerUseKitTests: XCTestCase {
+    func testParseNumericValueAcceptsPlainNumbersAndTrimsWhitespace() {
+        XCTAssertEqual(ComputerUseService.parseNumericValue("0.25", current: 0.5), 0.25)
+        XCTAssertEqual(ComputerUseService.parseNumericValue(" 3 \n", current: 10), 3)
+        XCTAssertEqual(ComputerUseService.parseNumericValue("-7.5", current: 0), -7.5)
+        XCTAssertNil(ComputerUseService.parseNumericValue("loud", current: 0.5))
+        XCTAssertNil(ComputerUseService.parseNumericValue("", current: 0.5))
+        XCTAssertNil(ComputerUseService.parseNumericValue("inf", current: 0.5))
+    }
+
+    func testParseNumericValueScalesPercentOnlyForUnitRangeControls() {
+        XCTAssertEqual(ComputerUseService.parseNumericValue("25%", current: 0.5), 0.25)
+        XCTAssertEqual(ComputerUseService.parseNumericValue("25 %", current: 1.0), 0.25)
+        XCTAssertEqual(ComputerUseService.parseNumericValue("25%", current: 40), 25)
+        XCTAssertNil(ComputerUseService.parseNumericValue("%", current: 0.5))
+    }
+
+    func testParseBooleanValueAcceptsLiteralsCaseInsensitively() {
+        XCTAssertEqual(ComputerUseService.parseBooleanValue("true"), true)
+        XCTAssertEqual(ComputerUseService.parseBooleanValue(" TRUE "), true)
+        XCTAssertEqual(ComputerUseService.parseBooleanValue("1"), true)
+        XCTAssertEqual(ComputerUseService.parseBooleanValue("False"), false)
+        XCTAssertEqual(ComputerUseService.parseBooleanValue("0\n"), false)
+        XCTAssertNil(ComputerUseService.parseBooleanValue("yes"))
+        XCTAssertNil(ComputerUseService.parseBooleanValue("2"))
+        XCTAssertNil(ComputerUseService.parseBooleanValue(""))
+    }
+
+    func testAXActionDidNotRunOnlyTrustsProvableFailures() {
+        XCTAssertTrue(ComputerUseService.axActionDidNotRun(.actionUnsupported))
+        XCTAssertTrue(ComputerUseService.axActionDidNotRun(.illegalArgument))
+        XCTAssertTrue(ComputerUseService.axActionDidNotRun(.notImplemented))
+        // AppKit 对执行了的动作也会回 -25205，不能当作没跑。
+        XCTAssertFalse(ComputerUseService.axActionDidNotRun(.cannotComplete))
+        XCTAssertFalse(ComputerUseService.axActionDidNotRun(.success))
+        XCTAssertFalse(ComputerUseService.axActionDidNotRun(.failure))
+        XCTAssertFalse(ComputerUseService.axActionDidNotRun(.apiDisabled))
+    }
+
+    func testPollNumericValueReturnsAsSoonAsThePredicateHolds() {
+        var clock: TimeInterval = 100
+        var slept: [TimeInterval] = []
+        var reads = 0
+        // 第三次读才看到变化：模拟动作返回后几毫秒才生效的控件。
+        let value = ComputerUseService.pollNumericValue(
+            read: { reads += 1; return reads >= 3 ? 0.6 : 0.5 },
+            until: { $0 != 0.5 },
+            now: { clock },
+            sleep: { slept.append($0); clock += $0 }
+        )
+        XCTAssertEqual(value, 0.6)
+        XCTAssertEqual(reads, 3)
+        XCTAssertEqual(slept, [0.005, 0.005])
+    }
+
+    func testPollNumericValueGivesUpAtTheTimeoutWithTheLastValue() {
+        var clock: TimeInterval = 0
+        var reads = 0
+        let value = ComputerUseService.pollNumericValue(
+            read: { reads += 1; return 0.5 },
+            until: { $0 != 0.5 },
+            timeout: 0.4,
+            now: { clock },
+            sleep: { clock += $0 }
+        )
+        XCTAssertEqual(value, 0.5)
+        XCTAssertEqual(clock, 0.4, accuracy: 1e-9)
+        XCTAssertEqual(reads, 81)
+    }
+
+    func testPollNumericValueStopsWhenTheValueCannotBeRead() {
+        var reads = 0
+        let value = ComputerUseService.pollNumericValue(
+            read: { reads += 1; return nil },
+            until: { _ in true },
+            now: { 0 },
+            sleep: { _ in XCTFail("should not sleep after a failed read") }
+        )
+        XCTAssertNil(value)
+        XCTAssertEqual(reads, 1)
+    }
+
     func testAppAgentSocketFileNamePreservesLegacyDefault() {
         XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: nil), "open-computer-use-agent.sock")
         XCTAssertEqual(openComputerUseAppAgentSocketFileName(namespace: "   "), "open-computer-use-agent.sock")
