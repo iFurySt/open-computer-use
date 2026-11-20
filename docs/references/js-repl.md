@@ -88,6 +88,11 @@ verification throw through `js`. Verification still reads the applied range when
 action read-back is disabled. The tool does not use keyboard/pointer fallback or
 activate the application. Linux/Windows report the native unsupported-tool error.
 
+On macOS, `app.getAXState({ settleMs })` (and the other state reads) first waits up to
+`settleMs` milliseconds (at most 5000) while the window shows a busy sign, so a script
+can read after an action without guessing a sleep; a window showing none is read at
+once. A note after the state says whether it settled.
+
 Discovery is available through `await cua.getState()` and
 `await cua.listApps()`. `listApps()` normalizes the native human-readable app
 catalog into an array of `{ id, displayName, lastUsedDate?, useCount?,
