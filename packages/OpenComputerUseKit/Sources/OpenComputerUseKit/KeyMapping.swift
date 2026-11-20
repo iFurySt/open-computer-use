@@ -111,6 +111,11 @@ public enum KeyPressParser {
         "down": CGKeyCode(kVK_DownArrow),
         "left": CGKeyCode(kVK_LeftArrow),
         "right": CGKeyCode(kVK_RightArrow),
+        // 模型常按 DOM KeyboardEvent.key 的写法给方向键（ArrowUp…），一并接受。
+        "arrowup": CGKeyCode(kVK_UpArrow),
+        "arrowdown": CGKeyCode(kVK_DownArrow),
+        "arrowleft": CGKeyCode(kVK_LeftArrow),
+        "arrowright": CGKeyCode(kVK_RightArrow),
         "home": CGKeyCode(kVK_Home),
         "end": CGKeyCode(kVK_End),
         "pageup": CGKeyCode(kVK_PageUp),
