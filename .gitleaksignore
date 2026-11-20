@@ -1,0 +1,11 @@
+# Findings judged benign, by gitleaks fingerprint (commit:file:rule:line), each with its reason.
+# A new finding is removed at its source; it is added here only when it is benign the same way.
+
+# Sparkle's SUPublicEDKey is the public half of the key that verifies Codex updates; it ships in the app's Info.plist.
+69b7960573d6d4557a29ac6f907ef35c9d0484f1:docs/references/codex-computer-use-reverse-engineering/packaging-and-lifecycle-integration.md:generic-api-key:73
+
+# A home directory path added to README.md in be1cb31 and removed in 7f74248; history is not rewritten.
+be1cb317d5212293b397190f05fa8f4f0b0d661c:README.md:home-directory-path:82
+
+# The test sends the key name "ctrl+unmapped" to prove an unknown key is refused; key="..." is a key name, not a secret.
+5136415f52b87f419227bae28767cf469a6bc3b5:scripts/tests/windows-input-smoke.ps1:generic-api-key:125
