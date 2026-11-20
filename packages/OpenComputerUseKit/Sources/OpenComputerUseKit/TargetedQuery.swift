@@ -49,7 +49,7 @@ final class TargetedElementRegistry<Value> {
     }
 
     func resolve(_ index: Int, app: TargetedAppIdentity) throws -> Value {
-        guard let entry = entries[index], now() < entry.expires else {
+        guard let entry = entries[index], now().isBefore(entry.expires) else {
             entries.removeValue(forKey: index)
             throw ComputerUseError.stateUnavailable("Query index \(index) has expired or is no longer available; run query again in this session")
         }

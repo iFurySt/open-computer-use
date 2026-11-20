@@ -144,7 +144,7 @@ public struct LockedUseDiagnostics: Codable, Sendable {
         do {
             try process.run()
             let deadline = Date().addingTimeInterval(2)
-            while process.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.01) }
+            while process.isRunning && Date().isBefore(deadline) { Thread.sleep(forTimeInterval: 0.01) }
             guard !process.isRunning, process.terminationStatus == 0 else {
                 if process.isRunning { process.terminate() }
                 return [:]

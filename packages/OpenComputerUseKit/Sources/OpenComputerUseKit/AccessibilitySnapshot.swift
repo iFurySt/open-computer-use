@@ -837,7 +837,7 @@ enum BlockingAsyncBridge {
 
         if Thread.isMainThread {
             while semaphore.wait(timeout: .now()) == .timedOut {
-                if let deadline, Date() >= deadline {
+                if let deadline, Date().isAtOrAfter(deadline) {
                     return false
                 }
 

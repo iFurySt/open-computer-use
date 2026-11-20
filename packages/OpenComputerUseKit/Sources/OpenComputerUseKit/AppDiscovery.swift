@@ -503,7 +503,7 @@ enum AppDiscovery {
                 let key = bundleIdentifier.lowercased()
                 let lastUsed = attributes[lastUsedDateRankingAttribute] as? Date
                     ?? attributes[kMDItemLastUsedDate as String] as? Date
-                guard let lastUsed, lastUsed >= cutoffDate else {
+                guard let lastUsed, lastUsed.isAtOrAfter(cutoffDate) else {
                     continue
                 }
 
@@ -528,7 +528,7 @@ enum AppDiscovery {
                 // Query filtering can change the order of duplicate bundle IDs.
                 // Choose the newest usable copy rather than trusting result order.
                 if let old = records[key], let oldDate = old.lastUsed,
-                   oldDate > lastUsed || (oldDate == lastUsed && (old.uses ?? -1) >= (uses ?? -1)) {
+                   lastUsed.isBefore(oldDate) || (oldDate == lastUsed && (old.uses ?? -1) >= (uses ?? -1)) {
                     continue
                 }
                 records[key] = SpotlightAppRecord(
