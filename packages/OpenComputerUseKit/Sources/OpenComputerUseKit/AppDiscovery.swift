@@ -528,7 +528,7 @@ enum AppDiscovery {
                 // Query filtering can change the order of duplicate bundle IDs.
                 // Choose the newest usable copy rather than trusting result order.
                 if let old = records[key], let oldDate = old.lastUsed,
-                   oldDate > lastUsed || (oldDate == lastUsed && (old.uses ?? -1) >= (uses ?? -1)) {
+                   lastUsed.isBefore(oldDate) || (oldDate == lastUsed && (old.uses ?? -1) >= (uses ?? -1)) {
                     continue
                 }
                 records[key] = SpotlightAppRecord(

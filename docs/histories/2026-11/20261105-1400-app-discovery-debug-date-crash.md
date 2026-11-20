@@ -13,7 +13,7 @@
 
 **Key Actions:**
 - **[DateComparison]**: 新增 `package extension Date { isBefore / isAtOrAfter }`，按 `timeIntervalSinceReferenceDate` 比较，不经由 `Date` 的 `Comparable` 见证。
-- **[调用点]**: `AppDiscovery.recentApps`、`AccessibilitySnapshot` 的 `BlockingAsyncBridge.waitForSignal`、`ComputerUseService` 与 `LockedUseDiagnostics` 的 deadline 轮询、app 的 `MacOSAppAgentProxy` 等待循环，全部改用该扩展。
+- **[调用点]**: `AppDiscovery.recentApps`（截止日期与多副本取最新）、`TargetedQuery` 的缓存过期判断、`AccessibilitySnapshot` 的 `BlockingAsyncBridge.waitForSignal`、`ComputerUseService` 与 `LockedUseDiagnostics` 的 deadline 轮询、app 的 `MacOSAppAgentProxy` 等待循环，全部改用该扩展。
 
 ### 🧠 Design Intent (Why)
 在 Xcode 26.6（Swift 6.4.2）+ macOS 27.2 上，`swift build`（debug，`-Onone`）产物里每一处 `Date` 之间的 `>=` / `<` 都会跳转到地址 0 而崩溃：`ocu call list_apps` 在 `AppDiscovery` 崩，`swift test` 在 `BlockingAsyncBridge.waitForSignal` 崩（`testBlockingAsyncBridgeTimesOutScreenshotWork`）。lldb 里两个 `Date` 值都正常，`frame #1` 是 `static Date.>= infix()` 的编译器生成代码。release 构建把比较内联掉，所以 npm 发布包不受影响，但任何以 debug 方式构建 Kit 的调用方都会复现，仓库自己的 `swift test` 在该工具链上也跑不完。改为比较原始秒数绕开该见证，语义不变（`Date` 的比较本身就定义在 `timeIntervalSinceReferenceDate` 上）。`LockedUseConnection` 里的 `startupDeadline` 是 `TimeInterval`，不受影响。
@@ -29,5 +29,6 @@
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/AccessibilitySnapshot.swift`
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/ComputerUseService.swift`
 - `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/LockedUseDiagnostics.swift`
+- `packages/OpenComputerUseKit/Sources/OpenComputerUseKit/TargetedQuery.swift`
 - `apps/OpenComputerUse/Sources/OpenComputerUse/MacOSAppAgentProxy.swift`
 - `docs/histories/2026-11/20261105-1400-app-discovery-debug-date-crash.md`
