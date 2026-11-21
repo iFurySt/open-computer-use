@@ -157,6 +157,36 @@ public enum ToolDefinitions {
             )
         ),
         ToolDefinition(
+            name: "key_sequence",
+            description: "Hold, release and tap keys on one timeline so keys can overlap, for example hold W, tap Space, keep walking. Steps run in order in one call; each step is an object with exactly one of `down` (hold one key or modifier), `up` (release a held key), `press` (tap a key or chord, press_key syntax) or `wait_ms` (pause 0-\(KeySequence.maximumWaitMilliseconds) ms while held keys stay down). The timeline is checked before anything is sent and keys still held at the end are released. Limits: \(KeySequence.maximumSteps) steps, \(KeySequence.maximumTotalWaitMilliseconds) ms of waits. Windows drawn by a game engine usually need key_method `sky_key`. Example steps: [{\"down\":\"w\"},{\"wait_ms\":300},{\"press\":\"space\"},{\"wait_ms\":700},{\"up\":\"w\"}]. This tool is part of plugin `Computer Use`.",
+            annotations: defaultAnnotations(),
+            inputSchema: objectSchema(
+                properties: [
+                    "app": stringProperty(description: "App name or bundle identifier"),
+                    "steps": [
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": KeySequence.maximumSteps,
+                        "description": "Timeline steps, each an object with exactly one of down, up, press (strings) or wait_ms (whole milliseconds).",
+                        "items": [
+                            "type": "object",
+                            "minProperties": 1,
+                            "maxProperties": 1,
+                            "properties": [
+                                "down": ["type": "string"],
+                                "up": ["type": "string"],
+                                "press": ["type": "string"],
+                                "wait_ms": ["type": "integer", "minimum": 0, "maximum": KeySequence.maximumWaitMilliseconds],
+                            ],
+                            "additionalProperties": false,
+                        ] as [String: Any],
+                    ] as [String: Any],
+                    "key_method": keyMethodProperty(),
+                ],
+                required: ["app", "steps"]
+            )
+        ),
+        ToolDefinition(
             name: "scroll",
             description: "Scroll an element in a direction by a number of pages. This tool is part of plugin `Computer Use`.",
             annotations: defaultAnnotations(),

@@ -138,6 +138,18 @@ enum SkyKeyboardDispatcher {
         }
     }
 
+    /// Runs a whole `key_sequence` inside one synthetic-focus session, so the target window stays
+    /// key while keys are held and is restored once at the end.
+    static func keySequence(
+        target: SkyKeyboardTarget,
+        steps: [KeySequence.Resolved],
+        spi: SkyLightSPI = .shared
+    ) throws {
+        try deliver(to: target, spi: spi) {
+            try KeySequence.run(steps, pid: target.pid)
+        }
+    }
+
     private static func deliver(
         to target: SkyKeyboardTarget,
         spi: SkyLightSPI,

@@ -1155,6 +1155,26 @@ public final class ComputerUseService {
         return try actionResult(for: query)
     }
 
+    public func keySequence(app query: String, steps: [KeySequenceStep], keyMethod: KeyMethod = .auto) throws -> ToolCallResult {
+        let resolved = try KeySequence.resolve(steps)
+        let snapshot = try currentSnapshot(for: query)
+        if snapshot.mode == .fixture {
+            throw ComputerUseError.message("key_sequence is not supported for fixture apps")
+        }
+
+        if keyMethod == .skyKey {
+            let target = try skyKeyTarget(for: snapshot)
+            try SkyKeyboardDispatcher.keySequence(target: target, steps: resolved)
+            return snapshotResult(
+                for: try refreshSnapshot(for: query, recoveryPolicy: keyActionSnapshotRecoveryPolicy(for: keyMethod)),
+                style: .actionResult
+            )
+        }
+
+        try KeySequence.run(resolved, pid: snapshot.app.pid)
+        return try actionResult(for: query)
+    }
+
     private func requireAutoKeyMethodForFixture(_ keyMethod: KeyMethod) throws {
         guard keyMethod == .auto else {
             throw ComputerUseError.message(

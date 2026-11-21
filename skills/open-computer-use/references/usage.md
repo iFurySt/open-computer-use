@@ -40,6 +40,7 @@ type_text
 press_key
 set_value
 select_text   (macOS runtime only)
+key_sequence  (macOS runtime only)
 ```
 
 macOS also exposes `query` for targeted AX lookup. These nine core tools remain the cross-platform compatibility surface. The bundled Codex plugin uses a
@@ -261,6 +262,16 @@ turn/connection cleanup remain available when disabled.
 `agent_display` moves the window's frame onto a virtual display the user never sees (macOS only): the app renders it, exposes its full tree and accepts `sky_click` / `sky_key`, while the user's Space, focus and pointer stay untouched. The window is gone from the user's desktop until `restore`, the assistant turn ends, the MCP/REPL connection closes, or the runtime exits, so treat it as a deliberate, temporary step. `restore` restores every window parked by the runtime for that app. Keep park/action/restore calls in one `js`, REPL, MCP, or `call --calls` session; a one-shot CLI connection restores its background state when it closes. `sky_click` and `sky_key` accept covered and other-Space windows.
 
 `sky_key` types into whatever element the target window has focused, so click or AX-focus the field first. It fails closed for hidden apps (`cmd+h`), stale window ids, and missing private symbols; Windows and Linux return an unsupported error.
+
+### Overlapping held keys (macOS)
+
+Games read held keys every frame, so a `press_key` tap (key-down and key-up back to back) moves nothing, and two separate calls cannot hold W while Space is pressed. `key_sequence` runs one timeline per call. Each step has exactly one of `down` (hold one key or modifier), `up` (release a held key), `press` (tap a key or chord) or `wait_ms` (a whole number, 0-5000). The timeline is checked and every event created before anything is sent, keys still held at the end are released, and the limits are 200 steps and 10000 ms of waits. Walk forward and jump:
+
+```json
+{"app":"Roblox Studio","key_method":"sky_key","steps":[{"down":"w"},{"wait_ms":400},{"press":"space"},{"wait_ms":800},{"up":"w"}]}
+```
+
+Windows drawn by a game engine (Roblox Studio and similar) expose no element tree for the game view: click them by window coordinates with `click_method: "sky_click"` and send keys with `key_method: "sky_key"`; the `auto` methods do not reach them. A call blocks until its timeline ends, so it cannot react mid-sequence.
 
 ## Drag Delivery
 
