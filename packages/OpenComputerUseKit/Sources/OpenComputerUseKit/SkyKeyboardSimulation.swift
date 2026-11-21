@@ -113,15 +113,24 @@ enum SkyKeyboardDispatcher {
         }
     }
 
+    /// `holdMs` keeps the window key for the whole hold. A command chord is a
+    /// menu press here, which has no duration, so it cannot be held.
     static func pressKey(
         target: SkyKeyboardTarget,
         key: String,
+        holdMs: Int? = nil,
         spi: SkyLightSPI = .shared
     ) throws {
         // Reject bad key specs before touching the target's focus state.
         let parsed = try KeyPressParser.parse(key)
+        let equivalent = skyMenuKeyEquivalent(for: parsed)
+        if holdMs != nil, equivalent != nil {
+            throw ComputerUseError.invalidArguments(
+                "hold_ms cannot hold '\(key)' with key_method 'sky_key', which presses command chords through the app's menu. Use key_method 'auto' to hold it."
+            )
+        }
         try deliver(to: target, spi: spi) {
-            if let equivalent = skyMenuKeyEquivalent(for: parsed),
+            if let equivalent,
                let item = menuItem(matching: equivalent, pid: target.pid) {
                 try requireUsableComputerUseSession()
                 let result = AXUIElementPerformAction(item, kAXPressAction as CFString)
@@ -134,7 +143,7 @@ enum SkyKeyboardDispatcher {
                 return
             }
 
-            try InputSimulation.pressKey(key, pid: target.pid)
+            try InputSimulation.pressKey(key, pid: target.pid, holdMs: holdMs)
         }
     }
 

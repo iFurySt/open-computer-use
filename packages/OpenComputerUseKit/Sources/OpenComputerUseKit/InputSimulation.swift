@@ -110,10 +110,11 @@ enum InputSimulation {
         )
     }
 
-    static func pressKeyWithSkyLight(_ specification: String, windowID: CGWindowID, pid: pid_t) throws {
+    static func pressKeyWithSkyLight(_ specification: String, windowID: CGWindowID, pid: pid_t, holdMs: Int? = nil) throws {
         try SkyKeyboardDispatcher.pressKey(
             target: SkyKeyboardTarget(windowID: windowID, pid: pid),
-            key: specification
+            key: specification,
+            holdMs: holdMs
         )
     }
 
@@ -250,44 +251,48 @@ enum InputSimulation {
         return chunks
     }
 
-    static func pressKey(_ specification: String, pid: pid_t) throws {
+    /// `holdMs` keeps the key and its modifiers down that long before the release,
+    /// for apps that poll key state once per frame and miss an instantaneous press.
+    static func pressKey(_ specification: String, pid: pid_t, holdMs: Int? = nil) throws {
         try requireUsableComputerUseSession()
-        let parsed = try KeyPressParser.parse(specification)
-        var activeFlags: CGEventFlags = []
-
-        for modifier in parsed.modifiers {
-            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: modifier.keyCode, keyDown: true) else {
-                throw ComputerUseError.message("Failed to create modifier key down event.")
-            }
-
-            activeFlags.insert(modifier.flag)
-            event.flags = activeFlags
-            event.postToPid(pid)
+        let events = try keyPressEvents(for: KeyPressParser.parse(specification))
+        // Nothing between the presses and the releases can fail, so the key and
+        // its modifiers are always released, however long they are held.
+        events.presses.forEach { $0.postToPid(pid) }
+        if let holdMs {
+            Thread.sleep(forTimeInterval: Double(holdMs) / 1000)
         }
-
-        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: parsed.keyCode, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: parsed.keyCode, keyDown: false) else {
-            throw ComputerUseError.message("Failed to create key event.")
-        }
-
-        keyDown.flags = activeFlags
-        keyUp.flags = activeFlags
-        keyDown.postToPid(pid)
-        keyUp.postToPid(pid)
-
-        for modifier in parsed.modifiers.reversed() {
-            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: modifier.keyCode, keyDown: false) else {
-                throw ComputerUseError.message("Failed to create modifier key up event.")
-            }
-
-            event.flags = activeFlags
-            event.postToPid(pid)
-            activeFlags.remove(modifier.flag)
-        }
+        events.releases.forEach { $0.postToPid(pid) }
 
         if InputTiming.pressKeySettle > 0 {
             Thread.sleep(forTimeInterval: InputTiming.pressKeySettle)
         }
+    }
+
+    /// Every event of a key press, made before any is posted: one that cannot be
+    /// made sends nothing, instead of leaving a modifier down in the app. Modifiers
+    /// go down in order, then the key; the key comes up, then the modifiers in reverse.
+    static func keyPressEvents(for parsed: ParsedKeyPress) throws -> (presses: [CGEvent], releases: [CGEvent]) {
+        func event(_ keyCode: CGKeyCode, down: Bool, flags: CGEventFlags) throws -> CGEvent {
+            guard let event = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: down) else {
+                throw ComputerUseError.message("Failed to create key event; nothing was sent.")
+            }
+            event.flags = flags
+            return event
+        }
+        var flags: CGEventFlags = []
+        var presses: [CGEvent] = []
+        for modifier in parsed.modifiers {
+            flags.insert(modifier.flag)
+            presses.append(try event(modifier.keyCode, down: true, flags: flags))
+        }
+        presses.append(try event(parsed.keyCode, down: true, flags: flags))
+        var releases = [try event(parsed.keyCode, down: false, flags: flags)]
+        for modifier in parsed.modifiers.reversed() {
+            releases.append(try event(modifier.keyCode, down: false, flags: flags))
+            flags.remove(modifier.flag)
+        }
+        return (presses, releases)
     }
 
     private static func postMouseEvent(type: CGEventType, source: CGEventSource?, point: CGPoint, button: CGMouseButton, clickState: Int, delta: CGSize? = nil, eventNumber: Int64? = nil) throws {
