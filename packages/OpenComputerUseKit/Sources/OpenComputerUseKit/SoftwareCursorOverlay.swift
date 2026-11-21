@@ -92,6 +92,17 @@ func defaultVisualCursorInitialTipPosition(
     )
 }
 
+/// Where a cursor with no current position starts its first move. Upstream started every fresh
+/// cursor at the screen origin (the bottom-left corner), so after each session end or 30 s idle
+/// hide it flew in from that corner. Prefer where it was last seen, then the user's real pointer.
+func visualCursorFreshStartTipPosition(
+    lastSeen: CGPoint?,
+    pointer: CGPoint?,
+    fallback: CGPoint
+) -> CGPoint {
+    lastSeen ?? pointer ?? fallback
+}
+
 func visualCursorRenderBaseHeading(
     artworkNeutralHeading: CGFloat = SoftwareCursorGlyphMetrics.targetNeutralHeading
 ) -> CGFloat {
@@ -249,6 +260,8 @@ enum SoftwareCursorOverlay {
     private static var panel: CursorPanel?
     private static var cursorView: SoftwareCursorView?
     private static var restingTipPosition: CGPoint?
+    /// Survives hide and session reset so the next fresh move starts where the cursor was last seen.
+    private static var lastSeenTipPosition: CGPoint?
     private static var displayedTipPosition: CGPoint?
     private static var activeTargetWindow: CursorTargetWindow?
     /// Window frame the current target point was derived from; lets a move
@@ -283,7 +296,11 @@ enum SoftwareCursorOverlay {
         lastAnchorFrame = anchor.flatMap { CursorWindowFrameTracker.liveFrame(for: $0.windowID) } ?? anchor?.windowBounds
         let constrainedTarget = clampTipPosition(liveTargetPoint(targetPoint, anchor: anchor))
         let isFreshStart = displayedTipPosition == nil
-        let startPoint = displayedTipPosition ?? defaultInitialTipPosition()
+        let startPoint = displayedTipPosition ?? visualCursorFreshStartTipPosition(
+            lastSeen: lastSeenTipPosition,
+            pointer: NSEvent.mouseLocation,
+            fallback: defaultInitialTipPosition()
+        )
         let now = CACurrentMediaTime()
         tempo = adaptiveCursorTempo(
             previous: tempo,
@@ -371,6 +388,7 @@ enum SoftwareCursorOverlay {
         if invalidatePending { VisualCursorSupport.invalidatePending() }
         stopIdleAnimation()
         cancelPendingHide()
+        lastSeenTipPosition = displayedTipPosition ?? restingTipPosition ?? lastSeenTipPosition
         displayedTipPosition = nil
         restingTipPosition = nil
         activeTargetWindow = nil
@@ -881,6 +899,7 @@ enum SoftwareCursorOverlay {
             MainActor.assumeIsolated {
                 panel.orderOut(nil)
                 panel.alphaValue = 1
+                lastSeenTipPosition = displayedTipPosition ?? restingTipPosition ?? lastSeenTipPosition
                 displayedTipPosition = nil
                 restingTipPosition = nil
                 activeTargetWindow = nil
