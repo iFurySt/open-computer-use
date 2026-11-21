@@ -38,4 +38,19 @@ final class ElementIdentityTests: XCTestCase {
         XCTAssertEqual(ElementIdentity(role: "AXButton", subrole: nil, title: " ", description: "Close", identifier: nil, value: nil).name, "Close",
                        "the name is the title, else the description")
     }
+
+    /// The snapshot counts any AX error as no value, so the action-time read must too: TextEdit's text area on
+    /// macOS 27 answers AXDescription with kAXErrorFailure, and refusing that made set_value fail every time.
+    func testAnyAXErrorReadsAsAbsentLikeTheSnapshot() {
+        func axError(_ error: AXError) -> AnyObject {
+            var error = error
+            return AXValueCreate(.axError, &error)!
+        }
+        for error in [AXError.attributeUnsupported, .noValue, .failure, .cannotComplete] {
+            XCTAssertEqual(ElementIdentity.reading(axError(error)), .absent, "\(error.rawValue)")
+        }
+        XCTAssertEqual(ElementIdentity.reading("First Text View" as NSString), .text("First Text View"))
+        XCTAssertEqual(ElementIdentity.reading(NSNull()), .absent)
+        XCTAssertEqual(ElementIdentity.reading(NSNumber(value: 1)), .unreadable, "a non-text name still fails closed")
+    }
 }

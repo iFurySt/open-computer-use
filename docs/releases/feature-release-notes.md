@@ -4,6 +4,7 @@
 
 | 日期 | 功能域 | 用户价值 | 变更摘要 |
 | --- | --- | --- | --- |
+| 2026-11-20 | macOS 元素身份核对 | macOS 27 上 TextEdit 正文等控件的 set_value 和按序号点击不再被误判为“身份已变化”而拒绝。 | 动作前核对按快照的读法处理属性：任何 AX 错误视为缺失（此前只认 attributeUnsupported / noValue，TextEdit 的 AXDescription 返回 kAXErrorFailure）；role 仍必需，非文本值仍拒绝。 |
 | 2026-11-19 | v1.1.5 补丁发布 | 修复 MCP 通知导致客户端断连的问题，并交付近期三平台输入、观察与 macOS 性能修复。 | 包含 #170 的通知与取消处理、密码字段保护、窗口与目标校验、Locked Use 修复，以及 #113/#114/#167/#177；沿用正式签名与公证流程。 |
 | 2026-11-16 | macOS 应用列表提速 | 更快返回应用列表，保留当前使用日期与次数。 | 去掉 Spotlight 文件名通配符；每个结果一次读取当前属性，日期过滤后才读 Info.plist，避免查询缓存陈旧。多副本选最新有效记录，附真实全扫描对照。 |
 | 2026-11-08 | macOS Chrome 网页树 | 新打开的 Chrome 页面第一次 get_app_state 就带网页内容，从约 2.1 s 降到约 0.15 s。 | 写入无障碍 flag 后立即读 app 元素的 AXRole，Chrome 随即建树；附 opt-in 独立 Chrome 实测。 |

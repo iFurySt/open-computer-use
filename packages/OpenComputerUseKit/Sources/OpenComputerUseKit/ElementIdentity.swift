@@ -37,6 +37,26 @@ struct ElementIdentity: Equatable {
         }
     }
 
+    enum AttributeReading: Equatable {
+        case text(String)
+        case absent
+        case unreadable
+    }
+
+    /// One entry from AXUIElementCopyMultipleAttributeValues, read the way the snapshot reads the same attribute
+    /// (AXUIElementCopyAttributeValue, where any AX error means no value). Some controls answer an attribute they
+    /// don't carry with kAXErrorFailure rather than attributeUnsupported (TextEdit's text area on macOS 27 does
+    /// for AXDescription); counting only attributeUnsupported/noValue as absent made those controls fail every
+    /// check while their snapshot recorded nil. The role is still required by the caller.
+    static func reading(_ value: AnyObject) -> AttributeReading {
+        if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
+            var error = AXError.success
+            return AXValueGetValue(value as! AXValue, .axError, &error) ? .absent : .unreadable
+        }
+        if let text = value as? String { return .text(text) }
+        return value is NSNull ? .absent : .unreadable
+    }
+
     /// Read identity without walking or rebinding to a different, same-named control.
     /// Read the current role/subrole before requesting any value, preserving password protection.
     static func read(_ element: AXUIElement) throws -> ElementIdentity? {
@@ -46,11 +66,11 @@ struct ElementIdentity: Equatable {
         guard result == .success, let list = values as? [AnyObject], list.count == names.count else { return nil }
         var read: [String: String] = [:]
         for (name, value) in zip(names, list) {
-            if CFGetTypeID(value) == AXValueGetTypeID(), AXValueGetType(value as! AXValue) == .axError {
-                var error = AXError.failure
-                guard AXValueGetValue(value as! AXValue, .axError, &error), error == .attributeUnsupported || error == .noValue else { return nil }
-            } else if let text = value as? String { read[name] = text }
-            else if !(value is NSNull) { return nil }
+            switch reading(value) {
+            case .text(let text): read[name] = text
+            case .absent: continue
+            case .unreadable: return nil
+            }
         }
         let role = read[kAXRoleAttribute], subrole = read[kAXSubroleAttribute]
         guard role != nil else { return nil }
