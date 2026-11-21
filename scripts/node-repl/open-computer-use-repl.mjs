@@ -52,6 +52,8 @@ The runtime exposes an asynchronous app-bound API:
 - \`await app.selectText(elementIndex, text, { prefix?, suffix?, selection? })\`: macOS-only; selection is text (default), cursor_before or cursor_after. Ambiguous text and unverified selections throw.
 - \`await app.performSecondaryAction(elementIndex, action)\`
 
+For a macOS tray icon (near the clock), bind its owning app with \`cua.getApp(bundleId, { initialState: false })\`. Call \`app.getAXState({ includeScreenshot: false })\` and look under **Status bar items (macOS tray)**, not the app's File/Edit menu or \`app.query()\`. Click the matching icon's fresh index with \`app.click(index, { clickMethod: "accessibility" })\`, then read a fresh AX snapshot for menu entries. If the item or entry is missing or accessibility click fails, report that; do not use screen coordinates or global clicks as a fallback.
+
 After actions, call \`getAXState()\` in the same js invocation when the next decision depends on the updated UI. Re-derive element indexes from fresh state after navigation or layout changes. Prefer element indexes over coordinates. Open Computer Use keeps its existing local safety gates, including password-manager denial and explicit authorization for global pointer fallbacks.`;
 
 export function virtualDisplayEnabled(environment = process.env, platform = process.platform) {
