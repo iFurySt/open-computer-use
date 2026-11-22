@@ -48,7 +48,11 @@ Locked Use 的开启方式、安装组件和权限见[文档](docs/locked-use.zh
 npm i -g open-computer-use
 ```
 
-通过 npm 安装后也会同时提供短命令 `ocu`。
+```bash
+# macOS 也可以用 Homebrew 安装
+brew tap ifuryst/open-computer-use
+brew install open-computer-use
+```
 
 > [!IMPORTANT]
 > macOS 运行环境要求 macOS 14.0 或更高版本。

@@ -51,7 +51,11 @@ See the [Locked Use guide](docs/locked-use.en.md) for setup, installed component
 npm i -g open-computer-use
 ```
 
-The npm package also exposes `ocu` as the short CLI alias.
+```bash
+# Or on macOS with Homebrew
+brew tap ifuryst/open-computer-use
+brew install open-computer-use
+```
 
 > [!IMPORTANT]
 > The macOS runtime requires macOS 14.0 or later.
