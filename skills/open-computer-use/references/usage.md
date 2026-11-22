@@ -293,6 +293,9 @@ the app or fall back to keyboard/pointer input. Linux and Windows do not impleme
 
 ## Software Cursor
 
+A cursor with no current position (a new session, or after the 30 s idle hide) starts its first move
+where it was last seen, else at the user's real pointer, instead of flying in from the screen origin.
+
 The software cursor keeps a window-relative anchor for its target point. During travel, settle, click
 feedback and idle, it follows changes to the target window's frame. If the window moves during travel,
 the visible tip lands at the new position immediately, without continuing toward the old position.
