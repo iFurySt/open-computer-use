@@ -37,6 +37,10 @@ publisher 即使已绑定仓库不可变身份、页面仍显示 Valid，也不�
 - GitHub Release 正文：`docs/releases/github/vX.Y.Z.md`
 - GitHub Release 页面：workflow 使用审核过的英文 notes 文件创建或更新，不直接引用 PR 标题自动生成正文。
 
+## Homebrew cask
+
+[官方 tap](https://github.com/iFurySt/homebrew-open-computer-use) 独立维护 macOS cask。它每小时检查最新正式 GitHub Release，也可以手动运行 tap 的 Update Open Computer Use cask workflow。更新以已发布 manifest 和实际 ZIP 的 SHA-256 为准。缺少资产、校验失败、版本回退或同版本 ZIP 被替换会停止更新，需要复核后再处理。发版后可在 tap 中核对 cask 版本与校验和。
+
 ## 参考资料归档 Release
 
 官方 `computer-use` 原始 ZIP 使用独立的 `reference-bundles` tag / Release 分发，下载入口为 `https://github.com/iFurySt/open-computer-use/releases/download/reference-bundles/<filename>`。它只归档研究输入，不属于下面的 patch / minor 软件发版流程，不 bump plugin / npm / App 版本。

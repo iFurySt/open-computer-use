@@ -44,6 +44,25 @@ Locked Use 的开启方式、安装组件和权限见[文档](docs/locked-use.zh
 
 ## Quick Start
 
+### macOS 用 Homebrew 安装
+
+需要 macOS 14 或更高版本，以及 Homebrew 6.0.13 或更高版本。
+
+```bash
+brew tap ifuryst/open-computer-use
+brew install --cask ifuryst/open-computer-use/open-computer-use
+```
+
+如果 Homebrew 提示需要信任 cask，执行 `brew trust --cask ifuryst/open-computer-use/open-computer-use` 后重试。
+
+安装后可以用 `ocu` 或 `open-computer-use`，用 `ocu mcp` 启动原生 MCP。第一次运行 `ocu` 检查辅助功能和屏幕录制权限。从其他安装方式迁移时，macOS 可能会要求重新授权。
+
+如果 npm 安装已经占用了 Homebrew 目录中的同名命令，先卸载对应的 npm 包。需要 `capabilities`、`config`、`js`、`repl` 或 `install-*` 命令的话，用下面的 npm 安装方式。
+
+更新用 `brew upgrade --cask open-computer-use`。
+
+### npm
+
 ```bash
 npm i -g open-computer-use
 ```

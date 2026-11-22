@@ -47,6 +47,25 @@ See the [Locked Use guide](docs/locked-use.en.md) for setup, installed component
 
 ## Quick Start
 
+### Homebrew on macOS
+
+Requires macOS 14 or later and Homebrew 6.0.13 or later.
+
+```bash
+brew tap ifuryst/open-computer-use
+brew install --cask ifuryst/open-computer-use/open-computer-use
+```
+
+If Homebrew asks you to trust the cask, run `brew trust --cask ifuryst/open-computer-use/open-computer-use` and retry the install.
+
+The cask installs the signed app and provides `ocu` and `open-computer-use`. Use `ocu mcp` for the native MCP server. Run `ocu` to check Accessibility and Screen Recording permissions. macOS may ask you to grant them again if you switch from another installation.
+
+If npm already owns these commands in Homebrew's bin directory, uninstall that npm package first. Use the npm install below for `capabilities`, `config`, `js`, `repl`, or the `install-*` commands.
+
+Upgrade with `brew upgrade --cask open-computer-use`.
+
+### npm
+
 ```bash
 npm i -g open-computer-use
 ```
