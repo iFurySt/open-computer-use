@@ -288,13 +288,14 @@ final class OpenComputerUseKitTests: XCTestCase {
     }
 
     func testToolDefinitionCount() {
-        XCTAssertEqual(ToolDefinitions.all.count, 11)
+        XCTAssertEqual(ToolDefinitions.all.count, 12)
         XCTAssertEqual(
             ToolDefinitions.all.map(\.name).sorted(),
             [
                 "click",
                 "drag",
                 "get_app_state",
+                "key_sequence",
                 "list_apps",
                 "perform_secondary_action",
                 "press_key",

@@ -123,6 +123,12 @@ public final class ComputerUseToolDispatcher {
                 key: requireString("key", in: arguments),
                 keyMethod: try parseKeyMethod(optionalString("key_method", in: arguments))
             )
+        case "key_sequence":
+            return try service.keySequence(
+                app: requireString("app", in: arguments),
+                steps: try KeySequence.parse(arguments["steps"]),
+                keyMethod: try parseKeyMethod(optionalString("key_method", in: arguments))
+            )
         case "set_value":
             return try service.setValue(
                 app: requireString("app", in: arguments),
