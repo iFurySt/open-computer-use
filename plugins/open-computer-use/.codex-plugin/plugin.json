@@ -1,6 +1,6 @@
 {
   "name": "open-computer-use",
-  "version": "1.1.5",
+  "version": "1.1.6",
   "description": "Open-source cross-platform Computer Use with a persistent JavaScript REPL.",
   "author": {
     "name": "Leo",
