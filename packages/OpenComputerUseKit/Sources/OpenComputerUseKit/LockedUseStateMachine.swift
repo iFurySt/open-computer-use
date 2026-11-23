@@ -272,6 +272,19 @@ public struct LockedUseStateMachine: Sendable {
         quiesced = true
     }
 
+    /// Recovered relock barrier for a lease that never granted an unlock, once
+    /// every recorded process has exited. Nothing is left to report the session,
+    /// and OCU never unlocked the desktop, so hold for a normal manual unlock
+    /// instead of relocking for the rest of the boot.
+    public mutating func abandonUngrantedRelock() -> [Effect] {
+        guard phase == .relocking, quiesced else { return [] }
+        phase = .awaitingManualUnlock
+        requiresManualUnlock = true
+        permit = nil
+        guards = nil
+        return [.releaseGuards]
+    }
+
     /// If relock failed, retain shielding and retry; never release on a timer.
     public func retryRelock() -> [Effect] { phase == .relocking ? [.requestRelock] : [] }
 
