@@ -53,7 +53,10 @@ uint32_t ocu_virtual_display_create(const char *name, uint32_t width, uint32_t h
 
             id<OCUVirtualDisplayMode> mode = [[modeClass alloc] initWithWidth:width height:height refreshRate:refresh_rate];
             NSObject *settings = [[settingsClass alloc] init];
-            [settings setValue:@(1) forKey:@"hiDPI"];
+            // 1x only. The active mode is 1x either way; hiDPI=1 only adds scaled
+            // modes, and one of those picked later would back the same points with
+            // four times the pixels.
+            [settings setValue:@(0) forKey:@"hiDPI"];
             [settings setValue:@[mode] forKey:@"modes"];
             if (![display applySettings:settings]) {
                 return 0;
