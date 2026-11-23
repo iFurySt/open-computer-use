@@ -1,0 +1,54 @@
+# Secret and privacy scan, run by scripts/check-secrets.sh with gitleaks 8.30.1 pinned by checksum.
+# gitleaks' default rules find credentials. The rules below find what docs/REPO_COLLAB_GUIDE.md and
+# docs/HISTORY_GUIDE.md forbid in committed text: a home directory path, a personal email address, a machine's own
+# name, a tailnet address. A class of benign matches (a placeholder user, a reserved test domain) is allowed per rule
+# here; a single benign match is allowed by its fingerprint in .gitleaksignore, with its reason.
+
+title = "open-computer-use"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "home-directory-path"
+description = "A path inside a home directory names the person and their machine; write ~ or a relative path"
+regex = '''(?:/Users/|/home/|\b[A-Za-z]:\\{1,2}Users\\{1,2})([A-Za-z0-9][A-Za-z0-9._-]*)'''
+secretGroup = 1
+keywords = ["/users/", "/home/", "\\users\\"]
+
+[[rules.allowlists]]
+description = "placeholder users, CI runner accounts and shared system folders"
+regexTarget = "secret"
+regexes = ['''^(?:example[\w-]*|user|username|name|you|me|admin|runner|ubuntu|vscode|linuxbrew|Shared|shared|USER|guest)$''']
+
+[[rules]]
+id = "personal-email"
+description = "An email address names a person; use a noreply or example.com address"
+regex = '''\b[A-Za-z0-9][A-Za-z0-9._%+-]*@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}\b'''
+keywords = ["@"]
+
+[[rules.allowlists]]
+description = "noreply senders, RFC 2606 example and test domains, git remotes, retina asset names (icon@2x.png), systemd units (user@1000.service)"
+regexes = ['''(?i)no-?reply|@(?:[a-z0-9-]+\.)*(?:example\.(?:com|org|net)|test|example|invalid|localhost)\b|^git@|@\d+x\.|\.(?:service|socket|target|timer|mount|scope|slice)$''']
+
+[[rules]]
+id = "machine-hostname"
+description = "A computer's own name (a Windows default DESKTOP-/LAPTOP- name, a Mac's <name>s-MacBook-Pro)"
+regex = '''\b(?:(?:DESKTOP|LAPTOP)-[A-Z0-9]{7}|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*-(?:MacBook-(?:Pro|Air)|Mac-mini|Mac-Studio|Mac-Pro|iMac)(?:-\d+)?(?:\.local)?)\b'''
+keywords = ["desktop-", "laptop-", "-macbook-", "-mac-mini", "-mac-studio", "-mac-pro", "-imac"]
+
+[[rules]]
+id = "tailnet-ip"
+description = "A Tailscale address (100.64.0.0/10) reaches a person's own machines"
+regex = '''\b100\.(?:6[4-9]|[7-9]\d|1[01]\d|12[0-7])(?:\.(?:25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){2}\b'''
+keywords = ["100."]
+
+[[rules.allowlists]]
+description = "the range's own base address, as written in 100.64.0.0/10"
+regexes = ['''^100\.64\.0\.0$''']
+
+[[rules]]
+id = "tailnet-name"
+description = "A Tailscale MagicDNS name (*.ts.net) reaches a person's own machines"
+regex = '''\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.ts\.net\b'''
+keywords = [".ts.net"]
