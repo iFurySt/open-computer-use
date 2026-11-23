@@ -369,6 +369,7 @@ public struct LockedUseBrokerCoordinator: Sendable {
         agentDrained = true
         try machine.confirmQuiescence(owner: owner)
         if let session = observedSession { try apply(machine.observe(session: session, now: receiptTime)) }
+        else if !everGranted, guardianGone { try apply(machine.abandonUngrantedRelock()) }
     }
 
     private func check(session: LockedUseSession, context: Context) throws {
