@@ -143,11 +143,8 @@ private final class BrokerServer: @unchecked Sendable {
                     }
                 }
                 try self.coordinator.tick(now: now)
-                if let guardian = self.coordinator.recordedGuardian, kill(guardian.processID, 0) != 0, errno == ESRCH {
-                    try self.coordinator.guardianProcessExited()
-                }
-                if let owner = self.coordinator.recordedOwner, kill(owner.processID, 0) != 0, errno == ESRCH {
-                    try self.coordinator.ownerProcessExited()
+                try self.coordinator.pollRecordedProcesses { pid in
+                    kill(pid, 0) != 0 && errno == ESRCH
                 }
                 try self.persistRecovery()
                 try self.persistValidation()

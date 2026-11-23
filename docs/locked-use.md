@@ -106,6 +106,8 @@ python3 scripts/run-locked-use-rehearsal.py --confirm-watchdog-test
 - 批准记录绑定 UID、角色、signing identifier 和 Team ID；角色按连接 endpoint 选择，不取请求 payload。批准 peer 必须启用 hardened runtime，并拒绝 get-task-allow、禁用 Library Validation、允许 DYLD 环境注入或 unsigned executable memory 等 entitlement。Developer ID 签名的 self-test 验证正确 signer / role 成功及错误 signer / role 拒绝；这不代替真实 unlock 链路验证。
 - `LockedUsePermitRegistry` 使用 SecRandomCopyBytes 生成 32-byte nonce，绑定 connection UUID、attempt UUID、UID、audit session，5 秒过期，单次消费，断开撤销，重放拒绝。最多 32 个 pending permit；单个 registry 最多保存 4096 个 retired attempt；只有上一租约完全释放并可开始新租约时，Broker 才创建新 registry epoch。旧 lease ID / nonce 不能跨越 epoch。该 registry 不验证插件身份，调用它之前必须先认证 Apple SecurityAgent peer。
 
+Broker 重启后，如果恢复记录表明从未发出解锁授权，且内核确认记录里的 owner、Guardian 和 watchdog 均已退出，Broker 会清理这次租约的恢复记录并回到空闲。普通桌面操作仍检查当前会话是否已解锁。曾发出授权或缺少进程退出证据的租约继续走原来的重锁和排空流程。
+
 ## Authorization 插件实验
 
 先在普通用户进程内验证 ABI，不注册系统 right：
