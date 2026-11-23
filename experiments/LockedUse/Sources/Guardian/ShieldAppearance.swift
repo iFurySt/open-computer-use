@@ -3,16 +3,30 @@ import CoreImage
 import OpenDirectory
 import OpenComputerUseKit
 
+/// How the lock-screen shield looks. `minimal` is a plain black surface with no
+/// wallpaper, avatar, badge or text, for people who do not want a bright screen
+/// while an agent works. The user opts in with
+/// `defaults write com.ifuryst.opencomputeruse LockedUseShieldStyle minimal`.
+enum ShieldStyle: String {
+    case standard, minimal
+    static var current: ShieldStyle {
+        let raw = UserDefaults(suiteName: "com.ifuryst.opencomputeruse")?.string(forKey: "LockedUseShieldStyle")
+        return raw.flatMap(ShieldStyle.init(rawValue:)) ?? .standard
+    }
+}
+
 /// Local wallpaper files only: never captures the user's desktop or windows.
 @MainActor
 final class ShieldAppearance: NSView {
+    private let style = ShieldStyle.current
     private let wallpaper: NSImage?
     private let diagnostic = NSTextField(labelWithString: "")
     override var isOpaque: Bool { true }
 
     init(frame: NSRect, screen: NSScreen, message: String) {
-        wallpaper = Self.wallpaper(for: screen)
+        wallpaper = ShieldStyle.current == .minimal ? nil : Self.wallpaper(for: screen)
         super.init(frame: frame)
+        if ShieldStyle.current == .minimal { return }
         let avatar = NSImageView()
         avatar.image = Self.avatar() ?? NSImage(systemSymbolName: "person.crop.circle.fill", accessibilityDescription: nil)
         avatar.imageScaling = .scaleAxesIndependently
@@ -68,12 +82,14 @@ final class ShieldAppearance: NSView {
     required init?(coder: NSCoder) { fatalError("init(coder:) unsupported") }
 
     func updateMessage(_ message: String) {
+        if style == .minimal { return }
         // Only isolated diagnostics have a changing detail. Protected sessions
         // retain exactly the same two lines through authentication and exit.
         diagnostic.stringValue = message == LockedUseShieldStatus.message ? "" : message
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        if style == .minimal { NSColor.black.setFill(); bounds.fill(); return }
         NSColor(calibratedRed: 0.16, green: 0.21, blue: 0.29, alpha: 1).setFill()
         bounds.fill()
         if let wallpaper, wallpaper.size.width > 0, wallpaper.size.height > 0 {
