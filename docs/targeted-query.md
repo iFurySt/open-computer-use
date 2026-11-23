@@ -30,7 +30,7 @@ Separate CLI calls cannot share indexes. Handles expire after 120 seconds, with 
 
 ## Options and results
 
-Provide at least one of `text` and `role`. When both are present, both must match. Text matches title, description or value without case sensitivity. Roles accept either `button` or `AXButton`.
+Provide at least one of `text` and `role`. When both are present, both must match. Text matches title, description, value, tooltip (`AXHelp`) or identifier without case sensitivity. A control with no text of its own matches the text it holds, as the screen shows it: a web result drawn as one-letter texts (`R`, `S`, `I`, blank, `S`…) matches `RSI Strategy`, and the match's title is that text. Only the smallest such control matches, not its containers. Roles accept either `button` or `AXButton`.
 
 | JS option | Native option | Default | Meaning |
 | --- | --- | --- | --- |

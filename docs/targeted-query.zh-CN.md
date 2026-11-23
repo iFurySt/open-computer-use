@@ -30,7 +30,7 @@ ocu call query --args '{"app":"Safari","text":"Compose","role":"button","exact":
 
 ## 参数与结果
 
-`text` 和 `role` 至少填一个。同时填写时，两者都要匹配。文字不区分大小写，匹配 title、description 或 value；角色可以写 `button` 或 `AXButton`。
+`text` 和 `role` 至少填一个。同时填写时，两者都要匹配。文字不区分大小写，匹配 title、description、value、tooltip（`AXHelp`）或 identifier。自身没有文字的控件按它包含的文字匹配，与屏幕上看到的一致：网页把一个结果逐字母画成单字符文本（`R`、`S`、`I`、空白、`S`…）时，可用 `RSI Strategy` 找到它，结果的 title 就是这段文字；只返回最小的那个控件，不返回它的外层容器。角色可以写 `button` 或 `AXButton`。
 
 | JS 参数 | native 参数 | 默认值 | 含义 |
 | --- | --- | --- | --- |

@@ -29,6 +29,37 @@ final class TargetedAXTests: XCTestCase {
         XCTAssertFalse(targetedRecordMatches(c, role: "AXButton", title: "Send", description: nil, value: "hi"))
     }
 
+    func testTooltipAndIdentifierNameAControl() {
+        XCTAssertTrue(targetedRecordMatches(criteria(text: "close"), role: "AXButton", title: nil, description: nil, value: nil, help: "Close panel"))
+        XCTAssertTrue(targetedRecordMatches(criteria(text: "results", exact: true), role: "AXGroup", title: nil, description: nil, value: nil, identifier: "results"))
+        XCTAssertFalse(targetedRecordMatches(criteria(text: "close"), role: "AXButton", title: nil, description: nil, value: nil, help: "Open", identifier: "panel"))
+    }
+
+    func testANamelessBoxOfLettersIsNamedByWhatItHolds() {
+        // window > list > [a row drawn letter by letter, a blank between the words; a row holding one text]
+        var roles: [String?] = ["AXWindow", "AXList", "AXGroup", "AXGroup", "AXStaticText"]
+        var own: [String?] = ["Indicators", nil, nil, nil, "RSI Divergence"]
+        var children: [[Int]] = [[1], [2, 3], [], [4], []]
+        for letter in "RSI Strategy" {
+            children[2].append(roles.count)
+            roles.append("AXStaticText")
+            own.append(letter == " " ? nil : String(letter))
+            children.append([])
+        }
+        func named(_ c: TargetedAX.Criteria) -> [String] {
+            namedByHeldText(c, roles: roles, own: own, children: children).map { "\($0.node) \($0.text)" }
+        }
+
+        XCTAssertEqual(named(criteria(text: "RSI Strategy")), ["2 RSI Strategy"])
+        XCTAssertEqual(named(criteria(text: "rsi strategy", exact: true)), ["2 RSI Strategy"])
+        // the other row's own text matches, so the walk finds that text and not its row
+        XCTAssertEqual(named(criteria(text: "RSI")), ["2 RSI Strategy"])
+        XCTAssertEqual(named(criteria(text: "RSI Strategy", role: "button")), [])
+        // a node with text of its own keeps it: the walk matches it by that text
+        XCTAssertEqual(named(criteria(text: "Indicators")), [])
+        XCTAssertEqual(named(criteria(role: "group")), [])
+    }
+
     func testExactRequiresFullMatch() {
         let c = criteria(text: "Compose", exact: true)
         XCTAssertTrue(targetedRecordMatches(c, role: "AXButton", title: "compose", description: nil, value: nil))
