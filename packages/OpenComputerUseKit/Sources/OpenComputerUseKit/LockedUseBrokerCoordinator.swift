@@ -329,6 +329,30 @@ public struct LockedUseBrokerCoordinator: Sendable {
         }
     }
 
+    /// Called by the Broker's timer. Only a kernel ESRCH counts as exit.
+    public mutating func pollRecordedProcesses(hasExited: (Int32) -> Bool) throws {
+        let ownerExited = recordedOwner.map { hasExited($0.processID) } ?? false
+        let guardianExited = recordedGuardian.map { hasExited($0.processID) }
+        if recovering, phase == .relocking, !everGranted, !observedUnlocked,
+           ownerExited, guardianExited != false,
+           recordedWatchdog.map({ hasExited($0.processID) }) != false {
+            // The daemon persists everGranted before sending the allow.
+            // An ungranted recovery has no outstanding authorization. With
+            // every worker gone, there is no protected desktop to hand back.
+            // Retire the lease without treating process exit as lock evidence.
+            let wasAccepting = accepting
+            let now = receiptTime
+            self = .init(enabled: prerequisites.enabled, backendValidated: prerequisites.backendValidated,
+                         requiresWatchdog: requiresWatchdog, bootSessionID: bootSessionID,
+                         validationMode: validationMode)
+            accepting = wasAccepting
+            try tick(now: now)
+            return
+        }
+        if guardianExited == true { try guardianProcessExited() }
+        if ownerExited { try ownerProcessExited() }
+    }
+
     public mutating func guardianProcessExited() throws {
         guardianGone = true
         unlockWorkDrained = true
