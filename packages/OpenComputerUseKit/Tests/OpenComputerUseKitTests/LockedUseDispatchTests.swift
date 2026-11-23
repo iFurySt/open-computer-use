@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import XCTest
 @testable import OpenComputerUseKit
@@ -36,11 +37,17 @@ final class LockedUseDispatchTests: XCTestCase {
         let click = SkyClickTarget(screenPoint: .zero, windowPoint: .zero,
                                    windowBounds: .zero, windowID: 0, pid: -1)
         let keyboard = SkyKeyboardTarget(windowID: 0, pid: -1)
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("ocu-test-\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setString("before", forType: .string)
         let actions: [() throws -> Void] = [
             { try SkyClickDispatcher.click(target: click, clickCount: 1) },
             { try SkyKeyboardDispatcher.typeText(target: keyboard, text: "probe") },
             { try SkyKeyboardDispatcher.pressKey(target: keyboard, key: "cmd+a") },
-            { _ = try ComputerUseService().query(app: "NoSuchRevokedLeaseApp", text: "Send") }
+            { _ = try ComputerUseService().query(app: "NoSuchRevokedLeaseApp", text: "Send") },
+            { _ = try ComputerUseService().readClipboard(pasteboard: pasteboard) },
+            { _ = try ComputerUseService().writeClipboard(text: "probe", pasteboard: pasteboard) }
         ]
         for action in actions {
             try LockedUseActionScope.withValidator({ throw Revoked.lease }, body: {
@@ -49,5 +56,6 @@ final class LockedUseDispatchTests: XCTestCase {
                 }
             })
         }
+        XCTAssertEqual(pasteboard.string(forType: .string), "before")
     }
 }
