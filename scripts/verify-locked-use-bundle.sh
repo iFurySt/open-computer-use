@@ -3,7 +3,9 @@
 set -euo pipefail
 app="${1:?Usage: scripts/verify-locked-use-bundle.sh APP}"
 base="$app/Contents/Resources/LockedUse"
-read -r -a architectures <<< "$(lipo -archs "$app/Contents/MacOS/OpenComputerUse")"
+app_architectures="$(lipo -archs "$app/Contents/MacOS/OpenComputerUse")"
+read -r -a architectures <<< "$app_architectures"
+[[ "${#architectures[@]}" -gt 0 ]]
 team="$(codesign -dv --verbose=4 "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
 [[ "$team" =~ ^[A-Z0-9]{10}$ ]] || { echo 'Locked Use release requires an Apple signing team.' >&2; exit 1; }
 [[ -d "$base" ]] || { echo 'Locked Use runtime is missing from the App.' >&2; exit 1; }
@@ -13,7 +15,9 @@ executables=(OCULockService OCULockInstaller 'OCU Guardian.app/Contents/MacOS/OC
 identifiers=(dev.opencomputeruse.locked-use.broker dev.opencomputeruse.locked-use.installer dev.opencomputeruse.locked-use.guardian.dev dev.opencomputeruse.locked-use.authorization)
 for index in 0 1 2 3; do
   [[ -x "$base/${executables[$index]}" ]]
-  lipo "$base/${executables[$index]}" -verify_arch "${architectures[@]}"
+  for arch in "${architectures[@]}"; do
+    lipo "$base/${executables[$index]}" -verify_arch "$arch"
+  done
   codesign --verify --strict -R "=identifier \"${identifiers[$index]}\" and anchor apple generic and certificate leaf[subject.OU] = \"$team\"" "$base/${components[$index]}"
 done
 codesign --verify --deep --strict "$app"

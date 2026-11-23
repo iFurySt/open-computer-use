@@ -138,6 +138,8 @@ test "$(find dist/release/github -maxdepth 1 -type f -name 'open-computer-use-cl
 
 如果当前 checkout 里已经有和目标版本一致的 `dist/Open Computer Use.app`，也可以临时加 `--skip-build` 跳过重复构建；但在干净 checkout 里不要默认加这个参数，否则 staging 脚本会因为缺少 `dist/Open Computer Use.app` 而失败。
 
+Xcode 27.2 的 `lipo -verify_arch` 在一次传入两个架构时会报 `requires exactly one input file`。构建和验证脚本逐个检查每个目标架构，仍须通过双架构与签名校验。
+
 ### 4. 提交版本 bump
 
 - 用单独 commit 提交 release version bump。

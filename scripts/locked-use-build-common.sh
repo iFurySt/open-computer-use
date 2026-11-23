@@ -26,7 +26,10 @@ locked_use_build_product() {
   else
     lipo -create -output "$destination" "${binaries[@]}"
   fi
-  lipo "$destination" -verify_arch "${architectures[@]}"
+  # Xcode 27.2 lipo rejects multiple operands after -verify_arch.
+  for arch in "${architectures[@]}"; do
+    lipo "$destination" -verify_arch "$arch" || return
+  done
 }
 
 locked_use_with_keychain() {

@@ -65,7 +65,9 @@ if [[ "${#plugin_binaries[@]}" == 1 ]]; then
 else
   lipo -create -output "$bundle/Contents/MacOS/OCULockAuth" "${plugin_binaries[@]}"
 fi
-lipo "$bundle/Contents/MacOS/OCULockAuth" -verify_arch "${architectures[@]}"
+for arch in "${architectures[@]}"; do
+  lipo "$bundle/Contents/MacOS/OCULockAuth" -verify_arch "$arch"
+done
 cat > "$bundle/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
