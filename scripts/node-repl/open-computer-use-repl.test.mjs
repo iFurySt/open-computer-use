@@ -102,6 +102,27 @@ test("app-bound API composes actions and state in one js call", async () => {
   assert.ok(result.content.some(item => item.type === "text" && item.text === "state:Text"));
 });
 
+test("fresh sessions advertise the macOS tray workflow using accessibility-only clicks", async () => {
+  const native = mockNative();
+  const session = new PersistentJavaScriptSession({ native });
+  const help = await session.run("await cua.rewriteDocumentation();");
+  const guidance = help.content.map(item => item.text).join("\n");
+  assert.match(guidance, /Status bar items \(macOS tray\)/);
+  assert.match(guidance, /clickMethod: "accessibility"/);
+  assert.match(guidance, /do not use screen coordinates or global clicks/);
+  const result = await session.run(`
+    const trayApp = await cua.getApp("com.example.Text", { initialState: false });
+    await trayApp.getAXState({ includeScreenshot: false });
+    await trayApp.click(7, { clickMethod: "accessibility" });
+    await trayApp.getAXState({ includeScreenshot: false });
+  `);
+  assert.equal(result.isError, false);
+  assert.deepEqual(native.calls.map(call => call.name), ["get_app_state", "click", "get_app_state"]);
+  assert.equal(native.calls[1].arguments.app, "com.example.Text");
+  assert.equal(native.calls[1].arguments.element_index, 7);
+  assert.equal(native.calls[1].arguments.click_method, "accessibility");
+});
+
 for (const Session of [PersistentJavaScriptSession, WorkerJavaScriptSession]) {
   test(`${Session.name}: selective observation is explicit and legacy calls keep their arguments`, async t => {
     const native = mockNative();

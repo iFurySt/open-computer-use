@@ -336,7 +336,19 @@ enum SnapshotBuilder {
             AXSnapshotReadCache.withSnapshot { renderer.render(menuBar) }
         }
 
+        let statusBarStartIndex = renderer.lines.count
+        if let statusBar = copyElement(appElement, attribute: "AXExtrasMenuBar"),
+           !CFEqual(statusBar, rootElement)
+        {
+            var ownerPID: pid_t = 0
+            if AXUIElementGetPid(statusBar, &ownerPID) == .success, ownerPID == app.pid {
+                AXSnapshotReadCache.withSnapshot { renderer.render(statusBar) }
+            }
+        }
         var treeLines = renderer.lines
+        if treeLines.count > statusBarStartIndex {
+            treeLines.insert("Status bar items (macOS tray):", at: statusBarStartIndex)
+        }
         if let occlusionNote {
             treeLines.append(occlusionNote)
         }
